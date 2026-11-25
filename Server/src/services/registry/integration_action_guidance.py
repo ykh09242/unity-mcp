@@ -332,13 +332,16 @@ INTEGRATION_ACTIONS: Final = {
     "manage_packages": {
         "ping": _observe("Check whether the Editor's Package Manager handler responds."),
         "list_packages": _observe(
-            "Request the installed package list; poll the returned query job when pending."
+            "Request a Package Manager dependency list with manage_packages consent. "
+            "The offline registered inventory is mcpforunity://project/packages."
         ),
         "search_packages": _observe(
             "Query the package registry and inspect the returned matches or pending job.", "query"
         ),
         "get_package_info": _observe(
-            "Read the registered information for one installed package.", "package"
+            "Read one installed package with manage_packages consent. Its offline registered "
+            "metadata is also available at mcpforunity://project/packages/{package_name}.",
+            "package",
         ),
         "list_registries": _observe("Read the project's configured scoped package registries."),
         "status": _observe(

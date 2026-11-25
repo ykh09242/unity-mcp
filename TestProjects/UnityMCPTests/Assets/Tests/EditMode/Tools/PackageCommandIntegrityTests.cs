@@ -263,7 +263,7 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("HTTPS://registry.example.test/npm/", true)]
         public void RegistryUrlValidationAllowsHttpRegistriesAndRejectsMalformedUrls(string url, bool expected)
         {
-            Assert.AreEqual(expected, Method("IsValidRegistryUrl").Invoke(null, new object[] { url }));
+            Assert.AreEqual(expected, PackageSourceSecurity.IsValidRegistryUrl(url));
         }
 
         [TestCase("[42]")]

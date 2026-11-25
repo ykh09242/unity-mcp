@@ -14,12 +14,12 @@ description: "Manage Unity packages: query, install, remove, embed, and configur
 
 ## Description
 
-Manage Unity packages: query, install, remove, embed, and configure registries.
+Manage Unity packages: query, install, remove, embed, and configure registries. Requires Editor consent for manage_packages. The read-only mcpforunity://project/packages resource lists registered versions, with details at /{package_name}.
 
 Mutations require edit+run. Sources must use external Git/UPM authentication; embedded credentials and URL queries other than Git ?path= are rejected.
 
 QUERY (read-only):
-- list_packages: List all installed packages
+- list_packages: Start a Package Manager dependency list request
 - search_packages: Search Unity registry by keyword
 - get_package_info: Get details about a specific installed package
 - ping: Check package manager availability

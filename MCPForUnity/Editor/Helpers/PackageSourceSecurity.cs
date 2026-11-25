@@ -1,6 +1,7 @@
 using System;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
+using UnityEditor.PackageManager;
 
 namespace MCPForUnity.Editor.Helpers
 {
@@ -82,6 +83,19 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         internal static string ForStorage(string value) => HasCredentials(value) ? Redact(value) : value;
+
+        internal static bool IsValidRegistryUrl(string url)
+        {
+            return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+                && !string.IsNullOrEmpty(uri.Host)
+                && string.IsNullOrEmpty(uri.UserInfo)
+                && string.IsNullOrEmpty(uri.Query)
+                && string.IsNullOrEmpty(uri.Fragment);
+        }
+
+        internal static object RegistryMetadata(RegistryInfo registry) =>
+            registry == null ? null : new { name = Redact(registry.name), url = IsValidRegistryUrl(registry.url) ? registry.url : null };
 
         internal static JToken RedactResponse(object response)
         {

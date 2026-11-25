@@ -76,11 +76,13 @@ async def _send_packages_command(
 @mcp_for_unity_tool(
     group="core",
     description=(
-        "Manage Unity packages: query, install, remove, embed, and configure registries.\n\n"
+        "Manage Unity packages: query, install, remove, embed, and configure registries. "
+        "Requires Editor consent for manage_packages. The read-only mcpforunity://project/packages "
+        "resource lists registered versions, with details at /{package_name}.\n\n"
         "Mutations require edit+run. Sources must use external Git/UPM authentication; "
         "embedded credentials and URL queries other than Git ?path= are rejected.\n\n"
         "QUERY (read-only):\n"
-        "- list_packages: List all installed packages\n"
+        "- list_packages: Start a Package Manager dependency list request\n"
         "- search_packages: Search Unity registry by keyword\n"
         "- get_package_info: Get details about a specific installed package\n"
         "- ping: Check package manager availability\n"

@@ -554,6 +554,7 @@ namespace MCPForUnity.Editor.Tools
                         display_name = info.displayName,
                         description = info.description,
                         source = info.source.ToString(),
+                        registry = PackageSourceSecurity.RegistryMetadata(info.registry),
                         resolved_path = info.resolvedPath,
                         author = info.author?.name,
                         dependencies,
@@ -610,7 +611,7 @@ namespace MCPForUnity.Editor.Tools
             var urlResult = p.GetRequired("url", "'url' parameter is required for add_registry.");
             if (!urlResult.IsSuccess)
                 return new ErrorResponse(urlResult.ErrorMessage);
-            if (!IsValidRegistryUrl(urlResult.Value))
+            if (!PackageSourceSecurity.IsValidRegistryUrl(urlResult.Value))
                 return new ErrorResponse("'url' must be an absolute HTTP or HTTPS registry URL with a valid host and port.");
 
             string[] scopes = p.GetStringArray("scopes", strict: true);
@@ -995,16 +996,6 @@ namespace MCPForUnity.Editor.Tools
             if (registries != null && registries.Type != JTokenType.Null && registries is not JArray)
                 throw new FormatException("'scopedRegistries' must be an array; the manifest was not changed.");
             return manifest;
-        }
-
-        private static bool IsValidRegistryUrl(string url)
-        {
-            return Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-                && !string.IsNullOrEmpty(uri.Host)
-                && string.IsNullOrEmpty(uri.UserInfo)
-                && string.IsNullOrEmpty(uri.Query)
-                && string.IsNullOrEmpty(uri.Fragment);
         }
 
         private static void RegisterCompletionCallback(string jobId, Request request)

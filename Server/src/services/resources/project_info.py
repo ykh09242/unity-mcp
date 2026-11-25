@@ -31,7 +31,10 @@ class ProjectInfoResponse(MCPResponse):
 @mcp_for_unity_resource(
     uri="mcpforunity://project/info",
     name="project_info",
-    description="Static project information including root path, Unity version, and platform. This data rarely changes.\n\nURI: mcpforunity://project/info",
+    description=(
+        "Static project information including root path, Unity version, and platform. "
+        "The complete installed package inventory is available at mcpforunity://project/packages."
+    ),
 )
 async def get_project_info(ctx: Context) -> ProjectInfoResponse | MCPResponse:
     """Get static project configuration information."""

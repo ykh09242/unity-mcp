@@ -266,9 +266,7 @@ Current selected project's supported features, bounded limits, connection genera
 
 **URI:** `mcpforunity://project/info`
 
-Static project information including root path, Unity version, and platform. This data rarely changes.
-
-URI: mcpforunity://project/info
+Static project information including root path, Unity version, and platform. The complete installed package inventory is available at mcpforunity://project/packages.
 
 
 ## `project_layers`
@@ -276,6 +274,23 @@ URI: mcpforunity://project/info
 **URI:** `mcpforunity://project/layers`
 
 List the name and number of every named layer in the project. The result maps layer indices (0-31) to names and omits unused slots.
+
+
+## `project_package_info`
+
+**URI:** `mcpforunity://project/packages/{package_name}`
+
+Read an installed package by its UPM name. Returns the registered version, display name, description, author, source and registry name and URL when available. Reads local Editor metadata without contacting the registry.
+
+**Parameters:**
+
+- `package_name` (`str`, required)
+
+## `project_packages`
+
+**URI:** `mcpforunity://project/packages`
+
+List the IDs and installed versions of every package currently registered in the selected Unity Editor, including indirect dependencies and built-in packages. Read mcpforunity://project/packages/{package_name} for one package's registered metadata.
 
 
 ## `project_tags`
