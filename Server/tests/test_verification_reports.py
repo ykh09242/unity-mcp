@@ -158,3 +158,21 @@ def test_unsettled_native_work_is_not_evicted_to_admit_more_runs():
     store.finish(run, ("u", "p"), {"state": "incomplete"}, settled=False)
     with pytest.raises(ValueError, match="verification_capacity"):
         store.create(("u", "p"), {})
+
+
+def test_oversized_initial_report_preserves_existing_records_and_capacity():
+    store = ReportStore(max_active_per_scope=1)
+    settled = []
+    for index in range(64):
+        owner = ("u", f"project-{index}")
+        identity = store.create(owner, {"state": "running"})
+        store.finish(identity, owner, {"state": "passed"})
+        settled.append((identity, owner))
+
+    owner = ("u", "new-project")
+    with pytest.raises(ValueError, match="verification_report_limit"):
+        store.create(owner, {"payload": "x" * (512 * 1024)})
+
+    assert all(store.read(identity, scope) == {"state": "passed"} for identity, scope in settled)
+    healthy = store.create(owner, {"state": "running"})
+    assert store.read(healthy, owner)["state"] == "running"

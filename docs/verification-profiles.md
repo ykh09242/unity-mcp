@@ -61,6 +61,11 @@ The test stage then reports `incomplete`.
 A confirmed refusal before the Editor creates a test job releases the verification
 slot. If the start request loses its reply, the runner retains the slot until it
 can establish what happened to the native job.
+A compile child settles when the Editor confirms that the identified request ended
+and released ownership, or that it stopped before native dispatch. A completed
+synchronous import settles with its own import receipt. Source freshness alone
+cannot settle a different request. Concurrent status readers preserve confirmed
+settlement.
 The runner never clears Console, changes focus, switches scenes, formats code or
 automatically fixes issues.
 
@@ -91,6 +96,9 @@ baseline ownership is preserved. Reports are bounded to 512 KiB each, 64 global 
 16 completed per owner/project, with 16 active global / 2 active per scope. Settled
 reports expire after 30 minutes; unsettled native ownership is never evicted merely
 because time elapsed. A server restart or expired handle never reruns work.
+An oversized initial report is refused before it occupies a slot. If retained
+evidence would push an active report over the limit, `verification_report_limit`
+identifies the incomplete evidence and the report keeps its child IDs for follow-up.
 
 ## CLI
 

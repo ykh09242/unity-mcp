@@ -26,7 +26,7 @@ from services.verification.profiles import (
     profile_permissions,
     resolve_profile,
 )
-from services.verification.reports import ReportStore, test_settled
+from services.verification.reports import ReportAdmissionError, ReportStore, test_settled
 from services.verification.runner import VerificationRunner
 from services.verification.player_candidate import prepare_candidate
 from services.verification.player_runner import PlayerVerificationRunner
@@ -49,6 +49,45 @@ class BoundContext:
 class VerificationTarget:
     scope: OperationScope
     resume_generation: str | None
+
+
+def compile_child_settled(response, compile_id):
+    from services.tools.get_compile_job import CompileCoordination, CompileJob
+
+    if not isinstance(response, dict) or response.get("success") is not True:
+        return False
+    try:
+        job = CompileJob.model_validate(response.get("data"))
+        owner = CompileCoordination.model_validate(response.get("native_coordination"))
+    except ValueError:
+        return False
+    if job.compile_id != compile_id or job.state != "finished" or job.requested_at_unix_ms is None:
+        return False
+    if owner.phase == "no_owned_reservation":
+        if owner.reason is not None or owner.retryable or owner.recovery is not None:
+            return False
+    elif not (
+        owner.phase == "other_owned_reservation"
+        and owner.reason in ("native_job_active", "recovery_required")
+        and owner.recovery is not None
+        and owner.recovery.source == "owned_compilation"
+        and owner.recovery.job_id
+        and owner.recovery.job_id != compile_id
+    ):
+        return False
+    if job.reason in ("not_dispatched", "interrupted_before_native_dispatch"):
+        return (
+            job.attribution == "unconfirmed"
+            and job.generation is None
+            and not job.candidate_generations
+        )
+    # A matching ledger result and a released native owner are independent facts.
+    return job.status in ("compiled", "failed", "already_up_to_date") or (
+        job.reason in ("compilation_canceled", "compilation_faulted")
+        and job.generation is not None
+        and job.candidate_generations == [job.generation]
+        and job.finished_at_unix_ms is not None
+    )
 
 
 class VerificationIO:
@@ -158,17 +197,41 @@ class VerificationIO:
                     children.append(child)
                     return lambda: child.update(settled=True, dispatch="refused")
 
+        def observed(name, params, reply):
+            if not children or not isinstance(reply, dict) or reply.get("success") is not True:
+                return
+            child = children[-1]
+            if child["settled"]:
+                return
+            data = reply.get("data")
+            if (
+                name == "get_compile_job"
+                and child["kind"] == "compile"
+                and params["compile_id"] == child["job_id"]
+            ):
+                if compile_child_settled(reply, child["job_id"]):
+                    child["settled"] = True
+            elif name == "refresh_unity" and isinstance(data, dict):
+                if (
+                    child["kind"] == "import"
+                    and data.get("refresh_triggered") is True
+                    and data.get("compile_requested") is False
+                ):
+                    # This acknowledgment follows the synchronous import call. Any
+                    # resulting compilation has its own native admission barrier.
+                    child.update(dispatch="acknowledged", settled=True)
+                elif child["kind"] == "compile" and data.get("compile_requested") is True:
+                    child["dispatch"] = "acknowledged"
+
         evidence = await ensure_source_freshness(
             self.ctx,
             instance=self.ctx.instance,
             deadline=deadline,
             refresh_policy=policy,
             before_dispatch=before,
+            after_response=observed,
         )
         await asyncio.wait_for(self.check(), max(0, deadline - monotonic()))
-        if evidence.status in {"observed_current", "compile_failed"}:
-            for child in children:
-                child["settled"] = True
         return evidence.model_dump(by_alias=True)
 
     async def quality(self, action, options, deadline, *, on_dispatch=None):
@@ -288,14 +351,22 @@ class VerificationService:
             prepared = await self.execute(ctx, "prepare", parsed)
             if prepared.get("success") is not True:
                 return prepared
-            return await self.execute(
+            preparation_id = prepared["data"]["preparation_id"]
+            result = await self.execute(
                 ctx,
                 "run",
                 {
-                    "preparation_id": prepared["data"]["preparation_id"],
+                    "preparation_id": preparation_id,
                     "wait_seconds": wait_seconds,
                 },
             )
+            if result.get("code") in {"verification_report_limit", "verification_capacity"}:
+                preparation = self.preparations.get(preparation_id)
+                if preparation is not None and preparation["run_id"] is None:
+                    baseline_job = preparation.get("baseline_job")
+                    if baseline_job is None or baseline_job.terminal:
+                        self.preparations.pop(preparation_id)
+            return result
         self.trim()
         instance = await get_unity_instance_from_context(ctx)
         lease = await require_credential_lease() if config.http_remote_hosted else None
@@ -444,21 +515,24 @@ class VerificationService:
                 run_id = preparation["run_id"]
                 if run_id is None:
                     io.impact_requested = bool(preparation["baseline_id"])
-                    run_id = await self.start_runner(
-                        io,
-                        preparation["profile"],
-                        preparation["selection"],
-                        lease,
-                        baseline_id=preparation["baseline_id"],
-                        player_candidate=preparation["player_candidate"],
-                        broader_profile=preparation["broader_profile"],
-                        metadata={
-                            "preparation_id": preparation["preparation_id"],
-                            "profile_id": preparation["profile_id"],
-                            "profile_hash": preparation["profile_hash"],
-                            "installation": preparation["installation"],
-                        },
-                    )
+                    try:
+                        run_id = await self.start_runner(
+                            io,
+                            preparation["profile"],
+                            preparation["selection"],
+                            lease,
+                            baseline_id=preparation["baseline_id"],
+                            player_candidate=preparation["player_candidate"],
+                            broader_profile=preparation["broader_profile"],
+                            metadata={
+                                "preparation_id": preparation["preparation_id"],
+                                "profile_id": preparation["profile_id"],
+                                "profile_hash": preparation["profile_hash"],
+                                "installation": preparation["installation"],
+                            },
+                        )
+                    except ReportAdmissionError as error:
+                        return self.error(str(error))
                     preparation["run_id"] = run_id
             if parsed.get("wait_seconds", 0) > 0:
                 await asyncio.wait({self.tasks[run_id]}, timeout=parsed["wait_seconds"])
@@ -523,15 +597,14 @@ class VerificationService:
                 {"read", "run"} | (runner.selected.permissions if runner.selected else set())
             )
         owner = io.owner
-        run_id = self.store.create(owner, runner.report)
         runner.report.update(
-            run_id=run_id,
             project_scope=owner[1],
             required_permissions=permissions,
             **(metadata or {}),
         )
+        run_id = self.store.create(owner, runner.report)
+        runner.report["run_id"] = run_id
         runner.emit = lambda report: self.store.update(run_id, owner, report)
-        runner.publish()
         self.runners[run_id] = runner
         timing = verification_timing.current()
         if timing is None and config.phase_diagnostics:
@@ -569,14 +642,17 @@ class VerificationService:
         profile = VerificationProfile(analysis_required=bool(paths), impact="off")
         self.trim()
         async with self.lock:
-            identity = await self.start_runner(
-                io,
-                profile,
-                {"paths": paths},
-                lease,
-                expected_sources=expected_sources,
-                metadata={"profile_id": "post-edit", "profile_source": "tool_default"},
-            )
+            try:
+                identity = await self.start_runner(
+                    io,
+                    profile,
+                    {"paths": paths},
+                    lease,
+                    expected_sources=expected_sources,
+                    metadata={"profile_id": "post-edit", "profile_source": "tool_default"},
+                )
+            except ReportAdmissionError as error:
+                return self.error(str(error))
         return self.read(identity, target.scope.key)
 
     async def _run(self, identity, owner, runner, lease, timing=None, scheduled=None):
@@ -588,21 +664,27 @@ class VerificationService:
                     result = await runner.run()
                 if timing is not None:
                     result["timing"] = timing.finish()
-                self.store.finish(identity, owner, result, settled=result["native_settled"])
+                limited = self.store.finish(
+                    identity, owner, result, settled=result["native_settled"]
+                )
             except BaseException:
                 # Task cancellation does not release native ownership or authorize replay.
-                runner.report.update(state="incomplete", interruption="orchestrator_interrupted")
+                result = runner.report
+                result.update(state="incomplete", interruption="orchestrator_interrupted")
                 if timing is not None:
-                    runner.report["timing"] = timing.finish()
+                    result["timing"] = timing.finish()
                 runner.publish()
-                self.store.finish(
-                    identity, owner, runner.report, settled=runner.report["native_settled"]
+                limited = self.store.finish(
+                    identity, owner, result, settled=result["native_settled"]
                 )
+            if limited is not None:
+                runner.report = {**limited, "children": runner.report["children"]}
 
     async def observe_settlement(self, runner, deadline, *, cancel):
         for child in runner.report["children"]:
             if child.get("settled") or not child.get("job_id"):
                 continue
+            confirmed = False
             try:
                 if child["kind"] == "analysis":
                     if cancel:
@@ -611,7 +693,7 @@ class VerificationService:
                         "status", {"job_id": child["job_id"]}, deadline
                     )
                     data = response.get("data") or {}
-                    child["settled"] = (
+                    confirmed = (
                         response.get("success") is True
                         and data.get("job_id") == child["job_id"]
                         and data.get("terminal") is True
@@ -626,35 +708,26 @@ class VerificationService:
                         "get_test_job", {"job_id": child["job_id"]}, deadline
                     )
                     data = response.get("data") or {}
-                    child["settled"] = (
+                    confirmed = (
                         response.get("success") is True
                         and data.get("job_id") == child["job_id"]
                         and test_settled(data)
                     )
                 elif child["kind"] == "standalone_player":
-                    child["settled"] = await asyncio.to_thread(
-                        runner.player_settled, child["job_id"]
-                    )
+                    confirmed = await asyncio.to_thread(runner.player_settled, child["job_id"])
                 elif child["kind"] == "editor_scenario":
                     await runner.selected.observe_scenario(child, deadline, cancel=cancel)
                 elif child["kind"] == "compile":
-                    from services.tools.get_compile_job import CompileCoordination
-
                     response = await runner.io.native(
                         "get_compile_job", {"compile_id": child["job_id"]}, deadline
                     )
-                    data = response.get("data") or {}
-                    witness = CompileCoordination.model_validate(
-                        response.get("native_coordination")
-                    )
-                    child["settled"] = (
-                        response.get("success") is True
-                        and data.get("compile_id") == child["job_id"]
-                        and data.get("state") == "finished"
-                        and witness.phase == "finished"
-                    )
+                    confirmed = compile_child_settled(response, child["job_id"])
             except (TimeoutError, ConnectionError, PermissionError, ValueError):
-                pass
+                continue
+            # Concurrent status reads may finish out of order. A late pending
+            # response cannot reopen a child whose release was already observed.
+            if confirmed:
+                child["settled"] = True
         runner.publish()
 
     def read(self, identity, owner):

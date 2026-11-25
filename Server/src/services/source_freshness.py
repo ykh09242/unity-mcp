@@ -22,6 +22,7 @@ async def ensure_source_freshness(
     deadline: float,
     refresh_policy: Literal["never", "if_needed"],
     before_dispatch=None,
+    after_response=None,
 ) -> SourceFreshness:
     if refresh_policy not in ("never", "if_needed"):
         raise ValueError("refresh_policy must be never or if_needed")
@@ -58,7 +59,10 @@ async def ensure_source_freshness(
         )
         if on_refusal is not None and isinstance(response, VerifiedQueueRefusal):
             on_refusal()
-        return response.model_dump() if hasattr(response, "model_dump") else response
+        reply = response.model_dump() if hasattr(response, "model_dump") else response
+        if after_response is not None:
+            after_response(command, params, reply)
+        return reply
 
     return await observe_source_freshness(
         send, permitted, deadline=deadline, refresh_policy=refresh_policy

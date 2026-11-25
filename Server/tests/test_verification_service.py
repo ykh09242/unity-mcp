@@ -599,6 +599,114 @@ async def test_direct_run_prepares_selection_and_wait_expiry_keeps_original_job(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("prepared", [False, True])
+@pytest.mark.parametrize("oversized_field", ["selection", "installation"])
+async def test_initial_report_limit_leaves_capacity_for_a_healthy_run(
+    service, monkeypatch, prepared, oversized_field
+):
+    subject, ctx, _, native = service
+    work = AsyncMock(return_value={"state": "passed", "native_settled": True})
+    monkeypatch.setattr("services.verification.runner.VerificationRunner.run", work)
+    subject.store.max_active_per_scope = 1
+    paths = [
+        f"Assets/{index:03d}_{'a' * 4082}.cs"
+        for index in range(129 if oversized_field == "selection" else 126)
+    ]
+    if oversized_field == "installation":
+        native.return_value["data"]["mcpPackage"] = {"description": "p" * 16_384}
+
+    options = {"paths": paths}
+    if prepared:
+        result = await subject.execute(ctx, "prepare", options)
+        options = {"preparation_id": result["data"]["preparation_id"]}
+
+    refused = await subject.execute(ctx, "run", options)
+
+    assert refused["code"] == "verification_report_limit"
+    assert not subject.store.records and not subject.tasks and not subject.runners
+    work.assert_not_awaited()
+    if prepared:
+        status = await subject.execute(ctx, "status", options)
+        assert status["data"]["run_id"] is None
+    else:
+        assert not subject.preparations
+
+    native.return_value["data"].pop("mcpPackage", None)
+    healthy = await subject.execute(ctx, "run", {"paths": ["Assets/Healthy.cs"], "wait_seconds": 1})
+    assert healthy["data"]["state"] == "passed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interrupted", [False, True])
+async def test_oversized_admitted_report_keeps_native_settlement_recoverable(
+    service, monkeypatch, interrupted
+):
+    subject, ctx, target, _ = service
+    subject.store.max_active_per_scope = 1
+    child_id = "b" * 32
+    emitted, resume = asyncio.Event(), asyncio.Event()
+    quality = AsyncMock(
+        return_value={"success": True, "data": {"job_id": child_id, "terminal": False}}
+    )
+
+    async def work(runner):
+        child = {
+            "kind": "analysis",
+            "job_id": child_id,
+            "settled": False,
+            "dispatch": "acknowledged",
+        }
+        runner.report["children"].append(child)
+        runner.report["latest_input_inventory"] = {"description": "x" * (512 * 1024)}
+        try:
+            runner.publish()
+        finally:
+            emitted.set()
+        await resume.wait()
+        if interrupted:
+            raise asyncio.CancelledError
+        child["settled"] = True
+        runner.report["state"] = "passed"
+        runner.publish()
+        return runner.report
+
+    monkeypatch.setattr("services.verification.runner.VerificationRunner.run", work)
+    monkeypatch.setattr("services.verification.service.VerificationIO.quality", quality)
+    started = await subject.execute(ctx, "run", {"paths": ["Assets/One.cs"]})
+    run_id = started["data"]["run_id"]
+    options = {"run_id": run_id}
+    try:
+        await emitted.wait()
+        running = (await subject.execute(ctx, "report", options))["data"]
+        assert running["state"] == "running"
+        assert running["interruption"] == "verification_report_limit"
+        assert running["native_settled"] is False
+        assert running["children"][0]["job_id"] == child_id
+        assert "latest_input_inventory" not in running
+    finally:
+        resume.set()
+        await asyncio.gather(subject.tasks[run_id], return_exceptions=True)
+
+    assert subject.tasks[run_id].exception() is None
+    terminal = (await subject.execute(ctx, "status", options))["data"]
+    assert terminal["state"] == "incomplete"
+    assert terminal["interruption"] == "verification_report_limit"
+    assert terminal["native_settled"] is not interrupted
+    assert "latest_input_inventory" not in subject.runners[run_id].report
+    if interrupted:
+        assert not subject.store.records[run_id]["settled"]
+        refused = await subject.execute(ctx, "run", {"paths": ["Assets/StillOwned.cs"]})
+        assert refused["code"] == "verification_capacity"
+        assert len(subject.preparations) == 1
+        quality.return_value["data"].update(terminal=True, state="completed")
+        recovered = (await subject.execute(ctx, "status", options))["data"]
+        assert recovered["native_settled"] is True
+    assert subject.store.records[run_id]["settled"]
+    another = subject.store.create(target.scope.key, {"state": "running"})
+    assert subject.store.read(another, target.scope.key)["state"] == "running"
+
+
+@pytest.mark.asyncio
 async def test_live_permission_union_is_checked_before_starting_any_background_work(
     service, monkeypatch
 ):
@@ -688,11 +796,13 @@ async def test_late_observation_of_a_different_job_never_settles_retained_owners
 
 
 @pytest.mark.asyncio
-async def test_compile_owner_requires_the_matching_pipeline_finish_witness():
+async def test_compile_owner_waits_for_release_then_settles_from_the_same_job():
+    from tests.test_compile_coordination_contract import NATIVE_IDLE, native_evidence
+
     child = {"kind": "compile", "job_id": "a" * 32, "settled": False}
     response = {
         "success": True,
-        "data": {"compile_id": "a" * 32, "state": "finished"},
+        "data": native_evidence("success"),
         "native_coordination": {
             "scope": "owned_request_pipeline_events",
             "phase": "pending",
@@ -711,7 +821,152 @@ async def test_compile_owner_requires_the_matching_pipeline_finish_witness():
     await subject.observe_settlement(runner, monotonic() + 5, cancel=False)
     assert not child["settled"]
     response["native_coordination"].update(
-        phase="finished", reason=None, retryable=False, recovery_action=None
+        phase="finished", recovery_action="wait_for_editor_quiescence"
     )
     await subject.observe_settlement(runner, monotonic() + 5, cancel=False)
+    assert not child["settled"]
+    response["native_coordination"] = NATIVE_IDLE
+    await subject.observe_settlement(runner, monotonic() + 5, cancel=False)
+    assert child["settled"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other_owner", [False, True])
+@pytest.mark.parametrize(
+    "reason,settled", [("interrupted_before_native_dispatch", True), ("result_unavailable", False)]
+)
+async def test_pre_dispatch_interruption_and_untracked_id_at_late_poll(
+    other_owner, reason, settled
+):
+    from tests.test_compile_coordination_contract import COMPILE_ID, NATIVE_IDLE
+
+    child = {"kind": "compile", "job_id": COMPILE_ID, "settled": False}
+    coordination = dict(NATIVE_IDLE)
+    if other_owner:
+        coordination.update(
+            phase="other_owned_reservation",
+            reason="native_job_active",
+            retryable=True,
+            recovery_action="wait_for_source_preparation",
+            recovery={
+                "source": "owned_compilation",
+                "phase": "preparing",
+                "reason": "preparing_compilation",
+                "mode": "recoverable",
+                "message": "Preparing.",
+                "job_id": "c" * 32,
+            },
+        )
+    response = {
+        "success": True,
+        "data": {
+            "schema_version": "unity-mcp/compile_job@1",
+            "state": "finished",
+            "compile_id": COMPILE_ID,
+            "session_id": "b" * 32,
+            "requested_at_unix_ms": 1 if settled else None,
+            "attribution": "unconfirmed",
+            "reason": reason,
+        },
+        "native_coordination": coordination,
+    }
+    runner = SimpleNamespace(
+        report={"children": [child]},
+        io=SimpleNamespace(native=AsyncMock(return_value=response)),
+        publish=lambda: None,
+    )
+    subject = VerificationService()
+    await subject.observe_settlement(runner, monotonic() + 5, cancel=False)
+    assert child["settled"] is settled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("last_owner", ["other_source_only", "still_finishing", "released"])
+async def test_source_preflight_accounts_for_each_child_using_its_own_response(
+    service, monkeypatch, last_owner
+):
+    from models.verification import VerificationProfile
+    from services import source_freshness
+    from services.verification.runner import VerificationRunner
+    from services.verification.service import BoundContext, VerificationIO
+    from tests.test_compile_coordination_contract import NATIVE_IDLE, native_evidence
+    from tests.test_source_freshness_contracts import current
+
+    _, ctx, target, _ = service
+    io = VerificationIO(BoundContext(ctx.fastmcp, "Editor@project", None), target)
+    runner = VerificationRunner(io, VerificationProfile(), {})
+    requests = []
+
+    async def send(_fn, _instance, name, params, **_kwargs):
+        requests.append(name)
+        if name == "refresh_unity":
+            return {
+                "success": True,
+                "data": {
+                    "refresh_triggered": params["compile"] == "none",
+                    "compile_requested": params["compile"] == "request",
+                },
+            }
+        if len(requests) < 5:
+            return {"success": True, "source_freshness": {**current(), "status": "changed"}}
+        reply = {"success": True, "source_freshness": current()}
+        if last_owner != "other_source_only":
+            proof = dict(NATIVE_IDLE)
+            if last_owner == "still_finishing":
+                proof.update(phase="finished", reason="native_job_active", retryable=True)
+            reply.update(
+                data={**native_evidence("success"), "compile_id": params["compile_id"]},
+                native_coordination=proof,
+            )
+        return reply
+
+    monkeypatch.setattr(source_freshness.unity_transport, "send_with_unity_instance", send)
+    actual = await io.freshness("if_needed", monotonic() + 5)
+    assert actual["status"] == "observed_current"
+    children = runner.report["children"]
+    assert len(children) == 2
+    imported = children[0]
+    compiled = children[1]
+    assert imported["settled"] and imported["dispatch"] == "acknowledged"
+    assert compiled["settled"] is (last_owner == "released")
+    assert requests == [
+        "get_compile_job",
+        "refresh_unity",
+        "get_compile_job",
+        "refresh_unity",
+        "get_compile_job",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_late_pending_poll_cannot_reopen_a_settled_verification_child():
+    child = {"kind": "analysis", "job_id": "a" * 32, "settled": False}
+    entered, resume = asyncio.Event(), asyncio.Event()
+
+    async def poll(*_args):
+        terminal = entered.is_set()
+        if not terminal:
+            entered.set()
+            await resume.wait()
+        return {
+            "success": True,
+            "data": {
+                "job_id": child["job_id"],
+                "state": "completed" if terminal else "running",
+                "terminal": terminal,
+            },
+        }
+
+    runner = SimpleNamespace(
+        report={"children": [child]}, io=SimpleNamespace(quality=poll), publish=lambda: None
+    )
+    service = VerificationService()
+    first = asyncio.create_task(service.observe_settlement(runner, monotonic() + 5, cancel=False))
+    await entered.wait()
+    try:
+        await service.observe_settlement(runner, monotonic() + 5, cancel=False)
+        assert child["settled"]
+    finally:
+        resume.set()
+        await first
     assert child["settled"]

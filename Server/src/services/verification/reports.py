@@ -8,6 +8,56 @@ from uuid import uuid4
 from services.script_quality.pages import encoded_size
 
 
+_REPORT_BYTES = 512 * 1024
+
+
+class ReportAdmissionError(ValueError):
+    """A run could not reserve a report before scheduling any work."""
+
+
+def _within_report_limit(report):
+    if encoded_size(report) <= _REPORT_BYTES:
+        return report
+    if "timing" in report:
+        without_timing = {key: value for key, value in report.items() if key != "timing"}
+        if encoded_size(without_timing) <= _REPORT_BYTES:
+            return without_timing
+    return None
+
+
+def _limited_report(identity, report):
+    # Keep externally observable ownership even when evidence no longer fits the report.
+    limited = {
+        "schema": "verification_report@1",
+        "run_id": identity,
+        "state": "running" if report.get("state") == "running" else "incomplete",
+        "interruption": "verification_report_limit",
+        "native_settled": report.get("native_settled") is True,
+        "stages": [],
+        "children": [],
+    }
+    for key in (
+        "project_scope",
+        "preparation_id",
+        "profile_id",
+        "profile_hash",
+        "required_permissions",
+        "baseline_id",
+        "source_token",
+        "started_at_unix_ms",
+        "finished_at_unix_ms",
+        "cancel_requested",
+    ):
+        if key in report and encoded_size(report[key]) <= 1024:
+            limited[key] = report[key]
+    children = report.get("children", [])
+    if encoded_size(limited) + encoded_size(children) <= _REPORT_BYTES:
+        limited["children"] = children
+    else:
+        limited["children_omitted"] = True
+    return limited
+
+
 def final_verdict(stages):
     states = {stage["state"] for stage in stages if stage.get("required", True)}
     for state in ("stale", "failed", "canceled", "incomplete"):
@@ -144,41 +194,43 @@ class ReportStore:
                 del self.records[identity]
 
     def create(self, owner, report):
-        self._expire()
+        identity = uuid4().hex
+        initial = _within_report_limit({**report, "run_id": identity})
+        if initial is None:
+            raise ReportAdmissionError("verification_report_limit")
+        snapshot = copy.deepcopy(initial)
         active = [row for row in self.records.values() if not row["settled"]]
         if (
             len(active) >= 16
             or sum(row["owner"] == owner for row in active) >= self.max_active_per_scope
         ):
-            raise ValueError("verification_capacity")
+            raise ReportAdmissionError("verification_capacity")
+        self._expire()
         while len(self.records) >= 64:
             expired = next((key for key, row in self.records.items() if row["settled"]), None)
             if expired is None:
-                raise ValueError("verification_capacity")
+                raise ReportAdmissionError("verification_capacity")
             del self.records[expired]
-        identity = uuid4().hex
         self.records[identity] = {
             "owner": owner,
             "settled": False,
             "expires": float("inf"),
-            "report": {},
+            "report": snapshot,
         }
-        self.update(identity, owner, report)
         return identity
 
     def update(self, identity, owner, report):
         row = self.records.get(identity)
         if row is None or row["owner"] != owner:
             raise ValueError("verification_not_found")
-        if encoded_size(report) > 512 * 1024:
-            if "timing" in report:
-                report = {key: value for key, value in report.items() if key != "timing"}
-            if encoded_size(report) > 512 * 1024:
-                raise ValueError("verification_report_limit")
-        row["report"] = copy.deepcopy(report)
+        snapshot = _within_report_limit(report)
+        limited = snapshot is None
+        row["report"] = copy.deepcopy(_limited_report(identity, report) if limited else snapshot)
+        return limited
 
     def finish(self, identity, owner, report, *, settled=True):
-        self.update(identity, owner, report)
+        """Update settlement and return an independent view if report detail was omitted."""
+        limited = self.update(identity, owner, report)
         row = self.records[identity]
         row.update(settled=settled, expires=self.clock() + self.ttl if settled else float("inf"))
         completed = [
@@ -186,6 +238,7 @@ class ReportStore:
         ]
         for key in completed[: -self.max_completed]:
             del self.records[key]
+        return copy.deepcopy(row["report"]) if limited else None
 
     def read(self, identity, owner):
         self._expire()
