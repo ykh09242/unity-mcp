@@ -216,7 +216,12 @@ def test_pinned_client_and_launch_examples_match_package_source() -> None:
                     assert words[words.index("--python") + 1] == ">=3.11", (relative, line)
                     sources.append(words[words.index("--from") + 1])
         assert sources, relative
-        assert all(source == expected for source in sources), (relative, sources)
+        if relative == "Server/README.md":
+            # Installed package metadata controls execution, including from an older archive.
+            assert sources == ["${UNITY_MCP_SERVER_SOURCE:?Set the installed package source first}"]
+            assert _read(ROOT / relative).count(expected) == 1
+        else:
+            assert all(source == expected for source in sources), (relative, sources)
 
 
 def test_upm_install_examples_select_the_fork_subdirectory_and_release() -> None:

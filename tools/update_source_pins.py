@@ -41,7 +41,7 @@ else:
 
 
 DOCUMENTS = {
-    "Server/README.md": 3,
+    "Server/README.md": 1,
     "website/docs/getting-started/clients.md": 1,
     "website/docs/guides/cli.md": 1,
 }
