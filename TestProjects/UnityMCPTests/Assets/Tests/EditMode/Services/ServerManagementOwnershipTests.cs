@@ -678,10 +678,12 @@ namespace MCPForUnityTests.Editor.Services
         public void PreBindLaunch_MismatchedPublishedServerIdentityCannotCancel(string mismatch)
         {
             DateTime original = DateTime.UtcNow.AddMinutes(-1);
-            _pids = new PidFileManager(_root, pid => pid != ServerPid ? original
+            _pids = new PidFileManager(_root, pid =>
+                pid != ServerPid ? original
                 : mismatch == "inaccessible_creation" ? (DateTime?)null
                 : mismatch == "reused_pid" ? original.AddSeconds(1)
-                : original);
+                : original
+            );
             _pids.StoreOwnedLaunchProcess(LauncherPid, Port, InstanceToken, original);
             _detector.ExistsOverride = true;
             _detector.Listening = mismatch == "server_bound";
@@ -745,10 +747,12 @@ namespace MCPForUnityTests.Editor.Services
         public void Start_PersistedCreationIdentityOnlyRetiresProvenReusedProcess(bool launcherRecord, string identity)
         {
             DateTime original = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
-            _pids = new PidFileManager(_root, _ => identity == "inaccessible" ? throw new UnauthorizedAccessException()
+            _pids = new PidFileManager(_root, _ =>
+                identity == "inaccessible" ? throw new UnauthorizedAccessException()
                 : identity == "unknown" ? null
                 : identity == "reused" ? original.AddMinutes(1)
-                : original);
+                : original
+            );
             _detector.Listening = false;
             _detector.ExistsOverride = true;
             if (launcherRecord)
@@ -822,9 +826,11 @@ namespace MCPForUnityTests.Editor.Services
             DateTime original = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
             DateTime current = original;
             int reads = 0;
-            _pids = new PidFileManager(_root, _ => observation == "inaccessible" ? null
+            _pids = new PidFileManager(_root, _ =>
+                observation == "inaccessible" ? null
                 : observation == "creation_race" && ++reads > 1 ? original.AddMinutes(1)
-                : current);
+                : current
+            );
             if (observation == "other_token")
                 _detector.CommandLine = "python --unity-instance-token another-token";
             _service = new ServerManagementService(_detector, _pids, _terminator);

@@ -204,7 +204,8 @@ internal static class PropertyScalarHarness
             var color = TextureOps.ParseColor32(JArray.Parse("[999,-2,3]"));
             Require(color.r == 255 && color.g == 0 && color.b == 3 && color.a == 255, "Clamping changed");
         });
-        Check("read-only scalar converter preserves output", () => Require(
+        Check("read-only scalar converter preserves output", () =>
+            Require(
                 JToken
                     .FromObject(
                         new
@@ -217,7 +218,8 @@ internal static class PropertyScalarHarness
                     )
                     .ToString(Formatting.None) == "{\"Flag\":true,\"Count\":3,\"Value\":1.5}",
                 "Scalar output changed"
-            ));
+            )
+        );
         Check("byte array base64 control", () =>
             Require(
                 PropertyConversion.ConvertTo<byte[]>(new JValue("AQID"))[2] == 3

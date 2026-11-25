@@ -868,7 +868,9 @@ namespace MCPForUnityTests.Editor.Services
                                 oldConnection.Token,
                             }
                         )
-                ).GetAwaiter().GetResult();
+                )
+                    .GetAwaiter()
+                    .GetResult();
                 var callbacks = (EditorApplication.delayCall?.GetInvocationList() ?? Array.Empty<Delegate>()).Except(previousCallbacks).ToArray();
                 Assert.AreEqual(1, callbacks.Length);
                 Assert.AreEqual("old-session", client.State.SessionId, "The current owner must still publish registration.");

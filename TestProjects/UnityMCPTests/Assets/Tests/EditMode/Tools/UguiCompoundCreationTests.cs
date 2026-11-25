@@ -2375,7 +2375,8 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             Phase = "cleaning";
             CleanupEditor(null);
-            Capture("cleanup_evidence", () => WriteEvidence(
+            Capture("cleanup_evidence", () =>
+                WriteEvidence(
                     "cleanup",
                     new JObject
                     {
@@ -2383,7 +2384,8 @@ namespace MCPForUnityTests.EditMode.Tools
                         ["errors"] = JArray.Parse(CleanupErrorsJson),
                         ["phase"] = Phase,
                     }
-                ));
+                )
+            );
             string errors = CleanupErrorsJson;
             OwnedStateJson = ManifestPath = ManifestSha256 = Phase = CleanupErrorsJson = null;
             if (JArray.Parse(errors).Count != 0)
