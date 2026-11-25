@@ -10,7 +10,7 @@ from core import telemetry
 from core.config import ServerConfig, config
 
 
-def test_distribution_includes_source_and_model_licenses() -> None:
+def test_distribution_includes_the_source_license() -> None:
     # Given the server's declared packaging metadata.
     server_root = Path(__file__).parents[1]
     with (server_root / "pyproject.toml").open("rb") as manifest:
@@ -20,15 +20,9 @@ def test_distribution_includes_source_and_model_licenses() -> None:
     license_files = [server_root / name for name in project["license-files"]]
 
     # Then the redistributed package includes the complete original MIT notice.
-    assert project["license"] == "MIT AND Apache-2.0"
-    assert license_files == [
-        server_root / "LICENSE",
-        server_root / "src/services/registry/model/LICENSE.txt",
-        server_root / "src/services/registry/model/POTION-LICENSE.txt",
-    ]
+    assert project["license"] == "MIT"
+    assert license_files == [server_root / "LICENSE"]
     assert license_files[0].read_bytes() == (server_root.parent / "LICENSE").read_bytes()
-    assert "Apache License" in license_files[1].read_text(encoding="utf-8")
-    assert "Permission is hereby granted" in license_files[2].read_text(encoding="utf-8")
 
 
 def test_version_uses_installed_fork_when_upstream_is_also_installed(
