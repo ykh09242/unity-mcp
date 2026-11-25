@@ -514,25 +514,29 @@ namespace MCPForUnityTests.EditMode.Tools
             LogAssert.NoUnexpectedReceived();
         }
 
-        [Test]
-        public void InvalidNativeExtensionCannotReportCreateSuccess()
+        [TestCase("Material")]
+        [TestCase("PhysicsMaterial")]
+        public void InvalidNativeExtensionCannotReportCreateSuccess(string assetType)
         {
-            string path = _root + "/One.txt";
-            bool previous = LogAssert.ignoreFailingMessages;
-            JObject response;
-            try
-            {
-                // Unity2021.3 logs this error; later engines may throw. Both must produce failure.
-                LogAssert.ignoreFailingMessages = true;
-                response = Send("create", path, "PhysicsMaterial");
-            }
-            finally
-            {
-                LogAssert.ignoreFailingMessages = previous;
-            }
+            string parent = _root + "/Rejected";
+            string path = parent + "/One.txt";
+            var response = Send("create", path, assetType);
             Assert.IsFalse((bool)response["success"], response.ToString());
             Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(path));
             Assert.IsEmpty(AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets));
+            Assert.IsFalse(Directory.Exists(Absolute(parent)));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase("Material")]
+        [TestCase("PhysicsMaterial")]
+        public void GenericNativeExtensionPreservesRequestedMainAssetType(string assetType)
+        {
+            if (assetType == "Material" && RenderPipelineUtility.ResolveShader(null) == null)
+                Assert.Ignore("A compatible material shader is required for this positive control.");
+            string path = _root + "/One.asset";
+            AssertPersistentResponse(Send("create", path, assetType), path);
+            Assert.AreEqual(assetType == "Material" ? typeof(Material) : typeof(PhysicsMaterialType), AssetDatabase.GetMainAssetTypeAtPath(path));
         }
 
         [Test]

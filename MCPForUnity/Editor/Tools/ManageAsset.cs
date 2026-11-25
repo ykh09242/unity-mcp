@@ -391,6 +391,13 @@ namespace MCPForUnity.Editor.Tools
             if (lowerAssetType == "physicsmaterial")
                 return new ErrorResponse("physics_module_unavailable: PhysicsMaterial creation requires com.unity.modules.physics.");
 #endif
+            string extension = Path.GetExtension(fullPath);
+            string nativeExtension = lowerAssetType == "material" ? ".mat" : ".physicMaterial";
+            if (
+                !string.Equals(extension, nativeExtension, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(extension, ".asset", StringComparison.OrdinalIgnoreCase)
+            )
+                return new ErrorResponse($"Use {nativeExtension} or .asset when creating a {assetType}.");
             Shader shader = null;
             if (lowerAssetType == "material")
             {
@@ -464,6 +471,8 @@ namespace MCPForUnity.Editor.Tools
                 }
 
                 AssetDatabase.SaveAssetIfDirty(newAsset);
+                if (AssetDatabase.GetMainAssetTypeAtPath(fullPath) != newAsset.GetType())
+                    return new ErrorResponse($"The main asset at '{fullPath}' does not match the requested {assetType}.");
                 // AssetDatabase.Refresh(); // CreateAsset often handles refresh
                 var response = SavedAssetResponse(fullPath, $"Asset '{fullPath}' created successfully.");
                 folders.Complete();
