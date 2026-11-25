@@ -1,5 +1,7 @@
 # Multilingual Unity discovery evaluation
 
+This document records the earlier ranked-search experiments. Their training code, weights, test limits and reproduction commands are preserved at [the archived revision](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/tools/experiments). The current [agent selection evaluation](agent_family_selection.md) uses the public family directory.
+
 The catalog ranks a next Unity operation or readable resource. Each evaluation submits the same original requests to the core and full catalogs.
 
 A family-first challenger improved raw top-three retrieval and blinded agent choices on eight held-out languages. Two families had a clean development split. A shared recording-status binding overlapped training in the third. The split audit and existing menu-path and state-lookup regressions prevented deployment. [Replacement trial and release decision](family_first_discovery.md)
@@ -28,11 +30,11 @@ The [48 confirmation requests](universal_discovery_read_recall_confirmation.json
 
 The short Korean active-scene question reached first place in both catalogs. In full, one Czech request for open scenes lost its third-place inventory to the single-scene read. The fresh package inventory requests remained outside the top three. On the earlier 84, top-three hits rose from 37 to 48 in each catalog. On those same requests, first-place hits rose from 21 to 25 in core and from 21 to 24 in full. These results measure the sampled phrasings and tasks.
 
-The installed wheel reproduced the frozen source ranking on all 264 searches across the three suites and two profiles with external network access and child processes blocked. No search changed the inventory or dispatched a native or business operation. [Public regression tests](../tests/test_discovery_read_scope.py) · [Registration and visibility tests](../../Server/tests/test_semantic_family_recall.py)
+The installed wheel reproduced the frozen source ranking on all 264 searches across the three suites and two profiles with external network access and child processes blocked. No search changed the inventory or dispatched a native or business operation. [Public regression tests](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/tools/tests/test_discovery_read_scope.py) · [Registration and visibility tests](../../Server/tests/test_semantic_family_recall.py)
 
 ## Current state and inventory lookup
 
-The bundled ranker compares what the request asks to return with what each visible read operation returns. A list can mention the current item's state in its description. The ranker therefore checks whether the request singles out that property. It also uses the declared inputs when a single-record query requires an identifier beyond the inputs for the corresponding inventory. The 1,064-byte weights were fit offline on 49 generic request pairs and 24 declaration pairs outside the Unity catalog. [Calibration data](observation_scope_pairs.json) · [Weight reproduction](../../Server/src/services/registry/model/README.md)
+The bundled ranker compares what the request asks to return with what each visible read operation returns. A list can mention the current item's state in its description. The ranker therefore checks whether the request singles out that property. It also uses the declared inputs when a single-record query requires an identifier beyond the inputs for the corresponding inventory. The 1,064-byte weights were fit offline on 49 generic request pairs and 24 declaration pairs outside the Unity catalog. [Calibration data](observation_scope_pairs.json) · [Weight reproduction](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/Server/src/services/registry/model/README.md)
 
 The first 48 original requests were sealed at `7137f965d`. Replaying them on `04dd8ba04` revealed a lost inventory result and limited recovery in the other families. These results informed the ranking change at `6cae0aefb`. A second set of 36 was then written in Korean, English, Chinese, Indonesian, Czech and Dutch and sealed at `d0ac304f0` before its first replay. Neither set supplied calibration pairs. The public MCP client sent each original with `limit=3` against both the core and full catalogs. [First 48 requests](universal_discovery_read_scope.json) · [Fresh 36 requests](universal_discovery_read_scope_confirmation.json)
 
@@ -51,7 +53,7 @@ The previous installed runtime was `fc5b1de9d`. With external network and subpro
 | Selected navigation agent settings in top three | 0 → 1 / 6 | 0 → 1 / 6 |
 | Installed package list in top three | 0 → 0 / 6 | 0 → 0 / 6 |
 
-On the first 48 requests, top-three hits rose from 15 to 22 in core and from 14 to 22 in full. Both catalogs kept open-scene inventories first for seven of eight inventory requests. In a separate diagnostic, supplying both registered reads and seeding the opposite first recovered the requested scope in 25 of 48 cases. Seeding the requested read first preserved it in 46. The per-task regression checks run through the public catalog as well as this controlled pair test. [Regression checks](../tests/test_discovery_read_scope.py)
+On the first 48 requests, top-three hits rose from 15 to 22 in core and from 14 to 22 in full. Both catalogs kept open-scene inventories first for seven of eight inventory requests. In a separate diagnostic, supplying both registered reads and seeding the opposite first recovered the requested scope in 25 of 48 cases. Seeding the requested read first preserved it in 46. The per-task regression checks run through the public catalog as well as this controlled pair test. [Regression checks](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/tools/tests/test_discovery_read_scope.py)
 
 ```sh
 python tools/experiments/universal_discovery_evaluation.py --fixture tools/experiments/universal_discovery_read_scope_confirmation.json
@@ -60,7 +62,7 @@ python -m pytest tools/tests/test_discovery_read_scope.py
 
 ## Shared operation retrieval
 
-The runtime resolves each visible action against its registered source declaration, compares sibling actions with the same target, and uses a single learned comparison per bundled encoder. New registrations supply the same selector and purpose fields. Language tags, route IDs and translated requests are absent from the numerical projections. The four previously published training corpora include the initial 48 read/edit requests. The other 24 published read/edit requests, the 56-request development corpus, and the final 24-request confirmation corpus were excluded from fitting. [Weights and reproduction](../../Server/src/services/registry/model/README.md)
+The runtime resolves each visible action against its registered source declaration, compares sibling actions with the same target, and uses a single learned comparison per bundled encoder. New registrations supply the same selector and purpose fields. Language tags, route IDs and translated requests are absent from the numerical projections. The four previously published training corpora include the initial 48 read/edit requests. The other 24 published read/edit requests, the 56-request development corpus, and the final 24-request confirmation corpus were excluded from fitting. [Weights and reproduction](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/Server/src/services/registry/model/README.md)
 
 The following are raw `search_unity_tools` results from an installed wheel, with `limit=3`, no hints, and external network and subprocess calls blocked. Counts compare the previous installed runtime `1c4bfeacfdff` with `9031f0f5b1a6`. An independently authored 24-request corpus was sealed at `766de34d2`. Its first replay at `5a7e744c3` took place after the weights and ranking were frozen. Subsequent independent code review corrected an English reference-inspection regression. The 56-request development corpus and 24-request confirmation corpus each contain two activation formulations per language. Their read controls ask for existing state. [56 development requests](universal_discovery_edit_holdout.json) · [24 confirmation requests](universal_discovery_activation_confirmation.json)
 
@@ -71,7 +73,7 @@ The following are raw `search_unity_tools` results from an installed wheel, with
 | Confirmation, 6 languages | core | 1 → 8 / 12 | 7 → 3 / 12 | 6 → 7 / 12 | 1 → 2 / 12 |
 | Confirmation, 6 languages | full | 4 → 5 / 12 | 3 → 2 / 12 | 4 → 5 / 12 | 2 → 3 / 12 |
 
-Four confirmation languages (Czech, French, Spanish and Tamil) were absent from the calibration corpora. Their eight activation requests went from 1 to 7 top-three hits in core and from 4 to 5 in full. Across all six confirmation languages the core catalog missed the named-scene requests in Japanese and Tamil and both Swahili activation requests. In the original 72 read/edit requests, wrong first choices on the 36 edits decreased from 5 to 2 in core and 3 to 1 in full. The earlier five-language menu test retained first place in all 60 combinations of wording, profile and route surface. These finite corpora have no native-speaker review and do not establish accuracy for every language. [Regression gates](../tests/test_universal_discovery_evaluation.py)
+Four confirmation languages (Czech, French, Spanish and Tamil) were absent from the calibration corpora. Their eight activation requests went from 1 to 7 top-three hits in core and from 4 to 5 in full. Across all six confirmation languages the core catalog missed the named-scene requests in Japanese and Tamil and both Swahili activation requests. In the original 72 read/edit requests, wrong first choices on the 36 edits decreased from 5 to 2 in core and 3 to 1 in full. The earlier five-language menu test retained first place in all 60 combinations of wording, profile and route surface. These finite corpora have no native-speaker review and do not establish accuracy for every language. [Regression gates](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/tools/tests/test_universal_discovery_evaluation.py)
 
 ## Transfer to a family excluded from calibration
 
@@ -96,7 +98,7 @@ Scene activation accounts for all 32 scene edits. Withholding that family costs 
 
 ### Shared effect calibration
 
-Version 2 adds 528 bytes of coefficients to predict whether a request asks to observe or act. Each fold learns these coefficients from its retained requests and declarations. At search time, the encoders must agree before the ranker can use a retrieved read as evidence for an action on the same property of the leading family. The change preserves the original retrieval projections byte for byte. [Model and reproduction](../../Server/src/services/registry/model/README.md)
+Version 2 adds 528 bytes of coefficients to predict whether a request asks to observe or act. Each fold learns these coefficients from its retained requests and declarations. At search time, the encoders must agree before the ranker can use a retrieved read as evidence for an action on the same property of the leading family. The change preserves the original retrieval projections byte for byte. [Model and reproduction](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/Server/src/services/registry/model/README.md)
 
 The same 104 published regression requests produced the following representative ranks. Each arrow compares v1 with v2. Observations retained their first-place, top-three and labelled opposite counts in all four excluded-family/profile combinations. [Current CI limits](discovery_family_metrics/reference.json)
 
@@ -109,14 +111,14 @@ The same 104 published regression requests produced the following representative
 
 The scene top-three gap between the complete and excluded-family fits narrowed from eight to seven cases in core and remained five cases in full. A third control excluded the Console family from calibration, retaining 221 declarations and 164 requests. On 26 excluded Console requests in 13 languages, enabling the new stage preserved 12/14 top-three clear actions and 10/12 top-three reads in each profile, with zero labelled opposite first choices.
 
-Run from the repository root in the existing server environment. The replay writes the training and corpus digests, model identities, per-language scores and offered routes to the optional output file. CI replays the two excluded-family fits and guards correct first and top-three counts and opposite-effect ceilings independently for each profile and direction. [Public MCP replay](evaluate_discovery_families.py) · [CI regression tests](../tests/test_discovery_family_transfer.py)
+Run from the repository root in the existing server environment. The replay writes the training and corpus digests, model identities, per-language scores and offered routes to the optional output file. CI replays the two excluded-family fits and guards correct first and top-three counts and opposite-effect ceilings independently for each profile and direction. [Public MCP replay](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/tools/experiments/evaluate_discovery_families.py) · [CI regression tests](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/tools/tests/test_discovery_family_transfer.py)
 
 ```sh
 python tools/experiments/evaluate_discovery_families.py --output family-results.json
 python -m pytest tools/tests/test_discovery_family_split.py tools/tests/test_discovery_family_transfer.py
 ```
 
-To reproduce a test artifact, capture the training inputs in the server environment. Run the second command in the existing NumPy maintainer environment described in the metric reproduction guide. Replace `manage_scene` with `manage_editor` to check the other fold. Omitting `--exclude-family` captures the complete production fit. [Metric reproduction guide](../../Server/src/services/registry/model/README.md)
+To reproduce a test artifact, capture the training inputs in the server environment. Run the second command in the existing NumPy maintainer environment described in the metric reproduction guide. Replace `manage_scene` with `manage_editor` to check the other fold. Omitting `--exclude-family` captures the complete production fit. [Metric reproduction guide](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/Server/src/services/registry/model/README.md)
 
 ```sh
 python tools/experiments/fit_discovery_metric.py capture scene-training.json.gz --exclude-family manage_scene
@@ -129,7 +131,7 @@ The paired evaluations distinguish listing project layers from removing a layer,
 
 An independent model author wrote the first 48 requests in Arabic, Finnish, Greek, Japanese, Korean, Thai, Turkish and Ukrainian. Its first replay used the frozen runtime at `f3d0447b0`. A separate author wrote another 24 requests in Bengali, Hebrew, Indonesian and Romanian before the final runtime was frozen. Neither corpus has received native-speaker review. [Initial pairs](universal_discovery_effect_pairs.json) · [Confirmation pairs](universal_discovery_effect_confirmation.json)
 
-The table compares the previously shipped runtime `48a0203e0` with `1c4bfeacfdff810ca7b9632f795f2547e2630dbc`. All expected bindings were available. The fixtures' SHA-256 digests are pinned in the regression test, which checks reads and edits separately in each catalog. [Regression test](../tests/test_universal_discovery_evaluation.py)
+The table compares the previously shipped runtime `48a0203e0` with `1c4bfeacfdff810ca7b9632f795f2547e2630dbc`. All expected bindings were available. The fixtures' SHA-256 digests are pinned in the regression test, which checks reads and edits separately in each catalog. [Regression test](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/tools/tests/test_universal_discovery_evaluation.py)
 
 | Corpus | Catalog | Request | Cases | First | Top three | Wrong first | Wrong in top three |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -165,7 +167,7 @@ An independent model author wrote five requests per language in Hindi, Indonesia
 
 Across the separate Korean, Japanese, Spanish, Arabic and Turkish menu cases, first-place results increased from 56/60 to 60/60. These are ten distinct prompts across two catalogs and three search surfaces. Tool and combined searches expected `list_menu_declarations`. Resource searches expected `mcpforunity://menu-items`. Tools-only searches placed the lookup tool first in 20/20 cases in both versions. [Menu acceptance test](../tests/test_menu_discovery_probe.py)
 
-CI checks the measured v1 and v2 rank and availability floors for each language and profile, wrong-effect ceilings and dispatch invariants. The independent absolute targets remain fixed. On this runtime, only v1 full met all absolute targets. v3 missed those targets in both profiles, including the maximum of five wrong first choices. [Bundled regression reference](universal_discovery_bundled_reference.json) · [CI regression test](../tests/test_universal_discovery_evaluation.py)
+CI checks the measured v1 and v2 rank and availability floors for each language and profile, wrong-effect ceilings and dispatch invariants. The independent absolute targets remain fixed. On this runtime, only v1 full met all absolute targets. v3 missed those targets in both profiles, including the maximum of five wrong first choices. [Bundled regression reference](universal_discovery_bundled_reference.json) · [CI regression test](https://github.com/ykh09242/unity-mcp/blob/46ea3b433b90a001695903391b699f7a5569e965/tools/tests/test_universal_discovery_evaluation.py)
 
 To replay v3 from this checkout in a locked Server environment, run the following PowerShell commands. The runner writes per-request results and returns exit code 1 if a profile misses an absolute target.
 

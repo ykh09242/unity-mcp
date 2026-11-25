@@ -1,6 +1,7 @@
 """A scoped, deterministic directory for agents choosing operations from their declarations."""
 
 from collections import defaultdict
+from typing import Literal, NotRequired, TypedDict
 
 from services.registry.action_catalog import (
     action_card,
@@ -13,11 +14,32 @@ from services.registry.action_catalog import (
 )
 
 
+class FamilyCatalogResponse(TypedDict):
+    scope: Literal["mcp_context", "local_catalog"]
+    selection: Literal["agent"]
+    matching: Literal["catalog"]
+    query: str
+    route_surfaces: str
+    readiness: Literal["unobserved"]
+    offset: int
+    view: NotRequired[Literal["families", "operations"]]
+    families: NotRequired[list[dict]]
+    family: NotRequired[str]
+    operations: NotRequired[list[dict]]
+    hint: NotRequired[str]
+    total: NotRequired[int]
+    next_offset: NotRequired[int | None]
+    success: NotRequired[Literal[False]]
+    error: NotRequired[str]
+
+
 def _summary(description):
     return (description or "").strip().partition("\n")[0].partition(". ")[0][:240]
 
 
-def browse_families(request, entries, resources, *, visible_names, blocked):
+def browse_families(
+    request, entries, resources, *, visible_names, blocked
+) -> FamilyCatalogResponse:
     advertised = True if visible_names is not None else None
     directory = {}
     tools = {}

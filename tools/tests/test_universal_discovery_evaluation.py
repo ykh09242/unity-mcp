@@ -1,4 +1,4 @@
-"""Guard the shipped bundled ranking separately from the absolute evaluation targets."""
+"""Guard bundled ranking and public agent evidence on the original discovery fixtures."""
 
 import argparse
 from dataclasses import replace
@@ -15,7 +15,6 @@ from services.registry.semantic_encoder import COMBINED_MODEL_ID
 from services.registry.semantic_encoder import MODEL_ID as PRIMARY_ID
 
 from tools.experiments.discovery_evaluation_fixture import FIXTURE, Request, load_suite
-from tools.experiments.fit_discovery_metric import TRAINING
 from tools.experiments.universal_discovery_evaluation import (
     PREREGISTERED_LIMITS,
     PROFILES,
@@ -24,8 +23,8 @@ from tools.experiments.universal_discovery_evaluation import (
     evaluate_profile,
     gate_failures,
     score,
-    summarize,
 )
+from tools.tests.discovery_agent_contract import assert_public_agent_contract
 
 REFERENCE = FIXTURE.with_name("universal_discovery_bundled_reference.json")
 SUITES = (FIXTURE, FIXTURE.with_name("universal_discovery_queries_v2.json"))
@@ -117,85 +116,22 @@ async def test_layer_number_queries_rank_the_readable_resource_first(profile):
     assert report["summary"]["hidden_expected_route"] == 0
 
 
-@pytest.mark.parametrize(
-    ("suite_name", "profile", "read_limits", "edit_limits"),
-    [
-        # Each direction has two rank floors and two wrong-effect ceilings (first, top three).
-        ("pairs", "core", (18, 20, 1, 3), (20, 23, 2, 7)),
-        ("pairs", "full", (19, 21, 1, 3), (19, 22, 1, 4)),
-        ("confirmation", "core", (11, 12, 0, 3), (10, 12, 0, 2)),
-        ("confirmation", "full", (11, 12, 0, 4), (10, 12, 0, 2)),
-    ],
-)
+@pytest.mark.parametrize("suite_name", EFFECT_FIXTURES)
+@pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.asyncio
-async def test_read_and_edit_quality_are_preserved_separately(
-    suite_name, profile, read_limits, edit_limits
-):
+async def test_agent_catalog_exposes_distinct_public_read_and_edit_effects(suite_name, profile):
     suite = load_suite(FIXTURE.with_name(f"universal_discovery_effect_{suite_name}.json"))
     assert suite.sha256 == EFFECT_FIXTURES[suite_name]
-    report = await evaluate_profile(profile, suite)
-    assert report["inventory_unchanged"]
-    assert not report["unexpected_business_calls"] and not report["native_dispatch_attempts"]
-    assert report["summary"]["hidden_expected_route"] == 0
-    for tasks, limits in (
-        ({"layer_inventory", "tag_inventory", "open_scenes"}, read_limits),
-        ({"retire_layer", "register_tag", "activate_scene"}, edit_limits),
-    ):
-        metrics = summarize([row for row in report["rows"] if row["task"] in tasks])
-        assert metrics["available"] == metrics["count"] == len(suite.requests) // 2
-        first, top_three, wrong_first, wrong_three = limits
-        assert metrics["top1"] >= first and metrics["top3"] >= top_three, metrics
-        assert metrics["wrong_effect_top1"] <= wrong_first, metrics
-        assert metrics["wrong_effect_top3"] <= wrong_three, metrics
+    await assert_public_agent_contract(profile, suite)
 
 
+@pytest.mark.parametrize("fixture", SCENE_FIXTURES)
+@pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    (
-        "fixture",
-        "profile",
-        "activation_hits",
-        "read_hits",
-        "wrong_read_first",
-        "wrong_edit_first",
-        "unseen",
-    ),
-    [
-        ("edit_holdout", "core", 12, 12, 1, 4, (6, 6)),
-        ("edit_holdout", "full", 13, 14, 1, 4, (6, 5)),
-        ("activation_confirmation", "core", 8, 7, 2, 3, (8, 7)),
-        ("activation_confirmation", "full", 5, 5, 3, 2, (8, 5)),
-    ],
-)
-async def test_scene_activation_recall_and_wrong_first_choices(
-    fixture, profile, activation_hits, read_hits, wrong_read_first, wrong_edit_first, unseen
-):
+async def test_agent_catalog_exposes_activation_and_competing_scene_operations(fixture, profile):
     suite = load_suite(FIXTURE.with_name(f"universal_discovery_{fixture}.json"))
     assert suite.sha256 == SCENE_FIXTURES[fixture]
-    report = await evaluate_profile(profile, suite)
-    assert report["summary"]["available"] == len(suite.requests)
-    assert report["summary"]["hidden_expected_route"] == 0
-    assert report["inventory_unchanged"]
-    assert not report["unexpected_business_calls"] and not report["native_dispatch_attempts"]
-
-    read_tasks = {"active_scene", "open_scenes", "tag_inventory"}
-    rows = report["rows"]
-    activation_rows = [r for r in rows if r["task"] in {"activate_scene", "activate_named_scene"}]
-    activation = summarize(activation_rows)
-    reads = summarize([r for r in rows if r["task"] in read_tasks])
-    edits = summarize([r for r in rows if r["task"] not in read_tasks])
-    assert activation["top3"] >= activation_hits, activation
-    assert reads["top3"] >= read_hits and reads["wrong_effect_top1"] <= wrong_read_first, reads
-    assert edits["wrong_effect_top1"] <= wrong_edit_first, edits
-
-    trained_languages = {
-        request.language
-        for name in TRAINING
-        for request in load_suite(FIXTURE.with_name(name)).requests
-    }
-    transfer = summarize([r for r in activation_rows if r["language"] not in trained_languages])
-    cases, hits = unseen
-    assert transfer["count"] == cases and transfer["top3"] >= hits, transfer
+    await assert_public_agent_contract(profile, suite)
 
 
 def test_unadvertised_action_cannot_earn_rank_or_disappear_from_the_record():

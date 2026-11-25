@@ -56,6 +56,7 @@ from services.registry.capability_catalog import (
     MENU_DECLARATIONS_URI,
 )
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
+from services.registry.family_catalog import FamilyCatalogResponse, browse_families
 from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVATION
 from services.registry.semantic_catalog import (
     SEMANTIC_EVIDENCE_FLOOR,
@@ -63,9 +64,6 @@ from services.registry.semantic_catalog import (
     semantic_scores,
 )
 from services.registry.semantic_encoder import SemanticModelUnavailable
-from services.registry.semantic_operations import Operation, rank_operations
-from services.registry.semantic_metric import recall_operation
-from services.registry.semantic_family_recall import rank_observations
 
 
 RequiredValues = Annotated[list[ObservationValue], Field(min_length=1, max_length=32)]
@@ -398,8 +396,6 @@ def semantic_documents(
     *,
     exact_query=None,
     surfaces="both",
-    operations=None,
-    effects=None,
 ):
     """Build semantic documents from eligible declarations; an exact identifier bypasses ranking."""
     documents: dict[RouteKey, tuple[str, ...]] = {}
@@ -456,17 +452,6 @@ def semantic_documents(
                 guidance.observation if guidance else None,
                 examples,
             )
-            if effects is not None and key in documents:
-                effects[key] = action_intent(guidance, result)
-            if operations is not None and action and key in documents:
-                card = canonical or guidance
-                operations[key] = Operation(
-                    owner,
-                    action,
-                    card.purpose if card else purpose,
-                    tuple(card.search_examples) if card else (),
-                    tuple(card.required) if card else (),
-                )
     for resource in resources:
         identifier = resource.get("uri") or resource["uri_template"]
         if surfaces != "tools" and query in (
@@ -490,8 +475,6 @@ def semantic_documents(
             resource.get("observation") if template else meta.get(OBSERVATION_META),
             alias.get("examples", ()) if isinstance(alias, dict) else (),
         )
-        if effects is not None and key in documents:
-            effects[key] = "observe"
     for keys in equivalent_keys.values():
         descriptions = tuple(dict.fromkeys(text for key in keys for text in documents[key]))
         for key in keys:
@@ -508,7 +491,6 @@ def semantic_documents(
 
 
 def _semantic_catalog(original, capabilities, resources, unavailable_parents, intent, surfaces):
-    operations, effects = {}, {}
     documents = semantic_documents(
         capabilities,
         resources,
@@ -516,23 +498,8 @@ def _semantic_catalog(original, capabilities, resources, unavailable_parents, in
         intent,
         exact_query=original,
         surfaces=surfaces,
-        operations=operations,
-        effects=effects,
     )
-    if not documents:
-        return None
-    baseline = semantic_scores(original, documents)
-    scores = baseline[1]
-    # A tool and a resource can expose the same observation. If it is the only document
-    # in the retrieved neighborhood, there is no competing operation to disambiguate.
-    if surfaces == "resources" or (
-        len({key[0] == "tool" for key in scores}) == 2
-        and len({documents[key] for key in scores}) == 1
-    ):
-        return baseline
-    canonical = rank_operations(original, documents, operations, baseline, semantic_scores)
-    ranked = recall_operation(original, documents, operations, baseline, canonical, effects)
-    return rank_observations(original, documents, operations, effects, ranked)
+    return semantic_scores(original, documents) if documents else None
 
 
 def _route_evidence(
@@ -707,8 +674,8 @@ def search_catalog(
     *,
     visible_names: set[str] | None = None,
     resources: list[CatalogResource] | None = None,
-) -> SearchResponse:
-    """Rank actions and readable resources while retaining the tool-level result contract."""
+) -> SearchResponse | FamilyCatalogResponse:
+    """Browse complete scoped declarations or rank actions and readable resources."""
     matches: list[tuple[float, str, SearchResult]] = []
     routes: list[RankedRoute] = []
     additional_routes: list[RankedRoute] = []
@@ -739,8 +706,6 @@ def search_catalog(
     elif structured and visible_names is not None:
         entries = [entry for entry in entries if entry["name"] in visible_names]
     if request.selection == "agent":
-        from services.registry.family_catalog import browse_families
-
         blocked = {
             key
             for read in _EQUIVALENT_READS

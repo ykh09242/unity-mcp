@@ -88,8 +88,6 @@ services = ["skills_bundle.json", "test_results_view.html"]
 "services.registry" = [
     "model/static-multilingual-v1.q8",
     "model/potion-256.q2",
-    "model/operation-metric-v2.q8",
-    "model/observation-scope-v1.q8",
     "model/POTION-LICENSE.txt",
     "model/POTION.md",
     "model/LICENSE.txt",

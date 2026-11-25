@@ -2,9 +2,13 @@
 
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+
+from services.registry import action_catalog, task_search
+from services.registry.action_guidance_types import ActionGuidance, ToolGuidance
 
 
 @pytest.fixture
@@ -686,3 +690,47 @@ def test_all_guidance_matches_registered_actions_and_parameters(entries):
         parameters = inspect.signature(entry["func"]).parameters
         for action in guidance.actions.values():
             assert set(action.required) <= parameters.keys()
+
+
+def test_new_forwarder_gets_source_meaning_and_keeps_its_own_parameters(monkeypatch):
+    source, adapter = "sample_vault", "vault_doors"
+    edit = ActionGuidance("Seal a vault door.", required=("master_key",), intent="edit")
+    monkeypatch.setitem(
+        action_catalog.TOOL_GUIDANCE, source, ToolGuidance(actions={"seal": edit, "erase": edit})
+    )
+    monkeypatch.setitem(
+        action_catalog._CAPABILITIES, adapter, SimpleNamespace(source=source, actions=("seal",))
+    )
+    entry = {"name": adapter, "description": "Use the selected vault door.", "kwargs": {}}
+    inherited = action_catalog.action_guidance(entry, "seal")
+    assert (inherited.purpose, inherited.intent, inherited.required) == (edit.purpose, "edit", ())
+    assert action_catalog.action_guidance(entry, "erase") is None
+    assert action_catalog.action_guidance(entry, "seal", inherit=False) is None
+    entry["input_schema"] = {
+        "oneOf": [
+            {
+                "properties": {"action": {"const": "seal"}},
+                "required": ["action", "door"],
+                "description": "Seal the selected door.",
+            }
+        ]
+    }
+    wire = action_catalog.action_guidance(entry, "seal")
+    assert (wire.purpose, wire.intent, wire.required) == (
+        "Seal the selected door.",
+        "edit",
+        ("door",),
+    )
+
+
+@pytest.mark.parametrize("operation", ["close_scene", "create", "move_to_scene"])
+def test_focused_scene_edits_survive_the_explicit_intent_filter(operation):
+    name = "scene_lifecycle"
+    item = {"name": name, "group": "core", "description": "", "kwargs": {}}
+    response = task_search.search_catalog(
+        task_search.SearchRequest(query=operation, intent="edit", route_surfaces="tools"),
+        [item],
+        visible_names={name},
+    )
+    first = response["route_groups"][0]["representative"]
+    assert (first["tool"], first["operation"], first["intent"]) == (name, operation, "edit")
