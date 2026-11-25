@@ -412,7 +412,7 @@ async def test_principal_change_discards_selected_project_identity(
         )
         command_hub.websocket.state.user_id = "user-a"
         await auth.attach_socket(command_hub.websocket, "plugin:user-a")
-        owner = {"user_id": "user-a", "unity_instance": "Selected@hash"}
+        owner = {"user_id": "user-a", "unity_instance": "PrivateOwned@hash"}
         await install_native_replies(command_hub, native_observations())
         reply = command_hub.websocket.send_json
 
