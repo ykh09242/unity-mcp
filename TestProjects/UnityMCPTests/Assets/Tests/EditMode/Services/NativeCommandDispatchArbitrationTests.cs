@@ -386,6 +386,57 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void ReplacedGeneratedAssetStatusRunsItsOwnHandlerWithoutTheBatchWriter()
+        {
+            const string command = "generate_image";
+            string key = EditorPrefKeys.ToolEnabledPrefix + command;
+            bool hadPreference = EditorPrefs.HasKey(key);
+            bool enabled = EditorPrefs.GetBool(key, false);
+            object original = handlers[command];
+            ExecutionContext continuation = null;
+            void AssertNoParent()
+            {
+                Assert.IsNull(NativeCommandArbitrator.TakeCompositionLease());
+                bool admitted = NativeCommandArbitrator.Shared.TryAcquire(ToolOperationMode.Exclusive, null, null, null, out var lease, out var blocker);
+                lease?.Dispose();
+                Assert.IsFalse(admitted);
+                Assert.AreEqual("operation_busy", blocker.Reason);
+            }
+
+            try
+            {
+                MCPServiceLocator.ToolDiscovery.SetToolEnabled(command, true);
+                Assert.IsTrue(CommandRegistry.IsTrustedBuiltInHandler(command));
+                handlers[command] = new HandlerInfo(
+                    command,
+                    _ =>
+                    {
+                        AssertNoParent();
+                        continuation = ExecutionContext.Capture();
+                        return "replacement";
+                    },
+                    null
+                );
+                Assert.IsFalse(CommandRegistry.IsTrustedBuiltInHandler(command));
+                Assert.IsTrue(NativeCommandArbitrator.Shared.TryAcquire(ToolOperationMode.Exclusive, null, null, null, out var parent, out _));
+                using (parent)
+                {
+                    var result = CommandRegistry.InvokeCommandAsync(command, new JObject { ["action"] = "status" }, CancellationToken.None, parent);
+                    Assert.AreEqual("replacement", result.GetAwaiter().GetResult());
+                    ExecutionContext.Run(continuation, _ => AssertNoParent(), null);
+                }
+            }
+            finally
+            {
+                handlers[command] = original;
+                if (hadPreference)
+                    EditorPrefs.SetBool(key, enabled);
+                else
+                    EditorPrefs.DeleteKey(key);
+            }
+        }
+
+        [Test]
         public void SameAssemblyRegisteredMethodCannotImpersonateAnotherCanonicalOwner()
         {
             const string command = "get_selection";

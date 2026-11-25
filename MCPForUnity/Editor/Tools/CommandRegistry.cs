@@ -7,6 +7,7 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Resources;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Tools.AssetGen;
 using MCPForUnity.Editor.Tools.Capabilities;
 using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
@@ -538,7 +539,17 @@ namespace MCPForUnity.Editor.Tools
             {
                 using var logs = McpLog.EnterHandler(lease);
                 using var composition = NativeCommandArbitrator.EnterComposition(IsTrustedCompositionHandler(commandName) ? parent ?? lease : null);
-                var task = InvokeCommandCoreAsync(commandName, @params, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                // A completed generated asset is inspected inside an otherwise ledger-only status.
+                // Pass the batch writer explicitly to that exact handler; no callback inherits it.
+                var task =
+                    parent != null
+                    && trustedBuiltIn
+                    && policy.Mode == ToolOperationMode.Control
+                    && string.Equals((string)@params?["action"], "status", StringComparison.OrdinalIgnoreCase)
+                    && AssetGenToolHelpers.TryInvokeComposedStatus(commandName, @params, parent, out var status)
+                        ? Task.FromResult(status)
+                        : InvokeCommandCoreAsync(commandName, @params, cancellationToken);
                 if (task.IsCompleted)
                 {
                     lease.Dispose();
@@ -561,7 +572,6 @@ namespace MCPForUnity.Editor.Tools
 
         private static Task<object> InvokeCommandCoreAsync(string commandName, JObject @params, CancellationToken cancellationToken)
         {
-            cancellationToken.ThrowIfCancellationRequested();
             var handlerInfo = GetHandlerInfo(commandName);
             var payload = @params ?? new JObject();
 

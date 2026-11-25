@@ -3,6 +3,7 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
+using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools.AssetGen
@@ -16,7 +17,9 @@ namespace MCPForUnity.Editor.Tools.AssetGen
     [McpForUnityTool("generate_image", AutoRegister = false, Group = "asset_gen", RequiresPolling = true, PollAction = "status", MaxPollSeconds = 300)]
     public static class GenerateImage
     {
-        public static object HandleCommand(JObject @params)
+        public static object HandleCommand(JObject @params) => HandleWithParent(@params, null);
+
+        internal static object HandleWithParent(JObject @params, NativeCommandArbitrator.Lease parent)
         {
             if (@params == null)
                 return new ErrorResponse("Parameters cannot be null.");
@@ -39,9 +42,9 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             }
                         );
                     case "status":
-                        return AssetGenToolHelpers.Status(p, "Image", 2.0);
+                        return AssetGenToolHelpers.Status(p, "image", 2.0, parent);
                     case "cancel":
-                        return AssetGenToolHelpers.Cancel(p);
+                        return AssetGenToolHelpers.Cancel(p, "image");
                     case "list_providers":
                         return AssetGenToolHelpers.ListProviders("image");
                     case "list_models":

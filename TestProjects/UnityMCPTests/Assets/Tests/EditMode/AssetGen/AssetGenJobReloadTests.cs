@@ -1032,7 +1032,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             job.ModelImportStage = "registered";
             job.ModelImportErrorCode = "unusable_model";
             job.ArchiveSelection = new JObject { ["selected_path"] = "owned.obj" };
-            JObject response = JObject.FromObject(AssetGenToolHelpers.Status(new ToolParams(new JObject { ["job_id"] = job.JobId }), "Model", 3));
+            JObject response = JObject.FromObject(AssetGenToolHelpers.Status(new ToolParams(new JObject { ["job_id"] = job.JobId }), "model", 3));
             JObject data = (JObject)response["data"];
             Assert.AreEqual("resumed", (string)data["recovery_code"]);
             Assert.AreEqual(TaskId, (string)data["provider_task_id"]);

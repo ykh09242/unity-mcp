@@ -2,12 +2,76 @@
 
 import pytest
 import importlib
+from unittest.mock import AsyncMock
 
 from services.operation_policy import (
     OperationLifetime,
     OperationMode,
     resolve_operation_policy,
 )
+from services.registry.operation_invocation import trusted_tool
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name", ["generate_audio", "generate_image", "generate_model", "import_model"]
+)
+@pytest.mark.parametrize("action", ["status", "cancel"])
+async def test_asset_job_control_wrappers_route_only_to_the_same_native_action(
+    monkeypatch, name, action
+):
+    module = importlib.import_module("services.tools." + name)
+    wrapper = getattr(module, name)
+    assert trusted_tool(wrapper, name)
+    send = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(return_value="chosen"))
+    monkeypatch.setattr(module, "send_with_unity_instance", send)
+    public = {"action": action, "job_id": "recorded-job", "output_folder": "Assets/Unused"}
+    assert await wrapper(object(), **public) == {"success": True}
+    send.assert_awaited_once()
+    _, instance, command, wire = send.await_args.args
+    assert (instance, command, wire["action"], wire["jobId"]) == (
+        "chosen",
+        name,
+        action,
+        public["job_id"],
+    )
+    for params, native in ((public, False), (wire, True)):
+        policy = resolve_operation_policy(name, params, native=native)
+        assert (policy.mode, policy.lifetime) == (OperationMode.CONTROL, OperationLifetime.COMMAND)
+        assert (
+            resolve_operation_policy(name, params, native=native, trusted_builtin=False).mode
+            == OperationMode.EXCLUSIVE
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["generate_audio", "generate_image", "generate_model", "import_model", "import_model_file"],
+)
+def test_other_asset_generation_routes_cannot_claim_job_control(name):
+    for action in (
+        "generate",
+        "import",
+        "refresh_models",
+        "search",
+        "preview",
+        "list_models",
+        "list_providers",
+        None,
+    ):
+        for native in (False, True):
+            assert (
+                resolve_operation_policy(
+                    name, {"action": action, "job_id": "existing"}, native=native
+                ).mode
+                == OperationMode.EXCLUSIVE
+            )
+    if name == "import_model_file":
+        assert (
+            resolve_operation_policy(name, {"action": "status"}, native=True).mode
+            == OperationMode.EXCLUSIVE
+        )
 
 
 @pytest.mark.parametrize("native", [False, True])

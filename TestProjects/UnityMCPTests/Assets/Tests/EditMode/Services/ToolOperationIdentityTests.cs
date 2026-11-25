@@ -12,6 +12,10 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
         [TestCase("export_test_job", "MCPForUnity.Editor.Tools.ExportTestJob")]
         [TestCase("manage_packages", "MCPForUnity.Editor.Tools.ManagePackages")]
         [TestCase("manage_script", "MCPForUnity.Editor.Tools.ManageScript")]
+        [TestCase("generate_audio", "MCPForUnity.Editor.Tools.AssetGen.GenerateAudio")]
+        [TestCase("generate_image", "MCPForUnity.Editor.Tools.AssetGen.GenerateImage")]
+        [TestCase("generate_model", "MCPForUnity.Editor.Tools.AssetGen.GenerateModel")]
+        [TestCase("import_model", "MCPForUnity.Editor.Tools.AssetGen.ImportModel")]
         [TestCase("query_physics", "MCPForUnity.Editor.Tools.Capabilities.QueryPhysics")]
         [TestCase("batch_execute", "MCPForUnity.Editor.Tools.BatchExecute")]
         public void OnlyTheCanonicalTypeFromThePackageAssemblyIsAccepted(string command, string owner)

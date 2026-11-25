@@ -407,12 +407,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             var journal = (AssetGenJobJournal)typeof(AssetGenJobManager).GetProperty("Journal", Flags).GetValue(null);
             InjectCancellationWriteFailure(job, journal, published);
             var parameters = new ToolParams(new JObject { ["job_id"] = job.JobId });
-            JObject cancel = JObject.FromObject(AssetGenToolHelpers.Cancel(parameters));
+            JObject cancel = JObject.FromObject(AssetGenToolHelpers.Cancel(parameters, "model"));
             Assert.IsFalse((bool)cancel["success"]);
             Assert.AreEqual("checkpoint_write_failed", (string)cancel["data"]["recovery_code"]);
             Assert.AreEqual("outcome_unknown", job.RecoveryState);
             Assert.AreEqual(AssetGenJobState.Canceled, job.State, "Local execution must stay canceled even when durability is uncertain.");
-            JObject status = JObject.FromObject(AssetGenToolHelpers.Status(parameters, "Model", 1));
+            JObject status = JObject.FromObject(AssetGenToolHelpers.Status(parameters, "model", 1));
             Assert.IsFalse((bool)status["success"]);
             Assert.AreEqual("checkpoint_write_failed", (string)status["data"]["recovery_code"]);
             Assert.IsTrue((bool)status["data"]["retryable"]);

@@ -6,10 +6,14 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Import;
+using MCPForUnity.Editor.Services.Transport;
+using MCPForUnityTests.Editor.Services;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine.TestTools;
@@ -32,11 +36,13 @@ namespace MCPForUnity.Tests.EditMode.AssetGen
         private int imports;
         private int workerThread;
         private bool holdIgnoresCancellation;
+        private NativeCommandArbitrator importAdmission;
 
         [SetUp]
         public void SetUp()
         {
             AssetGenJobManager.ResetForTests();
+            AssetGenJobManager.ImportAdmissionForTests = importAdmission = new NativeCommandArbitrator((_, __) => null);
             AssetGenJobManager.TransportOverrideForTests = new FakeHttpTransport
             {
                 Handler = _ => throw new AssertionException("Saved validation must not contact a provider."),
@@ -243,6 +249,84 @@ namespace MCPForUnity.Tests.EditMode.AssetGen
             Assert.AreEqual(0, imports);
         }
 
+        [Test]
+        public void ForeignReaderDefersPublicationUntilReleaseAndImportsOnce()
+        {
+            AssetGenJob job = StartDownload(64);
+            Assert.IsTrue(importAdmission.TryAcquire(ToolOperationMode.SharedRead, "read_console", null, null, out var sibling, out _));
+            using (sibling)
+            {
+                AssetGenJobManager.TryAdvanceForTests(job.JobId);
+                AssetGenJobManager.TryAdvanceForTests(job.JobId);
+                Assert.IsNull(job.AssetPath);
+                Assert.IsEmpty(Directory.GetFiles(AssetGenPaths.ToAbsolute(folder)));
+                Assert.AreEqual(0, imports);
+            }
+            Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(job.JobId));
+            Assert.AreEqual(AssetGenJobState.Done, job.State, job.Error);
+            Assert.AreEqual(1, imports);
+            Assert.IsTrue(importAdmission.TryAcquire(ToolOperationMode.Exclusive, null, null, null, out var next, out _));
+            next.Dispose();
+        }
+
+        [Test]
+        public async Task DispatcherAllowsMatchingStatusAndCancelWhilePublicationBlocksForeignCommands()
+        {
+            using var availability = new ScopedRegistryAvailabilityTestState(new[] { "generate_audio", "generate_model", "import_model", "read_console" });
+            AssetGenJobManager.ImportAdmissionForTests = NativeCommandArbitrator.Shared;
+
+            async Task<JObject> Dispatch(string type, string action, string id)
+            {
+                var request = new JObject
+                {
+                    ["type"] = type,
+                    ["params"] = new JObject { ["action"] = action, ["job_id"] = id },
+                };
+                return JObject.Parse(await TransportCommandDispatcher.ExecuteCommandJsonAsync(request.ToString(), CancellationToken.None));
+            }
+
+            var done = StartDownload(64);
+            Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(done.JobId));
+            Assert.AreEqual(AssetGenJobState.Done, done.State, done.Error);
+            InstallBarrier();
+            var active = StartDownload();
+            Assert.IsTrue(
+                SpinWait.SpinUntil(
+                    () =>
+                    {
+                        AssetGenJobManager.TryAdvanceForTests(active.JobId);
+                        return entered.IsSet || Terminal(active);
+                    },
+                    5000
+                ),
+                "Owned validation did not start."
+            );
+            validationTask = (Task)Get(runner, "ValidationTask");
+            Assert.IsTrue(entered.IsSet);
+            Assert.AreEqual(true, Get(runner, "AutoRefreshSuppressed"));
+            var busy = await Dispatch("read_console", "get", active.JobId);
+            Assert.AreEqual("operation_busy", (string)busy["code"], busy.ToString());
+            var pending = await Dispatch("generate_audio", "status", active.JobId);
+            Assert.AreEqual(active.JobId, (string)pending.SelectToken("result.data.job_id"), pending.ToString());
+            var terminal = await Dispatch("generate_audio", "status", done.JobId);
+            Assert.AreEqual("done", (string)terminal.SelectToken("result.data.state"), terminal.ToString());
+            Assert.AreEqual("operation_busy", (string)terminal.SelectToken("result.data.verification.admission_reason"), terminal.ToString());
+            foreach (string foreign in new[] { "generate_model", "import_model" })
+            {
+                var wrongKind = await Dispatch(foreign, "cancel", active.JobId);
+                Assert.That(wrongKind.ToString(), Does.Contain("No cancelable job"), wrongKind.ToString());
+                Assert.AreNotEqual(AssetGenJobState.Canceled, active.State);
+            }
+            var cancel = await Dispatch("generate_audio", "cancel", active.JobId);
+            Assert.AreEqual(true, (bool?)cancel.SelectToken("result.success"), cancel.ToString());
+            Assert.AreEqual(AssetGenJobState.Canceled, active.State);
+            Assert.AreEqual(false, Get(runner, "AutoRefreshSuppressed"));
+            Assert.AreEqual(1, imports, "Only the completed control job should have imported.");
+            var after = await Dispatch("generate_audio", "status", done.JobId);
+            Assert.IsNull(after.SelectToken("result.data.verification.admission_reason"), after.ToString());
+            Assert.AreEqual("done", (string)after.SelectToken("result.data.state"), after.ToString());
+        }
+
         [UnityTest]
         public IEnumerator LargeManagerHandoff_HeartbeatsContinueAndCancelStopsValidation()
         {
@@ -261,11 +345,15 @@ namespace MCPForUnity.Tests.EditMode.AssetGen
                 Assert.IsNotNull(validationTask);
                 Assert.IsFalse(validationTask.IsCompleted);
                 Assert.AreEqual(true, Get(runner, "AutoRefreshSuppressed"));
+                Assert.IsFalse(importAdmission.TryAcquire(ToolOperationMode.SharedRead, "read_console", null, null, out _, out var blocked));
+                Assert.AreEqual("operation_busy", blocked.Reason);
                 int before = heartbeats;
                 yield return Until(() => heartbeats >= before + 2, "Editor updates stalled during validation.");
                 Assert.AreEqual(0, imports);
                 Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
                 Assert.AreEqual(false, Get(runner, "AutoRefreshSuppressed"));
+                Assert.IsTrue(importAdmission.TryAcquire(ToolOperationMode.Exclusive, null, null, null, out var next, out _));
+                next.Dispose();
                 yield return Until(() => validationTask.IsCompleted, "Canceled validation retained a file handle.");
                 Assert.AreEqual(AssetGenJobState.Canceled, job.State);
                 Assert.AreEqual(0, imports);
@@ -540,12 +628,15 @@ namespace MCPForUnity.Tests.EditMode.AssetGen
         }
 
         [Test]
-        public void NestedImporterFailure_RestoresOuterFingerprintScopeAndClearsItOnExit()
+        public void ReentrantJobDefersUntilOwnerExitsAndFailedImportReleasesItsFingerprint()
         {
             int fingerprintReads = 0;
             typeof(ImportFingerprintCache).GetField("FingerprintReadForTests", Static)?.SetValue(null, (Action)(() => fingerprintReads++));
             AssetGenJob outer = StartDownload(64);
             AssetGenJob inner = null;
+            bool innerSettledDuringOuter = false;
+            bool innerPublishedDuringOuter = false;
+            int innerInvocations = 0;
             Set(
                 runner,
                 "ImportFn",
@@ -554,11 +645,21 @@ namespace MCPForUnity.Tests.EditMode.AssetGen
                     {
                         ImportFingerprintCache.IsUnchanged(path, out _);
                         inner = StartDownload(64);
-                        Set(runner, "ImportFn", (Func<AssetGenJob, string, AssetGenJob>)((_, __) => throw new IOException("Owned nested importer fault.")));
-                        Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(inner.JobId));
-                        Assert.AreEqual(AssetGenJobState.Failed, inner.State);
+                        Set(
+                            runner,
+                            "ImportFn",
+                            (Func<AssetGenJob, string, AssetGenJob>)(
+                                (innerJob, innerPath) =>
+                                {
+                                    innerInvocations++;
+                                    ImportFingerprintCache.IsUnchanged(innerPath, out _);
+                                    throw new IOException("Owned deferred importer fault.");
+                                }
+                            )
+                        );
+                        innerSettledDuringOuter = AssetGenJobManager.TryAdvanceForTests(inner.JobId);
+                        innerPublishedDuringOuter = inner.AssetPath != null || File.Exists(AssetGenPaths.ToAbsolute(folder + "/" + inner.JobId + ".wav"));
                         ImportFingerprintCache.IsUnchanged(path, out _);
-                        Assert.AreEqual(0, fingerprintReads, "A nested import exception must restore the outer validated source.");
                         return current;
                     }
                 )
@@ -566,8 +667,19 @@ namespace MCPForUnity.Tests.EditMode.AssetGen
             Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(outer.JobId));
             Assert.AreEqual(AssetGenJobState.Done, outer.State, outer.Error);
             Assert.IsNotNull(inner);
+            Assert.IsFalse(innerSettledDuringOuter);
+            Assert.IsFalse(innerPublishedDuringOuter);
+            Assert.AreEqual(0, innerInvocations);
+            Assert.AreEqual(0, fingerprintReads, "The deferred job must leave the outer validated source in scope.");
             ImportFingerprintCache.IsUnchanged(outer.AssetPath, out _);
             Assert.AreEqual(1, fingerprintReads, "Exiting the outer importer must remove the borrowed digest.");
+            Assert.IsTrue(AssetGenJobManager.TryAdvanceForTests(inner.JobId));
+            Assert.AreEqual(AssetGenJobState.Failed, inner.State);
+            Assert.That(inner.Error, Does.Contain("Owned deferred importer fault."));
+            Assert.AreEqual(1, innerInvocations);
+            Assert.AreEqual(1, fingerprintReads, "The deferred importer uses its own validated source.");
+            ImportFingerprintCache.IsUnchanged(inner.AssetPath, out _);
+            Assert.AreEqual(2, fingerprintReads, "The failed importer must also release its borrowed digest.");
         }
 
         [Test]

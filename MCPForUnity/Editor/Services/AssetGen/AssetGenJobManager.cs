@@ -11,6 +11,7 @@ using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -90,6 +91,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         internal static Action<string> BeforeCheckpointWriteForTests = null;
         internal static Func<string, bool> SubmissionAuthorizationForTests;
         internal static Action<long, CancellationToken> ValidationChunkForTests;
+        internal static NativeCommandArbitrator ImportAdmissionForTests;
 
         private static AssetGenJobJournal _journal;
         private static string _journalRootForTests;
@@ -355,7 +357,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 ObservePreparation(runner.PreparationTask);
                 ObserveValidation(runner.ValidationTask);
                 runner.Validation?.Dispose();
-                ReleaseAutoRefresh(runner);
+                ReleaseImportOwnership(runner);
                 DisposeCancellationAfterTasks(runner);
             }
             Runners.Clear();
@@ -728,6 +730,22 @@ namespace MCPForUnity.Editor.Services.AssetGen
             return null;
         }
 
+        internal static AssetGenJob GetJob(string jobId, string kind)
+        {
+            var job = GetJob(jobId);
+            return job?.Kind == kind ? job : null;
+        }
+
+        internal static AssetGenJob GetJobForStatus(string jobId, string kind)
+        {
+            var job = GetJob(jobId);
+            // Both model tools expose the same model-import evidence. Cancellation
+            // still resolves the exact creating kind through the separate lookup above.
+            if (job?.Kind == "marketplace" && kind == "model" || job?.Kind == "model" && kind == "marketplace")
+                return job;
+            return job?.Kind == kind ? job : null;
+        }
+
         /// <summary>Most-recent-first snapshot of known jobs (for the GUI readout). Never contains keys.</summary>
         public static IReadOnlyList<AssetGenJob> RecentJobs(int max = 20)
         {
@@ -850,6 +868,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             public Task<SavedValidation> ValidationTask;
             public SavedValidation Validation;
             public bool AutoRefreshSuppressed;
+            public NativeCommandArbitrator.Lease ImportLease;
             public bool Canceled;
             public bool ImportInProgress;
             public AssetOperationProgress.Snapshot? ActivityObservation;
@@ -1049,6 +1068,25 @@ namespace MCPForUnity.Editor.Services.AssetGen
             PersistRequired(job, runner.Checkpoint);
             AssetGenSubmissionIntent.Forget(job.JobId);
             Admit(runner);
+        }
+
+        // Provider requests and preparation workers run independently. Only the local
+        // publication/validation/import phase borrows the Editor, including the gap in
+        // which a prepared file is under Assets and automatic refresh is suppressed.
+        private static bool TryAdmitImport(Runner runner)
+        {
+            var arbiter = ImportAdmissionForTests ?? NativeCommandArbitrator.Shared;
+            if (!arbiter.TryAcquire(ToolOperationMode.Exclusive, null, null, runner.ImportLease, out var lease, out _))
+                return false;
+            if (runner.ImportLease == null)
+            {
+                runner.ImportLease = lease;
+                string tool = runner.Job.Kind == "marketplace" ? "import_model" : "generate_" + runner.Job.Kind;
+                lease.Describe(tool, true, runner.Cts.Token);
+            }
+            else
+                lease.Dispose();
+            return true;
         }
 
         private static async Task<string> SubmitAndCheckpoint(Runner r)
@@ -1386,6 +1424,14 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             break;
                         }
                         ProviderPollResult pr = r.PollTask.Result;
+                        if (
+                            pr.State == ProviderPollState.Succeeded
+                            && pr.InlineData != null
+                            && pr.InlineData.LongLength > 0
+                            && pr.InlineData.LongLength <= PreparedArtifact.BackgroundThreshold
+                            && !TryAdmitImport(r)
+                        )
+                            break;
                         r.PollTask = null;
                         r.Job.Progress = Mathf.Clamp01(pr.Progress);
                         Persist(r.Job);
@@ -1457,8 +1503,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             break;
                         }
                         HttpResult res = r.DownloadTask.Result;
+                        long downloadLength = res?.DownloadedFile?.Length ?? res?.Body?.LongLength ?? 0;
+                        if (res?.IsSuccess == true && downloadLength > 0 && downloadLength <= PreparedArtifact.BackgroundThreshold && !TryAdmitImport(r))
+                            break;
                         r.DownloadTask = null;
-                        if (res?.IsSuccess == true && (res.DownloadedFile?.Length ?? res.Body?.LongLength ?? 0) > PreparedArtifact.BackgroundThreshold)
+                        if (res?.IsSuccess == true && downloadLength > PreparedArtifact.BackgroundThreshold)
                         {
                             StartPreparation(r, res);
                             break;
@@ -1490,6 +1539,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             Fail(r, preparationError);
                             break;
                         }
+                        if (!TryAdmitImport(r))
+                            break;
                         using (PreparedArtifact prepared = r.PreparationTask.Result)
                         {
                             r.PreparationTask = null;
@@ -1522,6 +1573,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
                     case RunnerPhase.Import:
                     {
+                        if (!TryAdmitImport(r))
+                            break;
                         r.Job.ProgressEvidence?.Begin(AssetOperationPhase.Importing);
                         if (r.Validation == null)
                         {
@@ -1529,15 +1582,20 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             if (r.Phase == RunnerPhase.AwaitValidation)
                                 break;
                         }
-                        using SavedValidation validation = r.Validation;
-                        r.Validation = null;
-                        ValidateSavedIdentity(r, validation);
-                        Admit(r);
-                        r.Checkpoint.Phase = "importing";
-                        UpdateProviderEvidence(r);
-                        PersistRequired(r.Job, r.Checkpoint);
+                        ValidateSavedIdentity(r, r.Validation);
+                        if (r.Checkpoint.Phase != "importing")
+                        {
+                            r.Checkpoint.Phase = "importing";
+                            UpdateProviderEvidence(r);
+                            PersistRequired(r.Job, r.Checkpoint);
+                        }
                         // Persistence can invoke a callback. Re-admit the exact runner and the
                         // validated snapshot after it, before opening the synchronous importer.
+                        Admit(r);
+                        if (!TryAdmitImport(r))
+                            break;
+                        using SavedValidation validation = r.Validation;
+                        r.Validation = null;
                         ValidateSavedIdentity(r, validation);
                         validation.ReleaseMetadata();
                         ReleaseAutoRefresh(r);
@@ -1851,6 +1909,19 @@ namespace MCPForUnity.Editor.Services.AssetGen
             AssetDatabase.AllowAutoRefresh();
         }
 
+        private static void ReleaseImportOwnership(Runner runner)
+        {
+            try
+            {
+                ReleaseAutoRefresh(runner);
+            }
+            finally
+            {
+                runner.ImportLease?.Dispose();
+                runner.ImportLease = null;
+            }
+        }
+
         private static void StartValidation(Runner r)
         {
             ValidateSavedIdentity(r);
@@ -2125,7 +2196,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             ObserveValidation(r.ValidationTask);
             r.Validation?.Dispose();
             r.Validation = null;
-            ReleaseAutoRefresh(r);
+            ReleaseImportOwnership(r);
             DisposeCancellationAfterTasks(r);
         }
 
@@ -2311,6 +2382,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             BeforeCheckpointWriteForTests = null;
             SubmissionAuthorizationForTests = null;
             ValidationChunkForTests = null;
+            ImportAdmissionForTests = null;
             _journalRootForTests = null;
             _journalOwnerForTests = null;
             _journalInstanceForTests = null;

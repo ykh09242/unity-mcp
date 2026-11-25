@@ -49,7 +49,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                     case "status":
                         return Status(p);
                     case "cancel":
-                        return Cancel(p);
+                        return AssetGenToolHelpers.Cancel(p, "marketplace");
                     case "list_providers":
                         return ListProviders();
                     case "":
@@ -160,7 +160,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             string jobId = p.Get("job_id");
             if (string.IsNullOrEmpty(jobId))
                 return new ErrorResponse("'job_id' is required for status.");
-            AssetGenJob job = AssetGenJobManager.GetJob(jobId);
+            AssetGenJob job = AssetGenJobManager.GetJobForStatus(jobId, "marketplace");
             if (job == null)
                 return new ErrorResponse($"No job found with ID '{jobId}'.");
 
@@ -206,16 +206,6 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                         }
                     );
             }
-        }
-
-        private static object Cancel(ToolParams p)
-        {
-            string jobId = p.Get("job_id");
-            if (string.IsNullOrEmpty(jobId))
-                return new ErrorResponse("'job_id' is required for cancel.");
-            return AssetGenJobManager.Cancel(jobId)
-                ? new SuccessResponse($"Cancel requested for job '{jobId}'.")
-                : new ErrorResponse($"No cancelable job found with ID '{jobId}'.");
         }
 
         private static object ListProviders()

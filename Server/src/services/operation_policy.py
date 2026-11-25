@@ -81,6 +81,12 @@ POLICY_RULES: Final = (
         )
     ),
     PolicyRule("manage_build", ("status", "cancel"), CONTROL, public=True),
+    # These actions observe the requested job or cancel its own worker. A
+    # completed-job asset inspection must acquire separate native admission.
+    *(
+        PolicyRule(name, ("status", "cancel"), CONTROL, public=True)
+        for name in ("generate_audio", "generate_image", "generate_model", "import_model")
+    ),
     PolicyRule("manage_script_quality", ("capabilities", "status", "cancel"), CONTROL, public=True),
     PolicyRule("manage_script_quality", ("identity",), SHARED_READ),
     PolicyRule(

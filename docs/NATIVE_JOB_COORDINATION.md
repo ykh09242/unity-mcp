@@ -67,6 +67,12 @@ ordinary admission status does not promise that control headroom is unused.
 - Play scenarios and suites retain their existing execution/finalization ownership.
   Pending owned Play entry and actual transitions block conflicting work. Stable Play
   Mode alone does not impose a barrier.
+- Asset generation takes exclusive Editor access when publishing, validating and
+  importing the local output. The job ID remains available for status and cancellation
+  during this phase. Cancel through the tool that started the job. Model generation
+  and marketplace import also support looking up each other's model results.
+  A completed generation can report unavailable asset verification while another
+  command owns the Editor. Query the same ID after that command settles.
 - Retained UPM Add, Remove and Embed requests block conflicting Editor operations.
   Retained List and Search requests only fence subsequent UPM Client method starts
   and arbitrary code that could call Client. Request completion, including failure,

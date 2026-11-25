@@ -2,8 +2,13 @@ using System;
 using System.Collections;
 using System.IO;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.AssetGen;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools.AssetGen;
+using MCPForUnityTests.Editor.Services;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -46,7 +51,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
-        public void CompletedImageStatusReadsActualMetadataAndRetainsJobIdentity()
+        public Task CompletedImageStatusReadsActualMetadataAndRetainsJobIdentity() => CheckCompletedImage(false);
+
+        [Test]
+        public Task BatchedCompletedStatusUsesOwnWriterAndRefusesForeignWriter() => CheckCompletedImage(true);
+
+        private async Task CheckCompletedImage(bool batched)
         {
             string path = Image();
             var job = new AssetGenJob
@@ -62,7 +72,30 @@ namespace MCPForUnityTests.Editor.AssetGen
             jobs.Add(job.JobId, job);
             try
             {
-                JObject response = JObject.FromObject(GenerateImage.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = job.JobId }));
+                var parameters = new JObject { ["action"] = "status", ["job_id"] = job.JobId };
+                JObject response;
+                if (batched)
+                {
+                    using var consent = new ScopedConsentTestState("batch_execute");
+                    using var availability = new ScopedRegistryAvailabilityTestState(new[] { "generate_image" });
+                    async Task<JObject> Dispatch(string tool, JObject args)
+                    {
+                        var request = new JObject { ["type"] = tool, ["params"] = args };
+                        return JObject.Parse(await TransportCommandDispatcher.ExecuteCommandJsonAsync(request.ToString(), CancellationToken.None));
+                    }
+                    Assert.IsTrue(NativeCommandArbitrator.Shared.TryAcquire(ToolOperationMode.Exclusive, null, null, null, out var foreign, out _));
+                    using (foreign)
+                    {
+                        var blocked = await Dispatch("generate_image", parameters);
+                        Assert.AreEqual("operation_busy", (string)blocked.SelectToken("result.data.verification.admission_reason"), blocked.ToString());
+                    }
+                    var command = new JObject { ["tool"] = "generate_image", ["params"] = parameters };
+                    var result = await Dispatch("batch_execute", new JObject { ["commands"] = new JArray(command) });
+                    Assert.AreEqual(true, (bool?)result.SelectToken("result.success"), result.ToString());
+                    response = (JObject)result.SelectToken("result.data.results[0].result");
+                }
+                else
+                    response = JObject.FromObject(GenerateImage.HandleCommand(parameters));
                 Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 Assert.AreEqual(job.JobId, (string)response["data"]["job_id"]);
                 Assert.AreEqual(job.ProviderTaskId, (string)response["data"]["provider_task_id"]);

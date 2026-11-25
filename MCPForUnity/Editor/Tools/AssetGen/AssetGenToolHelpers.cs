@@ -1,9 +1,12 @@
 using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
+using MCPForUnity.Editor.Services.Transport;
+using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools.AssetGen
 {
@@ -14,18 +17,42 @@ namespace MCPForUnity.Editor.Tools.AssetGen
     /// </summary>
     internal static class AssetGenToolHelpers
     {
+        // Only trusted registry dispatch supplies the writer. Pass it explicitly so
+        // a callback from an importer or a custom child cannot inherit this capability.
+        internal static bool TryInvokeComposedStatus(string commandName, JObject parameters, NativeCommandArbitrator.Lease parent, out object result)
+        {
+            switch (commandName)
+            {
+                case "generate_audio":
+                    result = GenerateAudio.HandleWithParent(parameters, parent);
+                    return true;
+                case "generate_image":
+                    result = GenerateImage.HandleWithParent(parameters, parent);
+                    return true;
+                case "generate_model":
+                    result = GenerateModel.HandleWithParent(parameters, parent);
+                    return true;
+                default:
+                    result = null;
+                    return false;
+            }
+        }
+
         /// <summary>
-        /// Poll a job by id and map its state to a client response. <paramref name="kindLabel"/>
-        /// prefixes the human-readable message (e.g. "Audio", "Image", "3D model").
+        /// Poll a job of the selected kind and map its state to a client response.
         /// </summary>
-        public static object Status(ToolParams p, string kindLabel, double pollIntervalSeconds)
+        public static object Status(ToolParams p, string kind, double pollIntervalSeconds, NativeCommandArbitrator.Lease parent = null)
         {
             string jobId = p.Get("job_id");
             if (string.IsNullOrEmpty(jobId))
                 return new ErrorResponse("'job_id' is required for status.");
-            AssetGenJob job = AssetGenJobManager.GetJob(jobId);
+            AssetGenJob job = AssetGenJobManager.GetJobForStatus(jobId, kind);
             if (job == null)
                 return new ErrorResponse($"No job found with ID '{jobId}'.");
+            string kindLabel =
+                kind == "audio" ? "Audio"
+                : kind == "image" ? "Image"
+                : "3D model";
 
             switch (job.State)
             {
@@ -45,7 +72,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                             asset_guid = job.AssetGuid,
                             model_import_stage = job.ModelImportStage,
                             archive_selection = job.ArchiveSelection,
-                            verification = ImportObservation.Read(job.AssetPath, job.AssetGuid, job.Kind),
+                            verification = ObserveCompletedImport(job, kind, parent),
                             progress = 1f,
                         }
                     );
@@ -105,15 +132,35 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             }
         }
 
-        /// <summary>Request cancellation of a job by id.</summary>
-        public static object Cancel(ToolParams p)
+        private static JObject ObserveCompletedImport(AssetGenJob job, string requestedKind, NativeCommandArbitrator.Lease parent)
+        {
+            // Ledger status is a control. Loading the completed asset can enter importer
+            // or project code, so it needs ordinary native admission even inside status.
+            if (!NativeCommandArbitrator.Shared.TryAcquire(ToolOperationMode.Exclusive, null, null, parent, out var lease, out var blocker))
+            {
+                var unavailable = PostEditVerification.Unavailable(
+                    "imported_asset_metadata_and_bounded_model_references",
+                    "Editor admission blocked the asset read. Query status again after the Editor becomes available."
+                );
+                unavailable["admission_reason"] = blocker.Reason;
+                return unavailable;
+            }
+            using (lease)
+            {
+                lease.Describe("generate_" + requestedKind, true, default);
+                return ImportObservation.Read(job.AssetPath, job.AssetGuid, job.Kind);
+            }
+        }
+
+        /// <summary>Request cancellation of a job belonging to the selected tool.</summary>
+        public static object Cancel(ToolParams p, string kind)
         {
             string jobId = p.Get("job_id");
             if (string.IsNullOrEmpty(jobId))
                 return new ErrorResponse("'job_id' is required for cancel.");
-            if (AssetGenJobManager.Cancel(jobId))
+            AssetGenJob job = AssetGenJobManager.GetJob(jobId, kind);
+            if (job != null && AssetGenJobManager.Cancel(jobId))
                 return new SuccessResponse($"Cancel requested for job '{jobId}'.");
-            AssetGenJob job = AssetGenJobManager.GetJob(jobId);
             return job?.State == AssetGenJobState.Canceled && job.RecoveryCode == "checkpoint_write_failed"
                 ? CancellationCheckpointFailure(job)
                 : new ErrorResponse($"No cancelable job found with ID '{jobId}'.");

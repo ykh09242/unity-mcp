@@ -181,6 +181,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                         ? new object[] { "0123456789abcdef0123456789abcdef", 0f, "archive", TestFolder, "main/model.obj" }
                         : new object[] { "0123456789abcdef0123456789abcdef", 0f, "archive", TestFolder };
                 var result = (AssetGenJob)method.Invoke(null, args);
+                AssertModelControlBoundaries(result);
                 Pump(result.JobId);
                 Assert.AreEqual("main/model.obj", observed, result.State + ": " + result.Error);
                 Assert.AreEqual(valid ? AssetGenJobState.Done : AssetGenJobState.Failed, result.State);
@@ -482,6 +483,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 request.Format = "obj";
                 request.Texture = false;
                 AssetGenJob job = AssetGenJobManager.StartModelGeneration(request);
+                AssertModelControlBoundaries(job);
                 Pump(job.JobId);
 
                 Assert.AreEqual(valid ? AssetGenJobState.Done : AssetGenJobState.Failed, job.State, job.Error);
@@ -516,6 +518,21 @@ namespace MCPForUnityTests.Editor.AssetGen
                 LogAssert.ignoreFailingMessages = previousLogs;
                 Environment.SetEnvironmentVariable(meshyEnv, previousKey);
             }
+        }
+
+        private static void AssertModelControlBoundaries(AssetGenJob job)
+        {
+            var status = new JObject { ["action"] = "status", ["job_id"] = job.JobId };
+            var unrelatedAudio = JObject.FromObject(GenerateAudio.HandleCommand(status));
+            var unrelatedImage = JObject.FromObject(GenerateImage.HandleCommand(status));
+            Assert.IsFalse(unrelatedAudio.Value<bool>("success"), unrelatedAudio.ToString());
+            Assert.IsFalse(unrelatedImage.Value<bool>("success"), unrelatedImage.ToString());
+            var cancel = new JObject { ["action"] = "cancel", ["job_id"] = job.JobId };
+            var crossCancel = JObject.FromObject(
+                job.Kind == "marketplace" ? GenerateModel.HandleCommand(cancel) : ImportModel.HandleCommand(cancel).GetAwaiter().GetResult()
+            );
+            Assert.IsFalse(crossCancel.Value<bool>("success"), crossCancel.ToString());
+            Assert.AreNotEqual(AssetGenJobState.Canceled, job.State);
         }
 
         [Test]
