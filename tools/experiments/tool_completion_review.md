@@ -2,6 +2,19 @@
 
 The baseline is `0e57b46ffc778d7b6ca614b29974a6cce0303d09`. The catalog census covers the shipped server, including the optional execution-receipt control. It records each tool's public schema and describes every selector on both supported MCP generations. Dynamic project tools depend on the connected project. The prior Unity project advertised 31 tools on core and 90 on full. An absent tool can depend on the Editor preference, consent, installed packages or project binding. The inventory alone does not establish the cause. [Reproducible census](tool_catalog_audit.py) · [Prior native inventories and original outcomes](live_agent_followup_results.json)
 
+## Unhinted Unity outcomes
+
+| Matched first attempts | Core before | Core after | Full before | Full after |
+| --- | ---: | ---: | ---: | ---: |
+| 71 original tasks in 17 languages | 59/71 | 58/71 | 63/71 | 65/71 |
+| Additional eight component tasks in English | 8/8 | 8/8 | 8/8 | 8/8 |
+
+On the original tasks, completion rose from 122/142 (85.92%) to 123/142 (86.62%). The full catalog gained two terrain reads. The core collider edit that previously passed ended without an answer after the model stream disconnected. It passed in a separate diagnostic replay. The other disconnected turn requested a terrain edit on full and still failed on replay. Both first attempts remain in the table. The operator's terrain setting stayed disabled throughout. Public calls on the 142 first attempts increased from 1,512 to 1,569, and calls returning failure fell from 128 to 62. The earlier study ran identical server and Unity code to the census baseline. [Matched task outcomes and failure analysis](catalog_outcome_comparison.md)
+
+The additional component tasks reached the requested state in both revisions. Core needed 65 public calls compared with 90 at baseline. Full used 48 compared with 45. Each task was delivered once per catalog per product. [Additional panel and reproducible measurements](tool_outcome_panel.md)
+
+## Public contracts
+
 | Contract check | Baseline | After |
 | --- | ---: | ---: |
 | Static tools / named groups | 134 / 17 | 134 / 17 |
