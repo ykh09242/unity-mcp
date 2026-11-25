@@ -723,6 +723,17 @@ def test_new_forwarder_gets_source_meaning_and_keeps_its_own_parameters(monkeypa
     )
 
 
+def test_forwarded_actions_preserve_admitted_requirements_and_evidence_limits(entries):
+    by_name = {entry["name"]: entry for entry in entries}
+    for action, parameter in (("create", "name"), ("move_to_scene", "target")):
+        card = action_catalog.action_card(by_name["scene_lifecycle"], action)
+        assert parameter in card["required_parameters"]
+    for focused, action in (("scene_inspect", "get_hierarchy"), ("scene_validate", "validate")):
+        source = action_catalog.operation_owner(focused, action)
+        expected = action_catalog.action_card(by_name[source], action)["evidence_limit"]
+        assert action_catalog.action_card(by_name[focused], action)["evidence_limit"] == expected
+
+
 @pytest.mark.parametrize("operation", ["close_scene", "create", "move_to_scene"])
 def test_focused_scene_edits_survive_the_explicit_intent_filter(operation):
     name = "scene_lifecycle"

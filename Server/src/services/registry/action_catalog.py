@@ -1052,10 +1052,8 @@ def action_guidance(
             )
             if values is None or action in values:
                 variants.append(variant)
-    # A focused adapter forwards this exact selector. Its public schema still
-    # owns parameters, evidence and permissions. Share the underlying operation's
-    # meaning so selecting a catalog profile cannot turn a declared edit into an
-    # unknown action or drop its description from search.
+    # Registered forwarders run the same operation, with a subset of its inputs.
+    # Explicit wire alternatives take precedence over inherited requirements.
     purpose = documented_actions(tool_description(entry)).get(
         action, shared.purpose if shared else ""
     )
@@ -1074,8 +1072,16 @@ def action_guidance(
             for name in variants[0].get("required", ())
             if name != "action" and all(name in v.get("required", ()) for v in variants[1:])
         )
+    elif shared and shared.required:
+        admitted = schema.get("properties", getattr(_CAPABILITIES[entry["name"]], "parameters", ()))
+        required = tuple(name for name in shared.required if name in admitted)
     if variants or purpose or shared:
-        return ActionGuidance(purpose, required, intent=shared.intent if shared else None)
+        return ActionGuidance(
+            purpose,
+            required,
+            evidence_limit=shared.evidence_limit if shared else "",
+            intent=shared.intent if shared else None,
+        )
     return None
 
 

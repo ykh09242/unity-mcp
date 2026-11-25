@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from services.action_inputs import INPUT_ACTION_REQUIRED, REFLECTION_REQUIRED, TERRAIN_REQUIRED
 from services.declared_action_contracts import (
     ACTION_CONTRACTS,
     ASSET_MOVE_CONTRACTS,
@@ -72,7 +73,17 @@ def _declared_rule(tool: str, action: str) -> ActionRule:
     )
 
 
+_DOMAIN_INPUTS = {
+    "manage_input_actions": INPUT_ACTION_REQUIRED,
+    "manage_terrain": TERRAIN_REQUIRED,
+    "unity_reflect": REFLECTION_REQUIRED,
+}
+
 ACTION_RULES: dict[str, tuple[ActionRule, ...]] = {
+    **{
+        tool: tuple(ActionRule(action, required) for action, required in actions.items())
+        for tool, actions in _DOMAIN_INPUTS.items()
+    },
     "gameobject_create": (ActionRule("create", ("name",), example=(("name", "Example"),)),),
     "manage_components": (
         ActionRule("add"),
@@ -220,6 +231,26 @@ def action_input_schema(name: str, schema: dict) -> dict:
     rules = ACTION_RULES.get(name, ())
     if not rules:
         return schema
+    if name in _DOMAIN_INPUTS:
+        conditions = []
+        for rule in rules:
+            if not rule.required:
+                continue
+            selector = {"const": rule.action}
+            if name in {"manage_terrain", "unity_reflect"}:
+                # Both wire handlers accept mixed-case ASCII action names.
+                letters = "".join(f"[{c}{c.upper()}]" if c.isalpha() else c for c in rule.action)
+                selector = {"pattern": rf"^{letters}(?![\s\S])"}
+            conditions.append(
+                {
+                    "if": {"properties": {"action": selector}, "required": ["action"]},
+                    "then": {
+                        "required": list(rule.required),
+                        "properties": {field: {"not": {"type": "null"}} for field in rule.required},
+                    },
+                }
+            )
+        return {**schema, "allOf": [*schema.get("allOf", ()), *conditions]}
     if name == "manage_addressables":
         return _prefab_input_schema(schema)
     if name == "gameobject_create":

@@ -4,6 +4,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field, StrictInt
 
+from services.action_inputs import REFLECTION_REQUIRED
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -102,20 +103,11 @@ async def unity_reflect(
             "message": "page_size, cursor, assembly and type_kind require search.",
         }
 
-    # Validate required params per action
-    if action_lower == "get_type":
-        if not class_name:
-            return {
-                "success": False,
-                "message": "get_type requires class_name.",
-            }
-    elif action_lower == "get_member":
-        if not class_name or not member_name:
-            return {
-                "success": False,
-                "message": "get_member requires class_name and member_name.",
-            }
-    elif action_lower == "search":
+    required = REFLECTION_REQUIRED[action_lower]
+    selectors = {"class_name": class_name, "member_name": member_name, "query": query}
+    if any(not selectors[field] for field in required):
+        return {"success": False, "message": f"{action_lower} requires {' and '.join(required)}."}
+    if action_lower == "search":
         if not isinstance(query, str) or not query.strip():
             return {
                 "success": False,

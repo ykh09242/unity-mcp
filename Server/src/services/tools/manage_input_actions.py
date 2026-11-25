@@ -1,13 +1,14 @@
 """Bounded InputAction asset authoring, separate from Play Mode input simulation."""
 
 import json
-from typing import Annotated, Literal, assert_never
+from typing import Annotated, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
 
 from models.models import MCPResponse
+from services.action_inputs import INPUT_ACTION_REQUIRED
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -25,6 +26,14 @@ AuthoringAction = Literal[
     "set_binding",
     "remove_binding",
 ]
+_BINDING_OPTIONS = ("groups", "interactions", "processors")
+_OPTIONAL_INPUTS = {
+    "read": ("page_size", "cursor", "expected_revision"),
+    "edit": ("expected_revision",),
+    "add_action": ("expected_control_type", "interactions", "processors"),
+    "add_binding": _BINDING_OPTIONS,
+    "set_binding": _BINDING_OPTIONS,
+}
 GuidText = Annotated[
     str,
     Field(
@@ -111,85 +120,38 @@ class InputActionRequest(BaseModel):
         for value in values.values():
             if isinstance(value, str) and "\0" in value:
                 raise ValueError("InputAction strings cannot contain NUL")
-        common = {"action", "path", "expected_revision"}
-        match self.action:
-            case "capabilities":
-                allowed, required = {"action"}, set()
-            case "read":
-                allowed, required = common | {"page_size", "cursor"}, {"path"}
-                if self.cursor and self.expected_revision is None:
-                    raise ValueError("Paged continuation requires expected_revision")
-            case "create_asset":
-                allowed, required = {"action", "path"}, {"path"}
-            case "edit":
-                allowed, required = common | {"commands"}, {"path", "commands"}
-                references: dict[str, str] = {}
-                assert self.commands is not None
-                creating = False
-                for index, command in enumerate(self.commands):
-                    if index == 0:
-                        creating = command.action == "create_asset"
-                    if command.action == "create_asset" and index != 0:
-                        raise ValueError("create_asset must be the first command")
-                    for key, kind in (
-                        ("map_id", "add_map"),
-                        ("action_id", "add_action"),
-                        ("binding_id", "add_binding"),
-                    ):
-                        selector = getattr(command, key)
-                        if selector is not None and selector.startswith("$"):
-                            if references.get(selector[1:]) != kind:
-                                raise ValueError(
-                                    "Local selectors require an earlier identity of the same kind"
-                                )
-                    if command.ref is not None:
-                        if command.ref in references:
-                            raise ValueError("Local result refs must be unique")
-                        references[command.ref] = command.action
-                if creating == (self.expected_revision is not None):
-                    raise ValueError(
-                        "Existing edits require expected_revision; creation forbids it"
-                    )
-            case "add_map":
-                allowed = common | {"name"}
-                required = {"path", "expected_revision", "name"}
-            case "add_action":
-                allowed = common | {
-                    "map_id",
-                    "name",
-                    "action_type",
-                    "expected_control_type",
-                    "interactions",
-                    "processors",
-                }
-                required = {"path", "expected_revision", "map_id", "name", "action_type"}
-            case "add_binding":
-                allowed = common | {
-                    "map_id",
-                    "action_id",
-                    "binding_path",
-                    "groups",
-                    "interactions",
-                    "processors",
-                }
-                required = {"path", "expected_revision", "map_id", "action_id", "binding_path"}
-            case "set_binding":
-                allowed = common | {
-                    "map_id",
-                    "binding_id",
-                    "binding_path",
-                    "groups",
-                    "interactions",
-                    "processors",
-                }
-                required = {"path", "expected_revision", "map_id", "binding_id", "binding_path"}
-            case "remove_binding":
-                allowed = common | {"map_id", "binding_id"}
-                required = {"path", "expected_revision", "map_id", "binding_id"}
-            case unreachable:
-                assert_never(unreachable)
-        if set(values) - allowed or required - set(values):
+        required = INPUT_ACTION_REQUIRED[self.action]
+        allowed = {"action", *required, *_OPTIONAL_INPUTS.get(self.action, ())}
+        if values.keys() - allowed or set(required) - values.keys():
             raise ValueError("InputAction request has missing or action-inapplicable fields")
+        if self.action == "read" and self.cursor and self.expected_revision is None:
+            raise ValueError("Paged continuation requires expected_revision")
+        if self.action == "edit":
+            references: dict[str, str] = {}
+            assert self.commands is not None
+            creating = False
+            for index, command in enumerate(self.commands):
+                if index == 0:
+                    creating = command.action == "create_asset"
+                if command.action == "create_asset" and index != 0:
+                    raise ValueError("create_asset must be the first command")
+                for key, kind in (
+                    ("map_id", "add_map"),
+                    ("action_id", "add_action"),
+                    ("binding_id", "add_binding"),
+                ):
+                    selector = getattr(command, key)
+                    if selector is not None and selector.startswith("$"):
+                        if references.get(selector[1:]) != kind:
+                            raise ValueError(
+                                "Local selectors require an earlier identity of the same kind"
+                            )
+                if command.ref is not None:
+                    if command.ref in references:
+                        raise ValueError("Local result refs must be unique")
+                    references[command.ref] = command.action
+            if creating == (self.expected_revision is not None):
+                raise ValueError("Existing edits require expected_revision; creation forbids it")
         if self.path is not None:
             if (
                 not self.path.startswith("Assets/")

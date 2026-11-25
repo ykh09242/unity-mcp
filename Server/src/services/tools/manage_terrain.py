@@ -9,6 +9,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field, StrictBool, StrictInt, WithJsonSchema
 
+from services.action_inputs import TERRAIN_REQUIRED
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -56,24 +57,24 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
         return "target must contain1..512 characters."
     if args.get("searchMethod") not in (None, "by_id", "by_name", "by_path"):
         return "Unsupported Terrain selector."
+    required = TERRAIN_REQUIRED[action]
+    for field in required:
+        if field not in args:
+            return f"{action} requires {field}."
+    allowed = {"action", "target", "searchMethod", "allow_shared_data", "allow_boundary", *required}
     write = action.startswith("set_")
     if write:
-        if not isinstance(args.get("expected_revision"), str) or not _REVISION.fullmatch(
+        if not isinstance(args["expected_revision"], str) or not _REVISION.fullmatch(
             args["expected_revision"]
         ):
             return "A scoped expected_revision is required."
-        if not isinstance(args.get("expected_data_guid"), str) or not _GUID.fullmatch(
+        if not isinstance(args["expected_data_guid"], str) or not _GUID.fullmatch(
             args["expected_data_guid"]
         ):
             return "A persistent expected_data_guid is required."
-    allowed = {"action", "target", "searchMethod", "allow_shared_data", "allow_boundary"}
-    if write:
-        allowed |= {"expected_revision", "expected_data_guid"}
     if action.endswith("_region"):
-        allowed |= {"channel", "region", "detail_layer"}
-        if write:
-            allowed.add("values")
-        channel, region = args.get("channel"), args.get("region")
+        allowed.add("detail_layer")
+        channel, region = args["channel"], args["region"]
         if channel not in ("heights", "alphamaps", "holes", "details"):
             return "channel must be heights, alphamaps, holes or details."
         if not isinstance(region, dict) or set(region) != {"x", "y", "width", "height"}:
@@ -93,7 +94,7 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
         elif "detail_layer" in args:
             return "detail_layer applies only to details."
         if write:
-            rows = args.get("values")
+            rows = args["values"]
             if not isinstance(rows, list) or len(rows) != region["height"]:
                 return "values must exactly match region height."
             work = 0
@@ -127,10 +128,7 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
             if work > 4096:
                 return "Region exceeds the 4096-scalar budget."
     elif action.endswith("_trees"):
-        allowed.add("indices")
-        if write:
-            allowed.add("values")
-        indices = args.get("indices")
+        indices = args["indices"]
         if (
             not isinstance(indices, list)
             or not 1 <= len(indices) <= 64
@@ -139,7 +137,7 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
         ):
             return "Supply 1..64 distinct nonnegative tree indices."
         if write:
-            rows = args.get("values")
+            rows = args["values"]
             if not isinstance(rows, list) or len(rows) != len(indices):
                 return "Tree values must match indices."
             for row in rows:
@@ -177,12 +175,10 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
                     if not valid:
                         return "Invalid tree field value."
     elif action.endswith("_layer"):
-        allowed.add("index")
-        if type(args.get("index")) is not int or not 0 <= args["index"] < 16:
+        if type(args["index"]) is not int or not 0 <= args["index"] < 16:
             return "index must be from 0 through 15."
         if write:
-            allowed |= {"layer_path", "layer_guid"}
-            path, guid = args.get("layer_path"), args.get("layer_guid")
+            path, guid = args["layer_path"], args["layer_guid"]
             if (
                 not isinstance(path, str)
                 or len(path) > 512
