@@ -924,17 +924,34 @@ def action_maturity(name: str) -> dict[str, ToolMaturity]:
 
 def declared_actions(entry: CatalogEntry) -> list[str]:
     """Reuse Literal types or Annotated catalog metadata, preserving legacy str admission."""
+    schema = entry.get("input_schema", {})
+    selector = schema.get("properties", {}).get("action")
+
+    def values(field):
+        if not isinstance(field, dict):
+            return []
+        if isinstance(field.get("const"), str):
+            return [field["const"]]
+        return [value for value in field.get("enum", ()) if isinstance(value, str)]
+
+    direct = values(selector)
+    branches = schema.get("oneOf") or schema.get("anyOf") or ()
+    variants = [
+        values(branch.get("properties", {}).get("action"))
+        for branch in branches
+        if isinstance(branch, dict)
+    ]
+    if variants and all(variants) and len(variants) == len(branches):
+        selectors = list(dict.fromkeys(value for group in variants for value in group))
+        return [value for value in selectors if not direct or value in direct]
+    if direct:
+        return direct
     capability = _CAPABILITIES.get(entry["name"])
     if capability is not None:
         return list(capability.actions)
     function = entry.get("func")
     if function is None:
-        selector = entry.get("input_schema", {}).get("properties", {}).get("action", {})
-        if not isinstance(selector, dict):
-            return []
-        if isinstance(selector.get("const"), str):
-            return [selector["const"]]
-        return [value for value in selector.get("enum", []) if isinstance(value, str)]
+        return []
     parameter = inspect.signature(function, eval_str=True).parameters.get("action")
     if parameter is None:
         return []
@@ -1016,7 +1033,8 @@ def action_guidance(
     owner = operation_owner(entry["name"], action)
     source = TOOL_GUIDANCE.get(owner) if inherit and owner != entry["name"] else None
     shared = source.actions.get(action) if source else None
-    for variant in entry.get("input_schema", {}).get("oneOf", ()):
+    schema = entry.get("input_schema", {})
+    for variant in schema.get("oneOf") or schema.get("anyOf", ()):
         selector = (
             variant.get("properties", {}).get("action") if isinstance(variant, dict) else None
         )

@@ -2,6 +2,14 @@
 
 ## Capability Discovery
 
+Call `search_unity_tools(selection="agent", query=original, limit=20)` to see the
+public family directory for this connection. Follow every `next_offset`, select
+families by the requested outcome, and repeat the call with each exact `family`
+ID. Read every operation page before choosing. A focused tool can expose actions
+from a shared family. Compare the inputs and effects of each callable binding.
+Resources and templates have their own family IDs. Keep the original, target
+and host scope across pages. Raw-only search returns approximate matches.
+
 Interpret the user's goal in its original language and use the complete built-in catalog to select an operation by meaning. Compare the requested outcome, target type, observation versus mutation, input requirements and effects. Preserve exact tool, API and package identifiers.
 
 ```json

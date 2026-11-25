@@ -57,12 +57,23 @@ def _validate_query(_ctx, _param, value):
         return None
     if not value.strip() or len(value) > 512:
         raise click.BadParameter("use 1..512 characters including a non-whitespace character")
-    return value.strip()
+    return value
 
 
 @tool.command("search")
 @click.argument("query", required=False, callback=_validate_query)
 @click.option("--limit", type=click.IntRange(1, 20), default=5, show_default=True)
+@click.option(
+    "--selection",
+    type=click.Choice(["ranked", "agent"]),
+    default="ranked",
+    show_default=True,
+    help="Use agent to browse all public family and operation pages.",
+)
+@click.option("--family", help="An exact family ID from the directory for agent selection.")
+@click.option(
+    "--offset", type=click.IntRange(min=0), default=0, help="Agent selection page offset."
+)
 @click.option(
     "--catalog-query",
     callback=_validate_query,
@@ -99,6 +110,9 @@ def search(
     observation_source: str | None,
     required_value: tuple[str, ...],
     route_surfaces: RouteSurfaces,
+    selection: str,
+    family: str | None,
+    offset: int,
 ) -> None:
     """Search the offline local catalog by task purpose, without a Unity connection.
 
@@ -114,6 +128,9 @@ def search(
 
     try:
         request = SearchRequest(
+            selection=selection,
+            family=family,
+            offset=offset,
             query=query,
             catalog_query=catalog_query,
             limit=limit,
@@ -132,7 +149,11 @@ def search(
         resources=get_registered_resources(),
     )
     config = get_config()
-    if config.format == "text":
+    if selection == "agent":
+        import json
+
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    elif config.format == "text":
         from cli.utils.task_search_output import format_task_search
 
         click.echo(format_task_search(result, config))

@@ -14,7 +14,7 @@ description: "Search Unity tools, actions and readable resources without changin
 
 ## Description
 
-Search Unity tools, actions and readable resources without changing selection or invoking Unity. Keep the original query. For required evidence, select observation_source and/or required_values. To perform an operation, choose intent and supply catalog_query when useful. Omit evidence selectors unless the route must return evidence. Inspect route_groups for invocations and evidence limits, or no_match for scoped alternatives.
+Search Unity tools, actions and readable resources without changing selection or invoking Unity. Use selection=agent with the original query to discover public families. Pass a returned family and follow next_offset to compare every binding before choosing. Ranked search also accepts intent and catalog_query, or observation_source and required_values for evidence. Inspect route_groups for invocations and evidence limits, or no_match for scoped alternatives.
 
 ## Parameters
 
@@ -29,6 +29,9 @@ Search Unity tools, actions and readable resources without changing selection or
 | `route_surfaces` | `Literal['both', 'tools', 'resources'] \| None` | — | Group tools, resources or both (default). |
 | `host_tool_names` | `list[str] \| None` | — | Complete callable tool names exposed by this host for this connection. Omit if unknown. |
 | `host_tool_evidence` | `HostToolEvidence \| None` | — | Bounded exact-name checks from this host on the same connection and target. Use instead of host_tool_names. Incomplete misses stay unknown. |
+| `selection` | `Literal['ranked', 'agent']` | — | Use agent for a public family directory and complete operation pages; ranked returns approximate matches. |
+| `family` | `str \| None` | — | Exact family ID from the agent selection directory. |
+| `offset` | `int` | — | Agent selection page offset. Follow next_offset. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

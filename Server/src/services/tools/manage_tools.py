@@ -78,10 +78,17 @@ _INTENT_DESCRIPTION = (
     "interact for operating the Editor or running game, edit for changing project content."
 )
 _SEARCH_DESCRIPTION = (
-    "Keep the original query. For required evidence, select observation_source and/or "
-    "required_values. To perform an operation, choose intent and supply catalog_query when "
-    "useful. Omit evidence selectors unless the route must return evidence."
+    "Use selection=agent with the original query to discover public families. Pass a returned "
+    "family and follow next_offset to compare every binding before choosing. Ranked search "
+    "also accepts intent and catalog_query, or observation_source and required_values for evidence."
 )
+_Selection = Annotated[
+    Literal["ranked", "agent"],
+    "Use agent for a public family directory and complete operation pages; ranked returns approximate matches.",
+]
+_Family = Annotated[
+    str | None, Field(min_length=1), "Exact family ID from the agent selection directory."
+]
 
 
 @mcp_for_unity_tool(
@@ -122,6 +129,11 @@ async def search_unity_tools(
         "Bounded exact-name checks from this host on the same connection and target. "
         "Use instead of host_tool_names. Incomplete misses stay unknown.",
     ] = None,
+    selection: _Selection = "ranked",
+    family: _Family = None,
+    offset: Annotated[
+        int, Field(strict=True, ge=0), "Agent selection page offset. Follow next_offset."
+    ] = 0,
 ) -> dict[str, Any]:
     from services.registry.task_search import SearchRequest, search_catalog
 
@@ -129,6 +141,9 @@ async def search_unity_tools(
         return {"success": False, "error": "Supply host_tool_names or host_tool_evidence."}
     try:
         request = SearchRequest(
+            selection=selection,
+            family=family,
+            offset=offset,
             query=query,
             catalog_query=catalog_query,
             limit=limit,
@@ -140,6 +155,11 @@ async def search_unity_tools(
             host_tool_evidence=host_tool_evidence,
         )
     except ValidationError:
+        if selection == "agent" or family is not None or offset:
+            return {
+                "success": False,
+                "error": "Use selection=agent, a nonblank original query (up to 512 characters), optional family, offset and limit 1..20. Omit ranked-search filters.",
+            }
         return {
             "success": False,
             "error": "Supply query (1..512 nonblank characters), observation_source or 1..32 required_values. Use a declared source and values, optional catalog_query (1..512 characters), and limit 1..20.",
@@ -147,6 +167,11 @@ async def search_unity_tools(
     entries, visible = await _catalog_inventory(
         ctx, get_registered_tools(), getattr(ctx.fastmcp, "_tool_discovery", None)
     )
+    if selection == "agent":
+        entries = {
+            name: {**entry, "input_schema": visible[name].parameters} if name in visible else entry
+            for name, entry in entries.items()
+        }
     # Resolve the caller's inventory on its MCP context before local CPU inference.
     outcome = await asyncio.to_thread(
         search_catalog,
@@ -274,6 +299,8 @@ async def manage_tools(
         "For search or inspect_inventory, check exact candidate names on this host's same connection "
         "and target. Use instead of host_tool_names. Incomplete misses stay unknown.",
     ] = None,
+    selection: _Selection = "ranked",
+    family: _Family = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
@@ -338,7 +365,9 @@ async def manage_tools(
         return {"success": False, "error": "route_surfaces is supported only for search."}
     if catalog_query is not None and action != "search":
         return {"success": False, "error": "catalog_query is supported only for search."}
-    if offset and action != "catalog":
+    if (selection != "ranked" or family is not None) and action != "search":
+        return {"success": False, "error": "selection and family are supported only for search."}
+    if offset and action != "catalog" and not (action == "search" and selection == "agent"):
         return {"success": False, "error": "offset is supported only for catalog."}
     if operation is not None and action != "describe":
         return {"success": False, "error": "operation is supported only for describe."}
@@ -372,6 +401,9 @@ async def manage_tools(
             }
         return await search_unity_tools(
             ctx,
+            selection=selection,
+            family=family,
+            offset=offset,
             query=query,
             catalog_query=catalog_query,
             limit=limit,

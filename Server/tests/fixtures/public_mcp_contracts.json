@@ -22192,6 +22192,18 @@
                 ],
                 "default": null
               },
+              "family": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "group": {
                 "anyOf": [
                   {
@@ -22409,6 +22421,14 @@
                   }
                 ],
                 "default": null
+              },
+              "selection": {
+                "default": "ranked",
+                "enum": [
+                  "ranked",
+                  "agent"
+                ],
+                "type": "string"
               },
               "tool": {
                 "anyOf": [
@@ -26205,6 +26225,18 @@
                 ],
                 "default": null
               },
+              "family": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "host_tool_evidence": {
                 "anyOf": [
                   {
@@ -26306,6 +26338,11 @@
                 ],
                 "default": null
               },
+              "offset": {
+                "default": 0,
+                "minimum": 0,
+                "type": "integer"
+              },
               "query": {
                 "anyOf": [
                   {
@@ -26389,6 +26426,14 @@
                   }
                 ],
                 "default": null
+              },
+              "selection": {
+                "default": "ranked",
+                "enum": [
+                  "ranked",
+                  "agent"
+                ],
+                "type": "string"
               },
               "unity_instance": {
                 "anyOf": [
@@ -50029,6 +50074,18 @@
                 ],
                 "default": null
               },
+              "family": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "group": {
                 "anyOf": [
                   {
@@ -50246,6 +50303,14 @@
                   }
                 ],
                 "default": null
+              },
+              "selection": {
+                "default": "ranked",
+                "enum": [
+                  "ranked",
+                  "agent"
+                ],
+                "type": "string"
               },
               "tool": {
                 "anyOf": [
@@ -54042,6 +54107,18 @@
                 ],
                 "default": null
               },
+              "family": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "host_tool_evidence": {
                 "anyOf": [
                   {
@@ -54143,6 +54220,11 @@
                 ],
                 "default": null
               },
+              "offset": {
+                "default": 0,
+                "minimum": 0,
+                "type": "integer"
+              },
               "query": {
                 "anyOf": [
                   {
@@ -54226,6 +54308,14 @@
                   }
                 ],
                 "default": null
+              },
+              "selection": {
+                "default": "ranked",
+                "enum": [
+                  "ranked",
+                  "agent"
+                ],
+                "type": "string"
               },
               "unity_instance": {
                 "anyOf": [

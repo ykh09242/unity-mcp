@@ -12,6 +12,7 @@ from pydantic import (
     Field,
     StrictInt,
     StrictStr,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -73,7 +74,10 @@ RouteSurfaces = Literal["both", "tools", "resources"]
 
 class SearchRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+    selection: Literal["ranked", "agent"] = "ranked"
     query: StrictStr | None = Field(default=None, min_length=1, max_length=512)
+    family: StrictStr | None = Field(default=None, min_length=1)
+    offset: StrictInt = Field(default=0, ge=0)
     limit: StrictInt = Field(default=5, ge=1, le=20)
     catalog_query: StrictStr | None = Field(default=None, min_length=1, max_length=512)
     intent: ActionIntent | None = None
@@ -90,18 +94,31 @@ class SearchRequest(BaseModel):
             raise ValueError("Supply query, observation_source or required_values.")
         if self.host_tool_names is not None and self.host_tool_evidence is not None:
             raise ValueError("Supply host_tool_names or host_tool_evidence.")
+        if self.selection == "agent":
+            if self.query is None or any(
+                value is not None
+                for value in (
+                    self.catalog_query,
+                    self.intent,
+                    self.observation_source,
+                    self.required_values,
+                )
+            ):
+                raise ValueError(
+                    "Agent selection requires the original query and all operations without ranked-search filters."
+                )
+        elif self.family is not None or self.offset:
+            raise ValueError("family and offset require selection=agent.")
         return self
 
     @field_validator("query", "catalog_query")
     @classmethod
-    def nonempty_query(cls, value: str | None) -> str | None:
-        """Normalize surrounding whitespace once at the public boundary."""
+    def nonempty_query(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
             return None
-        value = value.strip()
-        if not value:
+        if not value.strip():
             raise ValueError("Query must contain a non-whitespace character.")
-        return value
+        return value if info.data.get("selection") == "agent" else value.strip()
 
 
 MatchBasis = Literal[
@@ -721,6 +738,18 @@ def search_catalog(
         ]
     elif structured and visible_names is not None:
         entries = [entry for entry in entries if entry["name"] in visible_names]
+    if request.selection == "agent":
+        from services.registry.family_catalog import browse_families
+
+        blocked = {
+            key
+            for read in _EQUIVALENT_READS
+            if not read.allowed(unavailable_parents)
+            for key in read.bindings()
+        }
+        return browse_families(
+            request, entries, resources or [], visible_names=visible_names, blocked=blocked
+        )
     matched_query = None if structured else request.catalog_query or request.query
     query = _normalized(matched_query or "")
     query_words = _words(query)

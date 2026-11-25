@@ -4467,6 +4467,9 @@ Search the offline local catalog by task purpose, without a Unity connection. Ad
 | --- | --- | --- | --- | --- | --- | --- |
 | query | text | optional | nargs=1 | — | — |  |
 | --limit | integer range: [1..20] | optional | nargs=1 | 5 | — |  |
+| --selection | choice: ranked, agent | optional | nargs=1 | "ranked" | — | Use agent to browse all public family and operation pages. |
+| --family | text | optional | nargs=1 | — | — | An exact family ID from the directory for agent selection. |
+| --offset | integer range: [0..None] | optional | nargs=1 | 0 | — | Agent selection page offset. |
 | --catalog-query | text | optional | nargs=1 | — | — | Optional alternate terms for literal search, such as a known API identifier. |
 | --intent | choice: observe, interact, edit | optional | nargs=1 | — | — | Filter routes by the requested outcome. |
 | --observation-source | choice: editor_live, asset_file, imported_asset, compile_job, scenario_job | optional | nargs=1 | — | — | Select the origin of the requested evidence. A text query is optional. |

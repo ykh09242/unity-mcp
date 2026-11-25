@@ -14,7 +14,7 @@ description: "Find Unity tools, actions and readable resources for a task; inspe
 
 ## Description
 
-Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. Actions: list_groups (show all groups and their status), activate/deactivate (select exactly one group or tool), sync (refresh availability from Unity Editor's toggle states), reset (restore configured profile), describe (full schema for one tool, optionally bind operation), catalog (choose a domain by purpose, then browse tools, actions or readable resources), search (discover routes for a task in any language), inspect_inventory (compare server advertisement with this host's exact-name evidence). Keep the original query. For required evidence, select observation_source and/or required_values. To perform an operation, choose intent and supply catalog_query when useful. Omit evidence selectors unless the route must return evidence. Selection changes server tools/list; it does not confirm the client's callable inventory. Use sync after toggling tools in the Unity Editor GUI.
+Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. Actions: list_groups (show all groups and their status), activate/deactivate (select exactly one group or tool), sync (refresh availability from Unity Editor's toggle states), reset (restore configured profile), describe (full schema for one tool, optionally bind operation), catalog (choose a domain by purpose, then browse tools, actions or readable resources), search (discover routes for a task in any language), inspect_inventory (compare server advertisement with this host's exact-name evidence). Use selection=agent with the original query to discover public families. Pass a returned family and follow next_offset to compare every binding before choosing. Ranked search also accepts intent and catalog_query, or observation_source and required_values for evidence. Selection changes server tools/list; it does not confirm the client's callable inventory. Use sync after toggling tools in the Unity Editor GUI.
 
 ## Parameters
 
@@ -35,6 +35,8 @@ Find Unity tools, actions and readable resources for a task; inspect schemas or 
 | `route_surfaces` | `Literal['both', 'tools', 'resources'] \| None` | — | For search, choose both (default), tools, or resources for route_groups. Use tools for a tools-only client. Each group offers a representative and available alternatives. |
 | `host_tool_names` | `list[str] \| None` | — | For search or inspect_inventory, supply this host's complete callable tool names. Omit if unknown. |
 | `host_tool_evidence` | `HostToolEvidence \| None` | — | For search or inspect_inventory, check exact candidate names on this host's same connection and target. Use instead of host_tool_names. Incomplete misses stay unknown. |
+| `selection` | `Literal['ranked', 'agent']` | — | Use agent for a public family directory and complete operation pages; ranked returns approximate matches. |
+| `family` | `str \| None` | — | Exact family ID from the agent selection directory. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

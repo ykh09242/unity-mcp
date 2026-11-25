@@ -1,5 +1,16 @@
 # Action catalog and task discovery
 
+For agent selection, send the original request verbatim to `search_unity_tools` with
+`selection="agent"` and `limit=20`. Read the family directory through its final
+`next_offset`. Choose the families whose declared purpose fits the requested outcome.
+Repeat the same call with each returned `family` ID and follow every operation page.
+Compare the bindings' results, required inputs and effects before choosing an action.
+Tool bindings carry their exact tool name and selector. Resource bindings identify a
+readable URI or template. This path enumerates the live scope without loading search
+weights or calling Unity. Preserve `route_surfaces` and host inventory constraints
+across pages. The offline CLI provides the same pages with
+`tool search QUERY --selection agent`, `--family ID`, `--limit` and `--offset`.
+
 Use `manage_tools(action="catalog")` to read the group index and the entry for
 readable Unity state. Follow `resources` for fixed URIs or `resource_templates`
 for parameterized reads. Both branches have their own pagination. Template rows
