@@ -434,7 +434,7 @@ async def manage_tools(
             }
         try:
             return describe_action(
-                entries[name],
+                {**entries[name], "input_schema": definition.parameters},
                 definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
                 operation,
                 visible_names=set(visible),

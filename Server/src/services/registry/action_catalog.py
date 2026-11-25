@@ -910,29 +910,45 @@ def action_maturity(name: str) -> dict[str, ToolMaturity]:
     }
 
 
+def _selector_values(field, definitions, seen=frozenset()) -> list[str] | None:
+    """Enumerate bounded string selectors, including nullable local schema references."""
+    if not isinstance(field, dict) or id(field) in seen:
+        return None
+    if "const" in field:
+        value = field["const"]
+        return [value] if isinstance(value, str) else []
+    if "enum" in field:
+        return [value for value in field["enum"] if isinstance(value, str)]
+    if field.get("type") == "null":
+        return []
+    seen = seen | {id(field)}
+    reference = field.get("$ref")
+    if isinstance(reference, str) and reference.startswith("#/$defs/"):
+        target = reference.removeprefix("#/$defs/").replace("~1", "/").replace("~0", "~")
+        return _selector_values(definitions.get(target), definitions, seen)
+    branches = field.get("oneOf") or field.get("anyOf")
+    if branches:
+        values = [_selector_values(branch, definitions, seen) for branch in branches]
+        if all(group is not None for group in values):
+            return list(dict.fromkeys(value for group in values for value in group))
+    return None
+
+
 def declared_actions(entry: CatalogEntry) -> list[str]:
-    """Reuse Literal types or Annotated catalog metadata, preserving legacy str admission."""
+    """Prefer bounded wire selectors, then registered capabilities and Python literals."""
     schema = entry.get("input_schema", {})
-    selector = schema.get("properties", {}).get("action")
-
-    def values(field):
-        if not isinstance(field, dict):
-            return []
-        if isinstance(field.get("const"), str):
-            return [field["const"]]
-        return [value for value in field.get("enum", ()) if isinstance(value, str)]
-
-    direct = values(selector)
+    definitions = schema.get("$defs", {})
+    direct = _selector_values(schema.get("properties", {}).get("action"), definitions)
     branches = schema.get("oneOf") or schema.get("anyOf") or ()
     variants = [
-        values(branch.get("properties", {}).get("action"))
+        _selector_values(branch.get("properties", {}).get("action"), definitions)
         for branch in branches
         if isinstance(branch, dict)
     ]
-    if variants and all(variants) and len(variants) == len(branches):
+    if variants and all(group is not None for group in variants) and len(variants) == len(branches):
         selectors = list(dict.fromkeys(value for group in variants for value in group))
-        return [value for value in selectors if not direct or value in direct]
-    if direct:
+        return [value for value in selectors if direct is None or value in direct]
+    if direct is not None:
         return direct
     capability = _CAPABILITIES.get(entry["name"])
     if capability is not None:
@@ -970,15 +986,16 @@ def resource_observation(item: CatalogResource) -> dict:
     return {"observation": observation} if observation else {}
 
 
-def _required_tool_parameters(entry: CatalogEntry) -> list[str]:
+def _required_tool_parameters(entry: CatalogEntry, *, action_bound: bool = False) -> list[str]:
     function = entry.get("func")
     parameters = inspect.signature(function).parameters.values() if function else ()
+    excluded = {"ctx", "action"} if action_bound else {"ctx"}
     return [
-        name for name in entry.get("input_schema", {}).get("required", ()) if name != "action"
+        name for name in entry.get("input_schema", {}).get("required", ()) if name not in excluded
     ] + [
         parameter.name
         for parameter in parameters
-        if parameter.name not in {"ctx", "action"}
+        if parameter.name not in excluded
         and parameter.default is inspect.Parameter.empty
         and parameter.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
     ]
@@ -1026,7 +1043,7 @@ def action_guidance(
         selector = (
             variant.get("properties", {}).get("action") if isinstance(variant, dict) else None
         )
-        if isinstance(selector, dict) and selector.get("const") == action:
+        if action in (_selector_values(selector, schema.get("$defs", {})) or ()):
             purpose = variant.get("description")
             if not isinstance(purpose, str) or not purpose.strip():
                 purpose = documented_actions(tool_description(entry)).get(action, "")
@@ -1039,8 +1056,9 @@ def action_guidance(
     # owns parameters, evidence and permissions. Share the underlying operation's
     # meaning so selecting a catalog profile cannot turn a declared edit into an
     # unknown action or drop its description from search.
-    if shared:
-        return ActionGuidance(shared.purpose, intent=shared.intent)
+    purpose = documented_actions(tool_description(entry)).get(action)
+    if purpose or shared:
+        return ActionGuidance(purpose or shared.purpose, intent=shared.intent if shared else None)
     return None
 
 
@@ -1102,7 +1120,7 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
         (rule for rule in ACTION_RULES.get(entry["name"], ()) if rule.action == action), None
     )
     contract = ACTION_CONTRACTS.get(entry["name"], {}).get(action)
-    required = _required_tool_parameters(entry)
+    required = _required_tool_parameters(entry, action_bound=action is not None)
     effects = tool["effects"]
     if guidance and guidance.effects:
         effects = {
@@ -1436,7 +1454,7 @@ def describe_action(
     if operation is not None:
         card = action_card(entry, operation)
         schema = descriptor.get("inputSchema", descriptor.get("input_schema"))
-        action_schema = schema["properties"]["action"]
+        action_schema = schema.setdefault("properties", {}).setdefault("action", {})
         action_schema["const"] = operation
         action_schema.pop("default", None)
         schema["required"] = list(
