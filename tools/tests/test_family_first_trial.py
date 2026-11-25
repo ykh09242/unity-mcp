@@ -57,6 +57,14 @@ def passing_checks():
     }
 
 
+def clean_split():
+    return {
+        "overlapping_languages": [],
+        "overlapping_originals": [],
+        "families": {"instruments": {"tasks": ["status", "list"], "overlapping_routes": []}},
+    }
+
+
 def test_each_actor_sees_each_original_once_and_each_cell_equally():
     suite, captures = crossover()
     _, packets = trial.prepare(suite, captures)
@@ -76,7 +84,8 @@ def test_first_choice_can_use_offered_alias_and_is_counted_once():
     _, packets = trial.prepare(suite, captures)
     choices = [{case["id"]: "right" for case in packet} for packet in packets]
     checks = passing_checks()
-    result = trial.report(suite, captures, choices, "frozen", checks)
+    split = clean_split()
+    result = trial.report(suite, captures, choices, trial.CANDIDATE, checks, split)
     for scores in result["metrics"].values():
         assert scores["shipping"] == {"count": 8, "top3": 0, "first_choice": 8, "opposite_first": 8}
         assert scores["candidate"] == {
@@ -86,17 +95,17 @@ def test_first_choice_can_use_offered_alias_and_is_counted_once():
             "opposite_first": 0,
         }
     assert not result["replace"]
-    trial.verify_replay(suite, captures, result, checks)
+    trial.verify_replay(suite, captures, result, checks, split)
     changed = deepcopy(captures)
     changed["candidate"]["profiles"]["core"][0]["groups"][0][0]["purpose"] = "Changed purpose"
     with pytest.raises(ValueError, match="packet contents"):
-        trial.verify_replay(suite, changed, result, checks)
+        trial.verify_replay(suite, changed, result, checks, split)
     result["rows"][0]["candidate"]["first_choice"] = None
     with pytest.raises(ValueError, match="Changed first choices"):
         trial.verify_record(suite, result)
     choices[0].pop(next(iter(choices[0])))
     with pytest.raises(ValueError, match="incomplete"):
-        trial.report(suite, captures, choices, "frozen", checks)
+        trial.report(suite, captures, choices, trial.CANDIDATE, checks, split)
 
 
 def test_compatibility_failure_blocks_an_improving_challenger():
@@ -104,14 +113,22 @@ def test_compatibility_failure_blocks_an_improving_challenger():
     checks = passing_checks()
     _, packets = trial.prepare(suite, captures)
     choices = [{row["id"]: row["groups"][0][0]["route"] for row in packet} for packet in packets]
-    assert trial.report(suite, captures, choices, "frozen", checks)["replace"]
+    split = clean_split()
+    with pytest.raises(ValueError, match="candidate revision"):
+        trial.report(suite, captures, choices, "wrong", checks, split)
+    assert trial.report(suite, captures, choices, trial.CANDIDATE, checks, split)["replace"]
+    contaminated = deepcopy(split)
+    contaminated["families"]["instruments"]["overlapping_routes"].append("shared_poll")
+    audited = trial.report(suite, captures, choices, trial.CANDIDATE, checks, contaminated)
+    assert audited["ranking_comparisons_passed"] and not audited["split_valid"]
+    assert not audited["replace"] and not audited["heldout_gate_passed"]
     suite_name = Path(trial.CONTRACTS[0]).stem
     checks["candidate"]["suites"][suite_name]["unsuccessful"]["regression"] = "failure"
-    result = trial.report(suite, captures, choices, "frozen", checks)
+    result = trial.report(suite, captures, choices, trial.CANDIDATE, checks, split)
     assert result["heldout_gate_passed"] and not result["replace"]
     checks["shipping"]["test_ids_sha256"] = "different"
     with pytest.raises(ValueError, match="different compatibility cases"):
-        trial.report(suite, captures, choices, "frozen", checks)
+        trial.report(suite, captures, choices, trial.CANDIDATE, checks, split)
 
 
 def test_unoffered_choice_and_abstention_are_misses():
@@ -171,6 +188,15 @@ def test_published_trial_reconstructs_the_blinded_decisions_and_development_spli
             for f in HELD_FAMILIES
         )
     assert records["candidate_revision"] == "3d6bba60a033e4877b8792ef4aa25be4a70acaad"
+    assert records["development_split"] == trial.audit_split(suite)
+    assert not records["split_valid"] and records["ranking_comparisons_passed"]
+    assert records["development_split"]["families"]["manage_recording"]["overlapping_routes"] == [
+        "wait_for_operation"
+    ]
+    assert all(
+        scores["candidate"]["count"] == 32
+        for scores in records["independent_family_metrics"].values()
+    )
     assert len({*records["packet_sha256"]}) == 4
     choices = trial.verify_record(suite, records)
     assert len(choices) == 4 and all(len(answers) == 48 for answers in choices)

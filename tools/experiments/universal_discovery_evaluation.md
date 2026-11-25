@@ -2,7 +2,7 @@
 
 The catalog ranks a next Unity operation or readable resource. Each evaluation submits the same original requests to the core and full catalogs.
 
-A family-first challenger improved both raw top-three retrieval and blinded agent choices on eight held-out languages and three new families. Existing menu-path and state-lookup regressions prevented deployment. [Replacement trial and release decision](family_first_discovery.md)
+A family-first challenger improved raw top-three retrieval and blinded agent choices on eight held-out languages. Two families had a clean development split. A shared recording-status binding overlapped training in the third. The split audit and existing menu-path and state-lookup regressions prevented deployment. [Replacement trial and release decision](family_first_discovery.md)
 
 ## Recovering reads outside the first tool family
 

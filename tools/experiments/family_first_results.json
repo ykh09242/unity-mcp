@@ -44,7 +44,68 @@
       }
     }
   },
-  "heldout_gate_passed": true,
+  "ranking_comparisons_passed": true,
+  "development_split": {
+    "overlapping_languages": [],
+    "overlapping_originals": [],
+    "families": {
+      "manage_addressables": {
+        "tasks": [
+          "current_loading_address",
+          "replace_loading_address"
+        ],
+        "overlapping_routes": []
+      },
+      "manage_localization": {
+        "tasks": [
+          "correct_table_text",
+          "missing_table_text"
+        ],
+        "overlapping_routes": []
+      },
+      "manage_recording": {
+        "tasks": [
+          "finish_current_video",
+          "video_frame_progress"
+        ],
+        "overlapping_routes": [
+          "wait_for_operation"
+        ]
+      }
+    }
+  },
+  "split_valid": false,
+  "independent_family_metrics": {
+    "core": {
+      "shipping": {
+        "count": 32,
+        "top3": 11,
+        "first_choice": 11,
+        "opposite_first": 7
+      },
+      "candidate": {
+        "count": 32,
+        "top3": 17,
+        "first_choice": 15,
+        "opposite_first": 3
+      }
+    },
+    "full": {
+      "shipping": {
+        "count": 32,
+        "top3": 10,
+        "first_choice": 10,
+        "opposite_first": 6
+      },
+      "candidate": {
+        "count": 32,
+        "top3": 15,
+        "first_choice": 15,
+        "opposite_first": 3
+      }
+    }
+  },
+  "heldout_gate_passed": false,
   "compatibility": {
     "shipping": {
       "arm": "shipping",

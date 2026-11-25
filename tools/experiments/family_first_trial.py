@@ -11,13 +11,21 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments.discovery_evaluation_fixture import load_suite
+from tools.experiments.discovery_family_split import binding_name, belongs_to, query_identity
 from tools.experiments.evaluate_family_first import HOLDOUT, HOLDOUT_SHA256
 from tools.experiments.check_family_first_compatibility import CONTRACTS
+from tools.experiments.fit_family_first import HELD_FAMILIES, training_cards
 
 ARMS = ("shipping", "candidate")
 PROFILES = ("core", "full")
 CELLS = tuple((arm, profile) for profile in PROFILES for arm in ARMS)
 BASELINE = "ab35ff1dd53313583ec753990bbe33dbda6cb7a1"
+CANDIDATE = "3d6bba60a033e4877b8792ef4aa25be4a70acaad"
+DEVELOPMENT_REPLAYS = {
+    "universal_discovery_read_recall_confirmation.json": "cb2fd8781718d0bbdedda39db2f68309c3706d15edcf5e63b3595f58316c5a20",
+    "universal_discovery_activation_confirmation.json": "f8f123c5b3891a669da184fac148df70728bcd8d658d966766c391d86ce17a91",
+    "universal_discovery_effect_confirmation.json": "9ea7ea36e00b700d41e393c811bb00a85a6f0288866c58e21aeaaa17984ac8d3",
+}
 
 
 def digest(value):
@@ -110,6 +118,64 @@ def passed(metrics):
     )
 
 
+def audit_split(suite):
+    """Intersect the sealed oracle, including standalone alternatives, with calibration inputs."""
+    cards, fitted_requests = training_cards()
+    requests = list(fitted_requests)
+    for name, expected_hash in DEVELOPMENT_REPLAYS.items():
+        replay = load_suite(HOLDOUT.with_name(name))
+        if replay.sha256 != expected_hash:
+            raise ValueError("Development replay digest mismatch")
+        requests.extend(replay.requests)
+    development_routes = {binding_name(k) for card in cards for k in card.bindings}
+    development_routes.update(k for r in requests for k in r.expected | r.wrong_effect)
+    development_queries = {query_identity(r.query) for r in requests}
+    development_queries.update(
+        query_identity(t) for card in cards for t in (card.purpose, *card.examples)
+    )
+    development_languages = {r.language for r in requests}
+    families = {}
+    for r in suite.requests:
+        routes = r.expected | r.wrong_effect
+        owners = {f for f in HELD_FAMILIES if any(belongs_to(k, f) for k in routes)}
+        if len(owners) != 1:
+            raise ValueError(f"Ambiguous held-out family for {r.task}")
+        group = families.setdefault(owners.pop(), {"tasks": set(), "overlapping_routes": set()})
+        group["tasks"].add(r.task)
+        group["overlapping_routes"].update(routes & development_routes)
+    return {
+        "overlapping_languages": sorted(
+            {r.language for r in suite.requests} & development_languages
+        ),
+        "overlapping_originals": sorted(
+            {r.query for r in suite.requests if query_identity(r.query) in development_queries}
+        ),
+        "families": {
+            f: {k: sorted(values) for k, values in group.items()}
+            for f, group in sorted(families.items())
+        },
+    }
+
+
+def independent_results(suite, rows, split):
+    clean_tasks = {
+        task
+        for group in split["families"].values()
+        if not group["overlapping_routes"]
+        for task in group["tasks"]
+    }
+    clean = {
+        (r.language, r.task)
+        for r in suite.requests
+        if r.task in clean_tasks
+        and r.language not in split["overlapping_languages"]
+        and r.query not in split["overlapping_originals"]
+    }
+    return len(clean) == len(suite.requests), summarize(
+        suite, (r for r in rows if (r["language"], r["task"]) in clean)
+    )
+
+
 def compatible(checks):
     wanted = {Path(path).stem for path in CONTRACTS}
     old, new = (checks[arm] for arm in ARMS)
@@ -128,7 +194,9 @@ def compatible(checks):
     return not any(suite["unsuccessful"] for suite in new["suites"].values())
 
 
-def report(suite, captures, responses, candidate_revision, checks):
+def report(suite, captures, responses, candidate_revision, checks, split):
+    if candidate_revision != CANDIDATE:
+        raise ValueError("Unexpected frozen candidate revision")
     records, packets = prepare(suite, captures)
     if len(responses) != len(packets):
         raise ValueError("Missing first-choice packet")
@@ -151,6 +219,7 @@ def report(suite, captures, responses, candidate_revision, checks):
         }
     metrics = summarize(suite, rows.values())
     contracts_passed = compatible(checks)
+    valid, independent = independent_results(suite, rows.values(), split)
     return {
         "corpus_sha256": suite.sha256,
         "shipping_revision": BASELINE,
@@ -158,17 +227,25 @@ def report(suite, captures, responses, candidate_revision, checks):
         "packet_sha256": [digest(packet) for packet in packets],
         "choice_sha256": [digest(choices) for choices in responses],
         "metrics": metrics,
-        "heldout_gate_passed": passed(metrics),
+        "ranking_comparisons_passed": passed(metrics),
+        "development_split": split,
+        "split_valid": valid,
+        "independent_family_metrics": independent,
+        "heldout_gate_passed": valid and passed(metrics),
         "compatibility": checks,
-        "replace": passed(metrics) and contracts_passed,
+        "replace": valid and passed(metrics) and contracts_passed,
         "rows": list(rows.values()),
     }
 
 
 def verify_record(suite, record):
     """Rebuild the assignments, submitted choices and decision from the published rows."""
-    if record["corpus_sha256"] != suite.sha256 or record["shipping_revision"] != BASELINE:
-        raise ValueError("Unrecognized corpus or baseline")
+    if (
+        record["corpus_sha256"] != suite.sha256
+        or record["shipping_revision"] != BASELINE
+        or record["candidate_revision"] != CANDIDATE
+    ):
+        raise ValueError("Unrecognized corpus or engine revision")
     rows = record["rows"]
     indexed = {(r["language"], r["task"], r["profile"]): r for r in rows}
     if len(indexed) != len(rows) or len(rows) != len(suite.requests) * len(PROFILES):
@@ -183,19 +260,23 @@ def verify_record(suite, record):
         raise ValueError("Changed first choices")
     metrics = summarize(suite, rows)
     contracts_passed = compatible(record["compatibility"])
+    valid, independent = independent_results(suite, rows, record["development_split"])
     if (
         metrics != record["metrics"]
-        or passed(metrics) != record["heldout_gate_passed"]
-        or (passed(metrics) and contracts_passed) != record["replace"]
+        or passed(metrics) != record["ranking_comparisons_passed"]
+        or valid != record["split_valid"]
+        or independent != record["independent_family_metrics"]
+        or (valid and passed(metrics)) != record["heldout_gate_passed"]
+        or (valid and passed(metrics) and contracts_passed) != record["replace"]
     ):
         raise ValueError("Changed replacement decision")
     return choices
 
 
-def verify_replay(suite, captures, record, checks):
+def verify_replay(suite, captures, record, checks, split):
     """Check the public packet contents against the original choices, without new judgments."""
     choices = verify_record(suite, record)
-    rebuilt = report(suite, captures, choices, record["candidate_revision"], checks)
+    rebuilt = report(suite, captures, choices, record["candidate_revision"], checks, split)
     if rebuilt != record:
         raise ValueError("Public results or blinded packet contents differ from the trial")
 
@@ -225,20 +306,34 @@ def main():
         if not args.record:
             parser.error("verify requires --record")
         checks = {arm: read_json(args.directory / f"compat-{arm}.json") for arm in ARMS}
-        verify_replay(suite, captures, read_json(args.record), checks)
+        verify_replay(suite, captures, read_json(args.record), checks, audit_split(suite))
         print("Public packets, first choices and replacement decision match the record.")
     else:
         if not args.candidate_revision or not args.output:
             parser.error("score requires --candidate-revision and --output")
         choices = [read_json(args.directory / f"choice-{i}.json") for i in range(len(CELLS))]
         checks = {arm: read_json(args.directory / f"compat-{arm}.json") for arm in ARMS}
-        result = report(suite, captures, choices, args.candidate_revision, checks)
+        result = report(
+            suite, captures, choices, args.candidate_revision, checks, audit_split(suite)
+        )
         verify_record(suite, result)
         args.output.write_text(
             json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
         )
         print(
-            json.dumps({key: result[key] for key in ("metrics", "heldout_gate_passed", "replace")})
+            json.dumps(
+                {
+                    key: result[key]
+                    for key in (
+                        "metrics",
+                        "independent_family_metrics",
+                        "ranking_comparisons_passed",
+                        "split_valid",
+                        "heldout_gate_passed",
+                        "replace",
+                    )
+                }
+            )
         )
 
 

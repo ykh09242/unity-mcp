@@ -18,7 +18,17 @@ Report both arms, counts by family and language, and losses as well as gains. Pr
 
 ## Outcome
 
-The challenger cleared all six held-out comparisons. It failed 31 existing public search regressions, so the shipping server at `0dd225434` remains the default. The trial ended without adjusting the candidate on these originals. The result record contains the route groups, all 192 agent selections, the comparison by profile and the failed compatibility cases. [Paired results and release decision](family_first_results.json)
+The shipping server at `0dd225434` remains the default. The challenger cleared all six numerical comparisons on the planned panel of 48 originals. Review found one cross-family training overlap and the challenger failed 31 existing public search regressions. The trial ended with the frozen weights and the original choices. The result record contains all 192 agent selections, the split audit and the compatibility failures. [Paired results and release decision](family_first_results.json)
+
+All eight languages were outside project development. The calibration catalog retained `wait_for_operation`, a shared tool that can poll recording status and an accepted alternative in the sealed recording oracle. It contributed positively labelled catalog examples during fitting. It appeared in zero returned recording groups. The original 48 scores are reproducible, but the planned three-family independence criterion failed. The audit checks all accepted and opposite bindings against the actual calibration declarations and development requests. [Sealed oracle](universal_discovery_family_first_holdout.json) · [Recording status forwarding](../../Server/src/services/tools/wait_for_operation.py)
+
+Removing all 16 recording requests leaves 32 independently held-out originals in Addressables and Localization. Both profiles improved on this subset. This retrospective breakdown cannot authorize promotion under the original 48-request gate.
+
+| Outcome on 32 independent originals | Core shipping → candidate | Full shipping → candidate |
+| --- | ---: | ---: |
+| Expected representative in top three | 11 → 17 | 10 → 15 |
+| Agent's first choice correct | 11 → 15 | 10 → 15 |
+| Opposite operation first | 7 → 3 | 6 → 3 |
 
 | Outcome across 48 originals | Core shipping → candidate | Full shipping → candidate |
 | --- | ---: | ---: |
@@ -30,7 +40,7 @@ Core gained ten top-three hits and lost three. Ten first choices became correct 
 
 Each cell below gives counts in the order **top-three hits / correct first choices / opposite first**. The arrow compares shipping with the challenger. The first three rows each contain 16 originals per profile. The language rows each contain six.
 
-| Held-out group | Core shipping → candidate | Full shipping → candidate |
+| Planned group | Core shipping → candidate | Full shipping → candidate |
 | --- | --- | --- |
 | Addressables | 8 / 8 / 6 → 11 / 9 / 3 | 7 / 7 / 5 → 10 / 10 / 3 |
 | Localization | 3 / 3 / 1 → 6 / 6 / 0 | 3 / 3 / 1 → 5 / 5 / 0 |
@@ -48,7 +58,7 @@ The shipping control passed all 211 compatibility tests. The challenger passed 1
 
 ## Candidate and assessment
 
-The independent corpus was sealed at `76ace9207`, the candidate at `3d6bba60a033e4877b8792ef4aa25be4a70acaad`, and the blind assignments and scoring at `1a17468d5`. Four fresh `gpt-6.2-sol` agents used medium reasoning. Each saw each original once and received twelve cases per engine and profile combination. A later byte-for-byte replay reproduced the candidate's public results after a lint-only binding change. The 192 original searches checked visibility, unchanged inventory and zero business/native dispatches. Running the shipping wheel and the candidate with external network and child processes blocked recorded zero attempts.
+The independently authored corpus was sealed at `76ace9207`, the candidate at `3d6bba60a033e4877b8792ef4aa25be4a70acaad`, and the blind assignments and scoring at `1a17468d5`. Four fresh `gpt-6.2-sol` agents used medium reasoning. Each saw each original once and received twelve cases per engine and profile combination. A later byte-for-byte replay reproduced the candidate's public results after a lint-only binding change. The 192 original searches checked visibility, unchanged inventory and zero business/native dispatches. Running the shipping wheel and the candidate with external network and child processes blocked recorded zero attempts.
 
 The challenger groups advertised bindings by declared owner, selector and effect. An independent tool or resource can form a one-member family. It uses the bundled encoders to shortlist up to eight families and then compares every eligible member against the original, its published purpose, examples, required inputs and effect. A shared 16,776-byte metric was fit locally on seven previous corpora and the remaining core declarations. Its SHA-256 is `88ab9a29f997d9cefb3753cc099e66d04aa29eeedb79f6e9c019581d9db6f0bb`. No language tag, translation, per-tool decision rule or network lookup enters ranking. Only the development fitter uses NumPy. Rebuilding from the same development inputs produced identical bytes. [Candidate source](family_first_search.py) · [Offline fitter and split](fit_family_first.py)
 
