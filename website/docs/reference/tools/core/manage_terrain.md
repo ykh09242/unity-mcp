@@ -26,13 +26,13 @@ Inspect and edit existing TerrainData with bounded region/index requests. get_in
 | `channel` | `str \| None` | — | Region channel: heights, alphamaps, holes or details. |
 | `region` | `dict[str, Any] \| None` | — | Zero-based cell rectangle for get_region and set_region. Read the exact rectangle you intend to change. |
 | `values` | `list[Any] \| None` | — | Replacement values for set_region or set_trees. Region rows are [y][x]. For holes, true means surface and false means a hole. |
-| `indices` | `list[int] \| None` | — |  |
-| `detail_layer` | `int \| None` | — |  |
-| `index` | `int \| None` | — |  |
-| `layer_path` | `str \| None` | — |  |
-| `layer_guid` | `str \| None` | — |  |
+| `indices` | `list[int] \| None` | — | Ordered list of 1 to 64 distinct existing tree indices for get_trees and set_trees. |
+| `detail_layer` | `int \| None` | — | Existing detail layer index. Required for the details channel and included in the region revision. |
+| `index` | `int \| None` | — | Existing TerrainLayer slot for get_layer and set_layer. |
+| `layer_path` | `str \| None` | — | Asset path of the replacement TerrainLayer for set_layer. |
+| `layer_guid` | `str \| None` | — | GUID of the replacement asset at layer_path for set_layer. |
 | `expected_data_guid` | `str \| None` | — | Required for writes. Copy data.data_guid from the corresponding read of the target. |
-| `expected_revision` | `str \| None` | — | Required for writes. Copy data.revision from the read of the same channel and rectangle, tree indices or layer slot. |
+| `expected_revision` | `str \| None` | — | Required for writes. Copy data.revision from the read of the same channel, rectangle and detail layer, ordered tree indices, or layer slot. |
 | `allow_shared_data` | `bool` | — |  |
 | `allow_boundary` | `bool` | — |  |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |

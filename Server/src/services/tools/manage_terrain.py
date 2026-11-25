@@ -244,11 +244,28 @@ async def manage_terrain(
             description="Replacement values for set_region or set_trees. Region rows are [y][x]. For holes, true means surface and false means a hole."
         ),
     ] = None,
-    indices: list[StrictInt] | None = None,
-    detail_layer: StrictInt | None = None,
-    index: StrictInt | None = None,
-    layer_path: str | None = None,
-    layer_guid: str | None = None,
+    indices: Annotated[
+        list[StrictInt] | None,
+        Field(
+            description="Ordered list of 1 to 64 distinct existing tree indices for get_trees and set_trees."
+        ),
+    ] = None,
+    detail_layer: Annotated[
+        StrictInt | None,
+        Field(
+            description="Existing detail layer index. Required for the details channel and included in the region revision."
+        ),
+    ] = None,
+    index: Annotated[
+        StrictInt | None,
+        Field(description="Existing TerrainLayer slot for get_layer and set_layer."),
+    ] = None,
+    layer_path: Annotated[
+        str | None, Field(description="Asset path of the replacement TerrainLayer for set_layer.")
+    ] = None,
+    layer_guid: Annotated[
+        str | None, Field(description="GUID of the replacement asset at layer_path for set_layer.")
+    ] = None,
     expected_data_guid: Annotated[
         str | None,
         Field(
@@ -258,7 +275,7 @@ async def manage_terrain(
     expected_revision: Annotated[
         str | None,
         Field(
-            description="Required for writes. Copy data.revision from the read of the same channel and rectangle, tree indices or layer slot."
+            description="Required for writes. Copy data.revision from the read of the same channel, rectangle and detail layer, ordered tree indices, or layer slot."
         ),
     ] = None,
     allow_shared_data: StrictBool = False,
