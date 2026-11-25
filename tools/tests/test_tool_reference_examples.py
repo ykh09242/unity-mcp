@@ -9,7 +9,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from jsonschema import validate
+from jsonschema import Draft202012Validator, validate
+
+from tools.tests.test_skill_documentation import distributed_tool_examples
 
 TOOLS = Path(__file__).resolve().parents[1]
 if str(TOOLS) not in sys.path:
@@ -40,6 +42,16 @@ def _arguments(path: Path) -> list[dict]:
 @pytest.fixture(scope="module")
 def public_contracts():
     return capture_public_contracts()
+
+
+def test_distributed_skill_calls_validate_on_every_protocol(public_contracts):
+    for path, example in distributed_tool_examples():
+        name, params = example["tool"], example["params"]
+        for mode, catalog in public_contracts["protocols"].items():
+            schema = catalog["tools"][name]["inputSchema"]
+            error = next(Draft202012Validator(schema).iter_errors(params), None)
+            assert error is None, (path, name, mode, error.message)
+            assert params.keys() <= schema["properties"].keys(), (path, name, mode)
 
 
 @pytest.mark.parametrize("group,name,count", EDITING_PAGES)

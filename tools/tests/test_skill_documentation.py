@@ -11,15 +11,26 @@ from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[2]
+CLAUDE_SKILLS = ROOT / ".claude/skills"
+ORCHESTRATOR_COPIES = (ROOT / "unity-mcp-skill", CLAUDE_SKILLS / "unity-mcp-skill")
+BLENDER_SKILL = CLAUDE_SKILLS / "blender-to-unity"
+SOURCE_SKILL = CLAUDE_SKILLS / "mcp-source"
 SKILLS = (
-    ROOT / "unity-mcp-skill",
-    ROOT / ".claude/skills/unity-mcp-skill",
-    ROOT / ".claude/skills/blender-to-unity",
-    ROOT / ".claude/skills/mcp-source",
-    ROOT / ".claude/skills/unity-play-scenarios",
+    ORCHESTRATOR_COPIES[0],
+    *(entry.parent for entry in sorted(CLAUDE_SKILLS.glob("*/SKILL.md"))),
 )
 FENCES = re.compile(r"^```([^\n]*)\n(.*?)^```\s*$", re.MULTILINE | re.DOTALL)
 LINKS = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+
+def distributed_tool_examples():
+    for skill in SKILLS:
+        for path in sorted(skill.rglob("*.md")):
+            for language, body in FENCES.findall(path.read_text(encoding="utf-8")):
+                if language == "json":
+                    example = json.loads(body)
+                    if isinstance(example, dict) and {"tool", "params"} <= example.keys():
+                        yield path, example
 
 
 def static_metadata(expression, tree, path, *, sequence=False, resolving=frozenset()):
@@ -278,20 +289,14 @@ class SkillDocumentationTests(unittest.TestCase):
 
     def test_json_tool_examples_match_registered_schemas(self):
         count = 0
-        for skill in SKILLS:
-            for path in skill.rglob("*.md"):
-                for language, body in FENCES.findall(path.read_text(encoding="utf-8")):
-                    if language != "json":
-                        continue
-                    with self.subTest(path=path.relative_to(ROOT), example=body[:80]):
-                        data = json.loads(body)
-                        if isinstance(data, dict) and {"tool", "params"} <= data.keys():
-                            validate_request(data, self.tools)
-                            count += 1
+        for path, example in distributed_tool_examples():
+            with self.subTest(path=path.relative_to(ROOT), tool=example["tool"]):
+                validate_request(example, self.tools)
+                count += 1
         self.assertGreater(count, 0, "No tool examples were checked")
 
     def test_routing_tables_name_registered_tools(self):
-        for skill in SKILLS[:2]:
+        for skill in ORCHESTRATOR_COPIES:
             path = skill / "references/tools-reference.md"
             for line in path.read_text(encoding="utf-8").splitlines():
                 columns = line.split("|")
@@ -323,7 +328,9 @@ class SkillDocumentationTests(unittest.TestCase):
     def test_source_skill_manifest_examples_use_current_package_identity(self):
         metadata = json.loads((ROOT / "MCPForUnity/package.json").read_text(encoding="utf-8"))
         examples = []
-        for language, body in FENCES.findall((SKILLS[3] / "SKILL.md").read_text(encoding="utf-8")):
+        for language, body in FENCES.findall(
+            (SOURCE_SKILL / "SKILL.md").read_text(encoding="utf-8")
+        ):
             if language == "json":
                 examples.append(json.loads(body))
         self.assertTrue(examples)
@@ -342,7 +349,7 @@ class SkillDocumentationTests(unittest.TestCase):
         examples = [
             json.loads(body)
             for language, body in FENCES.findall(
-                (SKILLS[3] / "SKILL.md").read_text(encoding="utf-8")
+                (SOURCE_SKILL / "SKILL.md").read_text(encoding="utf-8")
             )
             if language == "json"
         ]
@@ -377,7 +384,7 @@ class SkillDocumentationTests(unittest.TestCase):
             self.assertEqual(after["testables"].count(new), 1)
 
     def test_repository_mirror_contains_the_same_distributable_references(self):
-        canonical, mirror = SKILLS[:2]
+        canonical, mirror = ORCHESTRATOR_COPIES
         expected = {path.relative_to(canonical) for path in canonical.rglob("*.md")}
         self.assertEqual(expected, {path.relative_to(mirror) for path in mirror.rglob("*.md")})
         for relative in expected:
@@ -388,7 +395,7 @@ class SkillDocumentationTests(unittest.TestCase):
                 )
 
     def test_missing_tool_recovery_covers_group_and_editor_catalog_actions(self):
-        for skill in SKILLS[:2]:
+        for skill in ORCHESTRATOR_COPIES:
             examples = [
                 json.loads(body)
                 for language, body in FENCES.findall(
@@ -407,7 +414,7 @@ class SkillDocumentationTests(unittest.TestCase):
 
     def test_integrated_blender_examples_cover_inspection_and_scoped_import(self):
         examples = []
-        for path in SKILLS[2].rglob("*.md"):
+        for path in BLENDER_SKILL.rglob("*.md"):
             for language, body in FENCES.findall(path.read_text(encoding="utf-8")):
                 if language == "json":
                     example = json.loads(body)
@@ -442,7 +449,7 @@ class SkillDocumentationTests(unittest.TestCase):
         examples = [
             json.loads(body)
             for language, body in FENCES.findall(
-                (SKILLS[2] / "SKILL.md").read_text(encoding="utf-8")
+                (BLENDER_SKILL / "SKILL.md").read_text(encoding="utf-8")
             )
             if language == "json"
         ]
