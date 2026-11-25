@@ -177,6 +177,71 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase(false)]
         [TestCase(true)]
+        public void OversizeScriptReadRequiresWindowAndPreservesFullDigests(bool window)
+        {
+            WithProbe(probe =>
+            {
+                const string first = "// read this line\r\n";
+                using (var source = File.Create(probe.FullPath))
+                {
+                    byte[] header = Bytes(first, true);
+                    source.Write(header, 0, header.Length);
+                    var zeros = new byte[65536]; // Each NUL requires six bytes in the native JSON string.
+                    for (int i = 0; i < 160; i++)
+                        source.Write(zeros, 0, zeros.Length);
+                }
+                var command = probe.Command("read");
+                if (window)
+                    command["line_count"] = 1;
+
+                JObject result = Invoke(command);
+
+                if (!window)
+                {
+                    Assert.IsFalse(result.Value<bool>("success"));
+                    Assert.AreEqual("script_read_limit", result.Value<string>("code"));
+                    return;
+                }
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                using var file = File.OpenRead(probe.FullPath);
+                using var sha = SHA256.Create();
+                string raw = BitConverter.ToString(sha.ComputeHash(file)).Replace("-", "").ToLowerInvariant();
+                file.Position = 3;
+                string decoded = BitConverter.ToString(sha.ComputeHash(file)).Replace("-", "").ToLowerInvariant();
+                var data = (JObject)result["data"];
+                Assert.AreEqual(first, data.Value<string>("contents"));
+                Assert.AreEqual(raw, data.Value<string>("bytes_sha256"));
+                Assert.AreEqual(decoded, data.Value<string>("sha256"));
+            });
+        }
+
+        [TestCase(1)]
+        [TestCase(2)]
+        public void SourceWindowPreservesUtf16CrLfAcrossReadBlock(int line)
+        {
+            WithProbe(probe =>
+            {
+                string first = new string('a', 8190) + "\r\n";
+                const string second = "wide \U0001f642\u2029";
+                string text = first + second + "last";
+                var encoding = new UnicodeEncoding(false, true, true);
+                File.WriteAllText(probe.FullPath, text, encoding);
+                var command = probe.Command("read");
+                command["start_line"] = line;
+                command["line_count"] = 1;
+
+                JObject result = Invoke(command);
+
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                var data = (JObject)result["data"];
+                Assert.AreEqual(line == 1 ? first : second, data.Value<string>("contents"));
+                Assert.AreEqual(Hash(Utf8.GetBytes(text)), data.Value<string>("sha256"));
+                Assert.AreEqual(Hash(File.ReadAllBytes(probe.FullPath)), data.Value<string>("bytes_sha256"));
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void PublicPreviewPreservesRawBytesAndNeverRefreshes(bool bom)
         {
             WithProbe(

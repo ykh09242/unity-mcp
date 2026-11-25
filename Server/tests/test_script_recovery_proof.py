@@ -283,3 +283,30 @@ async def test_disconnected_default_template_creation_remains_unconfirmed(monkey
 
     assert response == disconnect
     assert [call.args[3]["action"] for call in sender.await_args_list] == ["create", "read"]
+
+
+@pytest.mark.asyncio
+async def test_manage_script_can_read_a_window_after_native_full_read_limit(monkeypatch):
+    from fastmcp import Client, FastMCP
+
+    async def native(_sender, _instance, _command, params, **_kwargs):
+        if params.get("start_line") != 2 or params.get("line_count") != 1:
+            return {"success": False, "code": "script_read_limit"}
+        return {"success": True, "data": {"contents": "second line\n", "lineWindowApplied": True}}
+
+    monkeypatch.setattr(scripts, "get_unity_instance_from_context", AsyncMock(return_value=None))
+    monkeypatch.setattr(scripts, "send_with_unity_instance", native)
+    server = FastMCP("script-read-window-test")
+    server.tool(scripts.manage_script)
+
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "manage_script",
+            {"action": "read", "name": "Foo", "path": "Assets", "start_line": 2, "line_count": 1},
+        )
+
+    assert result.structured_content == {
+        "success": True,
+        "message": "Operation successful.",
+        "data": {"contents": "second line\n", "lineWindowApplied": True},
+    }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using MCPForUnity.Editor.Constants;
@@ -10,6 +11,7 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -494,19 +496,15 @@ namespace MCPForUnity.Editor.Tools
                     if (token != null && (token.Type != JTokenType.Integer || (long)token < 1 || (long)token > int.MaxValue))
                         return new ErrorResponse("invalid_params", $"{key} must be a positive integer.");
                 }
-                string contents = ReadScriptContentsWithDigest(fullPath, out string rawDigest);
-                string sha256 = ComputeSha256(contents);
                 bool windowApplied = parameters["start_line"] != null || parameters["line_count"] != null;
-                if (windowApplied)
-                {
-                    int startLine = (int?)parameters["start_line"] ?? 1;
-                    int? lineCount = (int?)parameters["line_count"];
-                    contents = ScriptLineWindow(contents, startLine, lineCount);
-                }
-
-                // Return both normal and encoded contents for larger files
-                bool isLarge = contents.Length > 10000; // If content is large, include encoded version
+                int startLine = (int?)parameters["start_line"] ?? 1;
+                int? lineCount = (int?)parameters["line_count"];
                 var uri = $"mcpforunity://path/{relativePath}";
+                var message = $"Script '{Path.GetFileName(relativePath)}' read successfully.";
+                // Leave room for fixed keys, digests and the transport wrapper as well as dynamic metadata.
+                int limit = LargeResultWriter.MaxResultBytes - 1024 - EscapedScriptBytes(uri) - EscapedScriptBytes(relativePath) - EscapedScriptBytes(message);
+                var (contents, sha256, rawDigest) = ReadScriptWindow(fullPath, startLine, lineCount, limit);
+                bool isLarge = contents.Length > 10000;
                 var responseData = new
                 {
                     uri,
@@ -520,7 +518,14 @@ namespace MCPForUnity.Editor.Tools
                     contentsEncoded = isLarge,
                 };
 
-                return new SuccessResponse($"Script '{Path.GetFileName(relativePath)}' read successfully.", responseData);
+                return new SuccessResponse(message, responseData);
+            }
+            catch (ResponseLimitException)
+            {
+                return new ErrorResponse(
+                    "script_read_limit",
+                    new { limit_bytes = LargeResultWriter.MaxResultBytes, message = "Use start_line and line_count to request a smaller source window." }
+                );
             }
             catch (Exception e)
             {
@@ -528,32 +533,77 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static string ScriptLineWindow(string contents, int startLine, int? lineCount)
+        private static int EscapedScriptBytes(string text) => StrictFileUtf8.GetByteCount(JsonConvert.ToString(text)) - 2;
+
+        private static (string Contents, string Sha256, string RawSha256) ReadScriptWindow(string path, int startLine, int? lineCount, int limit)
         {
-            // Match Python splitlines(keepends=True), including CRLF and Unicode separators.
-            var breaks = Regex.Matches(contents, @"\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]");
-            int start = 0;
-            int line = 1;
-            foreach (Match match in breaks)
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var rawSha = SHA256.Create();
+            using var textSha = SHA256.Create();
+            var bytes = new byte[16384];
+            int read = 0;
+            while (read < 4)
             {
-                if (line == startLine)
+                int more = stream.Read(bytes, read, bytes.Length - read);
+                if (more == 0)
                     break;
-                start = match.Index + match.Length;
-                line++;
+                read += more;
             }
-            if (line < startLine || start == contents.Length)
-                return string.Empty;
-            if (!lineCount.HasValue)
-                return contents.Substring(start);
-            long endLine = (long)startLine + lineCount.Value;
-            foreach (Match match in breaks)
+            var (sourceEncoding, offset) = ScriptEncoding(bytes, read);
+            var decoder = sourceEncoding.GetDecoder();
+            var chars = new char[sourceEncoding.GetMaxCharCount(bytes.Length)];
+            var utf8 = new byte[StrictFileUtf8.GetMaxByteCount(chars.Length)];
+            var encoder = StrictFileUtf8.GetEncoder();
+            var text = new StringBuilder();
+            long line = 1;
+            long endLine = lineCount.HasValue ? (long)startLine + lineCount.Value : long.MaxValue;
+            long escapedBytes = 0;
+            long contentBytes = 0;
+            bool previousCr = false;
+            while (true)
             {
-                if (match.Index < start)
-                    continue;
-                if (++line == endLine)
-                    return contents.Substring(start, match.Index + match.Length - start);
+                rawSha.TransformBlock(bytes, 0, read, null, 0);
+                bool end = read == 0;
+                int count = decoder.GetChars(bytes, offset, read - offset, chars, 0, end);
+                int encoded = encoder.GetBytes(chars, 0, count, utf8, 0, end);
+                textSha.TransformBlock(utf8, 0, encoded, null, 0);
+                int first = -1;
+                int last = -1;
+                // Match Python splitlines(keepends=True), including CRLF across read boundaries.
+                for (int i = 0; i < count && (line < endLine || previousCr && line == endLine); i++)
+                {
+                    char value = chars[i];
+                    bool crlf = previousCr && value == '\n';
+                    long sourceLine = crlf ? line - 1 : line;
+                    if (sourceLine >= startLine && sourceLine < endLine)
+                    {
+                        if (first < 0)
+                            first = i;
+                        last = i;
+                    }
+                    if (!crlf && (value is '\n' or '\r' or '\v' or '\f' or '\u0085' or '\u2028' or '\u2029' || value >= '\u001c' && value <= '\u001e'))
+                        line++;
+                    previousCr = value == '\r';
+                }
+                if (first >= 0)
+                {
+                    string selected = new string(chars, first, last - first + 1);
+                    escapedBytes += EscapedScriptBytes(selected);
+                    contentBytes += StrictFileUtf8.GetByteCount(selected);
+                    long encodedBytes = text.Length + selected.Length > 10000 ? (contentBytes + 2) / 3 * 4 : 0;
+                    if (escapedBytes + encodedBytes > limit)
+                        throw new ResponseLimitException();
+                    text.Append(selected);
+                }
+                if (end)
+                    break;
+                read = stream.Read(bytes, 0, bytes.Length);
+                offset = 0;
             }
-            return contents.Substring(start);
+            byte[] empty = Array.Empty<byte>();
+            textSha.TransformFinalBlock(empty, 0, 0);
+            rawSha.TransformFinalBlock(empty, 0, 0);
+            return (text.ToString(), ScriptDigestHex(textSha.Hash), ScriptDigestHex(rawSha.Hash));
         }
 
         private static string ReadScriptContents(string fullPath)
@@ -565,33 +615,27 @@ namespace MCPForUnity.Editor.Tools
         {
             byte[] bytes = File.ReadAllBytes(fullPath);
             rawDigest = AtomicAssetFile.Digest(bytes);
-            System.Text.Encoding encoding = StrictFileUtf8;
-            int offset = 0;
+            var (encoding, offset) = ScriptEncoding(bytes, bytes.Length);
+            return encoding.GetString(bytes, offset, bytes.Length - offset);
+        }
+
+        private static string ScriptDigestHex(byte[] hash) => BitConverter.ToString(hash).Replace("-", string.Empty).ToLowerInvariant();
+
+        private static (Encoding Encoding, int Offset) ScriptEncoding(byte[] bytes, int read)
+        {
             // Keep ReadAllText's Unicode BOM detection while rejecting malformed bytes.
             // UTF32 LE precedes UTF16 LE because their BOM prefixes overlap.
-            if (bytes.Length >= 4 && bytes[0] == 0xff && bytes[1] == 0xfe && bytes[2] == 0 && bytes[3] == 0)
-            {
-                encoding = new System.Text.UTF32Encoding(false, false, true);
-                offset = 4;
-            }
-            else if (bytes.Length >= 4 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0xfe && bytes[3] == 0xff)
-            {
-                encoding = new System.Text.UTF32Encoding(true, false, true);
-                offset = 4;
-            }
-            else if (bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf)
-                offset = 3;
-            else if (bytes.Length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe)
-            {
-                encoding = new System.Text.UnicodeEncoding(false, false, true);
-                offset = 2;
-            }
-            else if (bytes.Length >= 2 && bytes[0] == 0xfe && bytes[1] == 0xff)
-            {
-                encoding = new System.Text.UnicodeEncoding(true, false, true);
-                offset = 2;
-            }
-            return encoding.GetString(bytes, offset, bytes.Length - offset);
+            if (read >= 4 && bytes[0] == 0xff && bytes[1] == 0xfe && bytes[2] == 0 && bytes[3] == 0)
+                return (new UTF32Encoding(false, false, true), 4);
+            if (read >= 4 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0xfe && bytes[3] == 0xff)
+                return (new UTF32Encoding(true, false, true), 4);
+            if (read >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf)
+                return (StrictFileUtf8, 3);
+            if (read >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe)
+                return (new UnicodeEncoding(false, false, true), 2);
+            if (read >= 2 && bytes[0] == 0xfe && bytes[1] == 0xff)
+                return (new UnicodeEncoding(true, false, true), 2);
+            return (StrictFileUtf8, 0);
         }
 
         private static object UpdateScript(string fullPath, string relativePath, string name, string contents)
@@ -1556,7 +1600,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 var bytes = StrictFileUtf8.GetBytes(contents);
                 var hash = sha.ComputeHash(bytes);
-                return BitConverter.ToString(hash).Replace("-", string.Empty).ToLowerInvariant();
+                return ScriptDigestHex(hash);
             }
         }
 

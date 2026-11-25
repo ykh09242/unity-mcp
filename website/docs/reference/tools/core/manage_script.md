@@ -14,7 +14,7 @@ description: "Compatibility router for legacy script operations."
 
 ## Description
 
-Compatibility router for legacy script operations. Prefer apply_text_edits (ranges) or script_apply_edits (structured) for edits. Read-only action: read. Modifying actions: create, delete.
+Compatibility router for legacy script operations. Prefer apply_text_edits (ranges) or script_apply_edits (structured) for edits. Read-only action: read. Use start_line and line_count to read a window when the full result exceeds the native response limit. Read digests always cover the whole source. Modifying actions: create, delete.
 
 ## Parameters
 
@@ -27,6 +27,8 @@ Compatibility router for legacy script operations. Prefer apply_text_edits (rang
 | `script_type` | `str \| None` | — | Script type (e.g., 'C#') |
 | `namespace` | `str \| None` | — | Namespace for the script |
 | `verification` | `Literal['auto', 'off']` | — | Bounded post-write source verification for create/delete. |
+| `start_line` | `int \| None` | — | First source line (read only). |
+| `line_count` | `int \| None` | — | Maximum lines to return (read only). |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

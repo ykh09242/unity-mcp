@@ -8,6 +8,7 @@ from urllib.parse import urlparse, unquote
 
 from fastmcp import FastMCP, Context
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -891,7 +892,12 @@ async def validate_script(
 
 
 @mcp_for_unity_tool(
-    description="Compatibility router for legacy script operations. Prefer apply_text_edits (ranges) or script_apply_edits (structured) for edits. Read-only action: read. Modifying actions: create, delete.",
+    description=(
+        "Compatibility router for legacy script operations. Prefer apply_text_edits (ranges) or "
+        "script_apply_edits (structured) for edits. Read-only action: read. Use start_line and "
+        "line_count to read a window when the full result exceeds the native response limit. "
+        "Read digests always cover the whole source. Modifying actions: create, delete."
+    ),
     annotations=ToolAnnotations(
         title="Manage Script",
         destructiveHint=True,
@@ -916,12 +922,24 @@ async def manage_script(
     verification: Annotated[
         Literal["auto", "off"], "Bounded post-write source verification for create/delete."
     ] = "auto",
+    start_line: Annotated[
+        int | None,
+        Field(strict=True, ge=1, le=2_147_483_647, description="First source line (read only)."),
+    ] = None,
+    line_count: Annotated[
+        int | None,
+        Field(
+            strict=True, ge=1, le=2_147_483_647, description="Maximum lines to return (read only)."
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     logger.info("Processing manage_script")
     try:
         name_error = _validate_script_name(name)
         if name_error:
             return {"success": False, "code": "bad_name", "message": name_error}
+        if action != "read" and (start_line is not None or line_count is not None):
+            return {"success": False, "message": "start_line and line_count require action=read."}
         # Prepare parameters for Unity
         params = {
             "action": action,
@@ -929,6 +947,8 @@ async def manage_script(
             "path": path,
             "namespace": namespace,
             "scriptType": script_type,
+            "start_line": start_line,
+            "line_count": line_count,
         }
 
         # Base64 encode the contents if they exist to avoid JSON escaping issues
