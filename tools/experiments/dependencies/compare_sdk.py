@@ -72,6 +72,8 @@ def compare(scratch: Path, output: Path):
     )
     (wheel,) = scratch.glob("*.whl")
     wheel_hash = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    # A loaded native extension locks all its hardlinks on Windows, including cache siblings.
+    link_mode = ["--link-mode", "copy"] if sys.platform == "win32" else []
     results = {}
     for arm in ARMS:
         environment = scratch / arm
@@ -95,7 +97,17 @@ def compare(scratch: Path, output: Path):
             *omit,
         )
         run("uv", "venv", "--no-config", "--python", sys.executable, environment)
-        run("uv", "pip", "sync", "--no-config", "--require-hashes", "--python", python, *inputs)
+        run(
+            "uv",
+            "pip",
+            "sync",
+            "--no-config",
+            "--require-hashes",
+            "--python",
+            python,
+            *link_mode,
+            *inputs,
+        )
         # Retain the synced graph. The previous arm deliberately overrides one wheel requirement.
         run("uv", "pip", "install", "--no-config", "--no-deps", "--python", python, wheel)
         with (output / f"{arm}.json").open("w", encoding="utf-8") as stream:
