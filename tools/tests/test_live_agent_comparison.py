@@ -1,5 +1,6 @@
 """The matched repeat binds the published results to the original prompts and catalog."""
 
+import json
 from pathlib import Path
 import sys
 
@@ -44,3 +45,17 @@ def test_equal_inventory_sizes_cannot_hide_an_unrelated_tool_replacement():
         comparison.check_inventories(
             dict.fromkeys(previous, new), dict.fromkeys(previous, fingerprints), previous
         )
+
+
+def test_published_repeat_requires_the_matched_seed_and_native_controls():
+    result = json.loads(comparison.OUT.read_bytes())
+    baseline = comparison.load_baseline()
+    comparison.verify(result, baseline)
+    row = result["cases"][0]
+    row["seed"] += 1
+    with pytest.raises(ValueError, match="Different native seed"):
+        comparison.verify(result, baseline)
+    row["seed"] -= 1
+    result["native_evidence"]["native_tests"]["tests"].clear()
+    with pytest.raises(ValueError, match="isolated test evidence"):
+        comparison.verify(result, baseline)
