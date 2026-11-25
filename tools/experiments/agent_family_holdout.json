@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "tasks": {
+    "clip_platform_inheritance": {
+      "expected": ["manage_audio.read_import_settings"],
+      "wrong_effect": ["manage_audio.apply_import_settings"]
+    },
+    "restore_clip_inheritance": {
+      "expected": ["manage_audio.apply_import_settings"],
+      "wrong_effect": ["manage_audio.read_import_settings"]
+    },
+    "saved_controls_identity": {
+      "expected": ["manage_input_actions.read"],
+      "wrong_effect": ["manage_input_actions.edit"]
+    },
+    "author_two_control_maps": {
+      "expected": ["manage_input_actions.edit"],
+      "wrong_effect": ["manage_input_actions.read"]
+    },
+    "sample_surface_mask": {
+      "expected": ["manage_terrain.get_region"],
+      "wrong_effect": ["manage_terrain.set_region"]
+    },
+    "fill_surface_gap": {
+      "expected": ["manage_terrain.set_region"],
+      "wrong_effect": ["manage_terrain.get_region"]
+    }
+  },
+  "queries": {
+    "lv": {
+      "clip_platform_inheritance": "Vai zvana ierakstam zvans.wav ir atsevišķi Android importa iestatījumi, vai tas pārmanto noklusējumu? Man vajag tikai atbildi.",
+      "restore_clip_inheritance": "Noņem vēja ierakstam iOS importa iestatījumu pārrakstījumu, lai tas atkal mantotu klipa noklusējuma iestatījumus.",
+      "saved_controls_identity": "Vadības darbību failā atrodi saglabāto identifikatoru taustiņa piesaistei, kas atver karti. Vajag arī šīs faila versijas kontrolsummu.",
+      "author_two_control_maps": "Esošajā spēles vadības darbību failā pievieno divas tukšas darbību kartes — Laiva un Krasts. Abas izmaiņas saglabā kopā ar vienu importu.",
+      "sample_surface_mask": "Alas reljefa caurumu maskā pārbaudi rūtiņas (18, 24) un (19, 24). Kurā no tām virsma ir izgriezta?",
+      "fill_surface_gap": "Pie alas ieejas aizpildi vienu tukšo rūtiņu (18, 24) reljefa caurumu maskā. Blakus rūtiņas atstāj, kā ir."
+    },
+    "sk": {
+      "clip_platform_inheritance": "Pri dabingu hlas.ogg mi zisti, či má iOS vlastné nastavenia importu zvuku. Stačí mi vedieť, či preberá predvolené hodnoty.",
+      "restore_clip_inheritance": "Pre klip krok.wav zruš osobitné nastavenia importu pre Android. Odteraz má sledovať predvoľby klipu aj pri ich neskoršej zmene.",
+      "saved_controls_identity": "Pre porovnanie verzií ovládania potrebujem odtlačok uloženého súboru vstupných akcií a GUID väzby, ktorou sa skáče. Vieš ich vypísať?",
+      "author_two_control_maps": "Do existujúceho súboru vstupných akcií doplň dve prázdne mapy s názvami Pešo a Vozidlo. Chcem ich uložiť naraz, s jediným importom súboru.",
+      "sample_surface_mask": "V teréne pod mostom ma zaujíma výrez 2 × 2 od súradníc (40, 36). Vypíš, kde je v maske dier povrch a kde otvor.",
+      "fill_surface_gap": "Na teréne pod vežou zacel otvor na súradniciach (33, 21) v maske dier. Ostatné bunky musia ostať nedotknuté."
+    },
+    "ur": {
+      "clip_platform_inheritance": "بارش کی آڈیو کلپ کے لیے ذرا دیکھیں کہ اینڈرائیڈ پر درآمد کی الگ ترتیبات لگی ہیں یا کلپ کی طے شدہ ترتیبات استعمال ہو رہی ہیں۔",
+      "restore_clip_inheritance": "گھنٹی کی آواز پر آئی او ایس کے لیے درآمد کی جو الگ ترتیبات لگی ہیں وہ ہٹا دیں، تاکہ یہ پھر کلپ کی طے شدہ ترتیبات استعمال کرے۔",
+      "saved_controls_identity": "کھیل کے کنٹرول والی فائل میں دروازہ کھولنے والی کلید کی بائنڈنگ کا محفوظ شدہ GUID کیا ہے؟ ساتھ اسی فائل کے موجودہ نسخے کا ہیش بھی بتا دیں۔",
+      "author_two_control_maps": "کنٹرول کی موجودہ فائل میں «کشتی» اور «ساحل» کے نام سے دو خالی ایکشن میپ بنا دیں۔ دونوں تبدیلیاں اکٹھی محفوظ ہوں تاکہ فائل صرف ایک بار امپورٹ ہو۔",
+      "sample_surface_mask": "سرنگ کے اوپر زمین کے سوراخوں کا ماسک دیکھ کر بتائیں کہ خانوں (27, 18) اور (28, 18) میں کہاں سطح موجود ہے اور کہاں خلا ہے۔",
+      "fill_surface_gap": "صحن کی زمین کے سوراخوں والے ماسک میں خانہ (17, 22) خالی رہ گیا ہے۔ صرف اسی خانے میں زمین کی سطح بحال کر دیں۔"
+    },
+    "te": {
+      "clip_platform_inheritance": "వాన శబ్దం ఉన్న క్లిప్‌కి Android కోసం వేరే దిగుమతి సెట్టింగ్‌లు ఉన్నాయా? లేక ఆ క్లిప్‌కి ఉన్న డిఫాల్ట్ సెట్టింగ్‌లే వాడుతున్నారా?",
+      "restore_clip_inheritance": "గంట శబ్దం ఉన్న క్లిప్‌కి iOS కోసం పెట్టిన ప్రత్యేక దిగుమతి సెట్టింగ్‌లు తీసేయి. ఇక నుంచి ఆ క్లిప్ డిఫాల్ట్‌లు మారితే అవే వర్తించాలి.",
+      "saved_controls_identity": "పాత్ర దూకడానికి వాడే కీ బైండింగ్‌కి ఇన్‌పుట్ యాక్షన్ల ఫైల్‌లో ఏ GUID నిల్వ ఉంది? ఆ ఫైల్ ప్రస్తుత వెర్షన్ హాష్ కూడా ఇవ్వు.",
+      "author_two_control_maps": "ఇప్పటికే ఉన్న ఇన్‌పుట్ యాక్షన్ల ఫైల్‌లో నడక, ఈత అనే రెండు ఖాళీ యాక్షన్ మ్యాప్‌లు చేర్చు. రెండూ కలిపి సేవ్ చేసి ఫైల్‌ని ఒక్కసారే ఇంపోర్ట్ చేయాలి.",
+      "sample_surface_mask": "గుహ దగ్గర టెర్రెయిన్‌లో రంధ్రాల మాస్క్ చూడు. (31, 26) నుంచి మొదలయ్యే 2 × 2 భాగంలో ఏ గడుల్లో నేల ఉంది, ఏవి ఖాళీగా ఉన్నాయి?",
+      "fill_surface_gap": "వంతెన కింద టెర్రెయిన్‌లో (23, 19) గడి దగ్గర చిన్న రంధ్రం మిగిలింది. రంధ్రాల మాస్క్‌లో ఆ ఒక్క గడిలోనే నేల మళ్లీ కనిపించేలా చేయి."
+    },
+    "ca": {
+      "clip_platform_inheritance": "El fitxer de so de la campana hereta la configuració d’importació general del clip quan el destí és iOS, o en té una de pròpia?",
+      "restore_clip_inheritance": "Vull que la veu del narrador torni a heretar els valors d’importació del clip a Android. Treu-ne l’excepció que hi ha ara per a aquesta plataforma.",
+      "saved_controls_identity": "Per revisar els controls em cal el GUID desat de la vinculació que obre l’inventari i l’empremta de la versió actual del fitxer d’accions d’entrada. Me’ls pots donar?",
+      "author_two_control_maps": "Afegeix dos mapes d’accions buits, Rem i Vela, al fitxer de controls que ja tenim. Desa’ls plegats perquè només es faci una importació.",
+      "sample_surface_mask": "Mira la màscara de forats del terreny del pati. De les cel·les (14, 28) i (15, 28), quines conserven la superfície?",
+      "fill_surface_gap": "Al terreny del bosc, tapa el forat de la cel·la (35, 42) de la màscara. Deixa les cel·les veïnes tal com estan."
+    },
+    "nb": {
+      "clip_platform_inheritance": "Har lydklippet med fuglekvitter egne importinnstillinger for Android, eller følger det standardinnstillingene til klippet?",
+      "restore_clip_inheritance": "Fjern overstyringen av importinnstillingene for iOS på lydklippet med bølgeskvulp, slik at klippet følger standardverdiene sine igjen.",
+      "saved_controls_identity": "Jeg trenger den lagrede GUID-en til tastebindingen for å dukke, sammen med sjekksummen for gjeldende versjon av inndatafilen der handlingene er definert.",
+      "author_two_control_maps": "Legg inn to tomme handlingskart, Kjøring og Gange, i den eksisterende filen med inndatahandlinger. Lagre begge i samme omgang så filen bare importeres én gang.",
+      "sample_surface_mask": "Kan du lese av hullmasken til terrenget ved kaia? For de tre rutene fra (20, 30) til (22, 30) vil jeg vite hvilke som har bakke.",
+      "fill_surface_gap": "Tett åpningen i terrenget ved porten ved å gjenopprette bakken i rute (26, 32) i hullmasken. La resten av masken være som før."
+    }
+  }
+}
