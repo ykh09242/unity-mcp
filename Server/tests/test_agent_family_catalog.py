@@ -177,6 +177,62 @@ def test_plain_enum_cards_keep_the_published_operation_limits():
     assert cards["inspect"]["purpose_source"] == "identifier"
 
 
+@pytest.mark.parametrize("alternate", [{"enum": ["inspect", "close"]}, {"type": "string"}])
+@pytest.mark.asyncio
+async def test_describe_preserves_each_valid_input_form_for_a_shared_selector(alternate):
+    from fastmcp import Client, FastMCP
+    from fastmcp.tools import Tool
+    from jsonschema import Draft202012Validator
+    from services.tools import register_all_tools
+
+    def route(action: str, port=None, path=None, meter=None):
+        """Work with a meter."""
+        pytest.fail("Describing the operation invoked it")
+
+    schema = {
+        "type": "object",
+        "properties": {"action": {"enum": ["inspect", "open", "close"]}},
+        "oneOf": [
+            {
+                "properties": {"action": {"enum": ["inspect", "open"]}},
+                "required": ["action", "meter", "port"],
+                "description": "Operate by port.",
+            },
+            {
+                "properties": {"action": alternate},
+                "required": ["action", "path", "meter"],
+                "description": "Operate by path.",
+            },
+        ],
+    }
+    server = FastMCP("alternative-arguments")
+    register_all_tools(server)
+    definition = Tool.from_function(route)
+    definition.parameters = schema
+    server.add_tool(definition)
+    async with Client(server, mode="legacy", cache=False) as client:
+        public = next(t.input_schema for t in await client.list_tools() if t.name == "route")
+        result = (
+            await client.call_tool(
+                "manage_tools",
+                {
+                    "action": "describe",
+                    "tool": "route",
+                    "operation": "inspect",
+                },
+            )
+        ).structured_content
+    card = result["operation"]
+    assert card["required_parameters"] == ["meter"]
+    assert card["purpose_source"] == "identifier"
+    bound = result["tool"]["input_schema"]
+    assert bound["oneOf"] == public["oneOf"]
+    for extra in ({"port": "first"}, {"path": "a"}):
+        payload = {"action": "inspect", "meter": 1, **extra}
+        Draft202012Validator(public).validate(payload)
+        Draft202012Validator(bound).validate(payload)
+
+
 @pytest.mark.asyncio
 async def test_agent_search_and_describe_match_live_enum_and_open_selector_contracts():
     from enum import Enum

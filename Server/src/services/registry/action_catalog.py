@@ -912,6 +912,8 @@ def action_maturity(name: str) -> dict[str, ToolMaturity]:
 
 def _selector_values(field, definitions, seen=frozenset()) -> list[str] | None:
     """Enumerate bounded string selectors, including nullable local schema references."""
+    if field is False:
+        return []
     if not isinstance(field, dict) or id(field) in seen:
         return None
     if "const" in field:
@@ -919,7 +921,8 @@ def _selector_values(field, definitions, seen=frozenset()) -> list[str] | None:
         return [value] if isinstance(value, str) else []
     if "enum" in field:
         return [value for value in field["enum"] if isinstance(value, str)]
-    if field.get("type") == "null":
+    kind = field.get("type")
+    if kind is not None and "string" not in (kind if isinstance(kind, list) else (kind,)):
         return []
     seen = seen | {id(field)}
     reference = field.get("$ref")
@@ -1039,26 +1042,40 @@ def action_guidance(
     source = TOOL_GUIDANCE.get(owner) if inherit and owner != entry["name"] else None
     shared = source.actions.get(action) if source else None
     schema = entry.get("input_schema", {})
+    variants = []
     for variant in schema.get("oneOf") or schema.get("anyOf", ()):
-        selector = (
-            variant.get("properties", {}).get("action") if isinstance(variant, dict) else None
-        )
-        if action in (_selector_values(selector, schema.get("$defs", {})) or ()):
-            purpose = variant.get("description")
-            if not isinstance(purpose, str) or not purpose.strip():
-                purpose = documented_actions(tool_description(entry)).get(action, "")
-            return ActionGuidance(
-                purpose or (shared.purpose if shared else ""),
-                tuple(name for name in variant.get("required", ()) if name != "action"),
-                intent=shared.intent if shared else None,
+        if variant is True:
+            variants.append({})
+        elif isinstance(variant, dict):
+            values = _selector_values(
+                variant.get("properties", {}).get("action"), schema.get("$defs", {})
             )
+            if values is None or action in values:
+                variants.append(variant)
     # A focused adapter forwards this exact selector. Its public schema still
     # owns parameters, evidence and permissions. Share the underlying operation's
     # meaning so selecting a catalog profile cannot turn a declared edit into an
     # unknown action or drop its description from search.
-    purpose = documented_actions(tool_description(entry)).get(action)
-    if purpose or shared:
-        return ActionGuidance(purpose or shared.purpose, intent=shared.intent if shared else None)
+    purpose = documented_actions(tool_description(entry)).get(
+        action, shared.purpose if shared else ""
+    )
+    required = ()
+    if variants:
+        # Each compatible form remains valid. Only common facts belong on the bound card.
+        description = variants[0].get("description")
+        if (
+            isinstance(description, str)
+            and description.strip()
+            and all(v.get("description") == description for v in variants[1:])
+        ):
+            purpose = description
+        required = tuple(
+            name
+            for name in variants[0].get("required", ())
+            if name != "action" and all(name in v.get("required", ()) for v in variants[1:])
+        )
+    if variants or purpose or shared:
+        return ActionGuidance(purpose, required, intent=shared.intent if shared else None)
     return None
 
 
