@@ -59,6 +59,22 @@ Excluded inputs are rejected before filesystem inspection, including explicit
 compiler inputs and aliased roots. Encountering an excluded subtree or environment
 file leaves coverage incomplete; skipping it never certifies all inputs current.
 
+Each content scan has a 256 MiB budget. A file contributes to the digest and
+file count once all its bytes have been read. The collector checks for EOF at
+the byte boundary. If the compiler metadata already exceeds the observation
+budget, the Editor returns `metadata_limit` with zero files and bytes scanned.
+The server also accepts the original byte counts from older Editors when an
+explicitly incomplete input-limit report includes up to one extra 64 KiB block.
+
+A test preflight returns the coverage reasons immediately when an incomplete
+observation reports `input_limit` or `metadata_limit`. An excluded compiler
+reference can reflect stale import metadata. With `refresh_policy=if_needed`,
+the preflight can import once and check the updated compiler input list.
+Excluded paths remain outside the scan. To obtain test results for a revision
+outside these limits, run Unity's batch Test Runner in an isolated checkout of
+that revision. Its results belong to that checkout. The connected Editor
+still requires a current source token to start a job.
+
 Doctor receipts and Editor state expose `source_recovery` with reason, certainty,
 evidence origin/time/age, source/compile identity where available, limitations and
 the next inspection action. `compilation_failed`, `reload_in_progress`, and

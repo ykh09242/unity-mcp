@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -16,13 +15,22 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
 
         private static SourceSnapshot Capture(SourceScope scope, CancellationToken cancellation)
         {
+            cancellation.ThrowIfCancellationRequested();
             var reasons = new HashSet<string>(scope.Reasons, StringComparer.Ordinal);
-            var first = Sample(scope, cancellation, reasons, out long size);
-            // Two content scans also check membership. File timestamps alone are not evidence.
-            var second = Sample(scope, cancellation, reasons, out _);
-            if (first.Count != second.Count || first.Any(pair => !second.TryGetValue(pair.Key, out string hash) || hash != pair.Value))
-                reasons.Add("inputs_changed_during_scan");
-            string source = string.Join("\n", first.Select(p => p.Key + "\0" + p.Value));
+            string source = string.Empty;
+            int fileCount = 0;
+            long size = 0;
+            // A metadata-limited scope has no compiler input list. A file scan cannot complete it.
+            if (!reasons.Contains("metadata_limit"))
+            {
+                var first = Sample(scope, cancellation, reasons, out size);
+                // Two content scans also check membership. File timestamps alone are not evidence.
+                var second = Sample(scope, cancellation, reasons, out _);
+                if (first.Count != second.Count || first.Any(pair => !second.TryGetValue(pair.Key, out string hash) || hash != pair.Value))
+                    reasons.Add("inputs_changed_during_scan");
+                source = string.Join("\n", first.Select(p => p.Key + "\0" + p.Value));
+                fileCount = first.Count;
+            }
             return new SourceSnapshot(
                 SourceSnapshot.Hash(scope.ProjectRoot.Replace('\\', '/')),
                 scope.SessionId,
@@ -30,7 +38,7 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
                 SourceSnapshot.Hash(scope.Context),
                 reasons.Count == 0,
                 reasons.OrderBy(r => r).ToArray(),
-                first.Count,
+                fileCount,
                 size,
                 unityVersion: scope.UnityVersion
             );
@@ -82,17 +90,21 @@ namespace MCPForUnity.Editor.Services.SourceFreshness
                     using var input = scope.FileSystem.Open(path);
                     using var hash = SHA256.Create();
                     var buffer = new byte[65536];
-                    int read;
-                    while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                    while (true)
                     {
+                        long remaining = scope.MaxBytes - total;
+                        // Probe for EOF at the boundary without counting or hashing another byte.
+                        int read = input.Read(buffer, 0, (int)Math.Min(buffer.Length, Math.Max(1, remaining)));
                         cancellation.ThrowIfCancellationRequested();
-                        total += read;
-                        if (total > scope.MaxBytes)
+                        if (read == 0)
+                            break;
+                        if (remaining <= 0)
                         {
                             limit = true;
                             reasons.Add("input_limit");
                             return;
                         }
+                        total += read;
                         hash.TransformBlock(buffer, 0, read, buffer, 0);
                     }
                     hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);

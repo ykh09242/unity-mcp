@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.SourceFreshness;
@@ -209,6 +210,101 @@ namespace MCPForUnityTests.Editor.Services
             finally
             {
                 Directory.Delete(root, true);
+            }
+        }
+
+        [Test]
+        public void MetadataLimitedScopeReportsIncompleteWithoutFileSystemAccess()
+        {
+            string root = Path.GetFullPath("synthetic-source-root");
+            T UnexpectedAccess<T>(string path) => throw new AssertionException($"Unexpected filesystem access: {path}");
+            var scope = new SourceScope(root, "session", "metadata_limit")
+            {
+                FileSystem = new SourceFileSystem
+                {
+                    DirectoryExists = UnexpectedAccess<bool>,
+                    FileExists = UnexpectedAccess<bool>,
+                    Entries = UnexpectedAccess<System.Collections.Generic.IEnumerable<string>>,
+                    Attributes = UnexpectedAccess<FileAttributes>,
+                    Open = UnexpectedAccess<Stream>,
+                },
+            };
+            scope.Reasons.Add("metadata_limit");
+
+            var snapshot = SourceSnapshotCollector.CaptureAsync(scope, CancellationToken.None).GetAwaiter().GetResult();
+
+            Assert.IsFalse(snapshot.Complete);
+            CollectionAssert.AreEqual(new[] { "metadata_limit" }, snapshot.Reasons);
+            Assert.AreEqual(0, snapshot.FileCount);
+            Assert.AreEqual(0, snapshot.InputBytes);
+            Assert.AreEqual(SourceSnapshot.Hash(""), snapshot.SourceDigest);
+            Assert.AreEqual(SourceSnapshot.Hash(root.Replace('\\', '/')), snapshot.ProjectId);
+            Assert.AreEqual("session", snapshot.SessionId);
+            Assert.AreEqual(SourceSnapshot.Hash("metadata_limit"), snapshot.ContextDigest);
+        }
+
+        [TestCase(0, 0, 0, true)]
+        [TestCase(0, 3, 0, false)]
+        [TestCase(2, 1, 4, true)]
+        [TestCase(4, 0, 4, true)]
+        [TestCase(2, 2, 4, true)]
+        [TestCase(4, 3, 4, false)]
+        [TestCase(2, 5, 4, false)]
+        [TestCase(1, 65541, 65537, false)]
+        public void ByteBudgetCountsScannedBytesAndOnlyHashesCompleteFiles(int firstLength, int secondLength, int budget, bool complete)
+        {
+            string root = Path.GetFullPath("synthetic-source-root");
+            string firstPath = Path.Combine(root, "A.cs");
+            string firstText = new string('a', firstLength);
+            string secondText = new string('b', secondLength);
+            byte[] first = Encoding.ASCII.GetBytes(firstText);
+            byte[] second = Encoding.ASCII.GetBytes(secondText);
+            long scanned = 0;
+            var scope = new SourceScope(root, "session", "context")
+            {
+                MaxBytes = budget,
+                FileSystem = new SourceFileSystem
+                {
+                    FileExists = _ => false,
+                    Attributes = _ => FileAttributes.Normal,
+                    Open = path => new ScanStream(path == firstPath ? first : second, size => scanned += size),
+                },
+            };
+            scope.Roots.Clear();
+            scope.Inputs["A.cs"] = firstPath;
+            scope.Inputs["Alias.cs"] = firstPath;
+            scope.Inputs["B.cs"] = Path.Combine(root, "B.cs");
+
+            var snapshot = SourceSnapshotCollector.CaptureAsync(scope, CancellationToken.None).GetAwaiter().GetResult();
+
+            long expectedBytes = Math.Min(firstLength + secondLength, budget);
+            Assert.AreEqual(expectedBytes, snapshot.InputBytes);
+            Assert.AreEqual(2L * (expectedBytes + (complete ? 0 : 1)), scanned, "Each scan may consume one extra byte to detect remaining input.");
+            Assert.AreEqual(complete, snapshot.Complete);
+            CollectionAssert.AreEqual(complete ? Array.Empty<string>() : new[] { "input_limit" }, snapshot.Reasons);
+            Assert.AreEqual(complete ? 3 : 2, snapshot.FileCount);
+            string firstHash = SourceSnapshot.Hash(firstText);
+            string source = $"A.cs\0{firstHash}\nAlias.cs\0{firstHash}";
+            if (complete)
+                source += "\nB.cs\0" + SourceSnapshot.Hash(secondText);
+            Assert.AreEqual(SourceSnapshot.Hash(source), snapshot.SourceDigest);
+        }
+
+        private sealed class ScanStream : MemoryStream
+        {
+            private readonly Action<long> _recordBytes;
+
+            internal ScanStream(byte[] data, Action<long> recordBytes)
+                : base(data)
+            {
+                _recordBytes = recordBytes;
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                    _recordBytes(Position);
+                base.Dispose(disposing);
             }
         }
 

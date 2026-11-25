@@ -1,11 +1,14 @@
 """Sampled source/compile/load evidence; readiness alone never supplies it."""
 
 import json
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from models.evidence_diagnostics import EvidenceDiagnostics
+
+_SOURCE_BYTE_LIMIT: Final = 256 * 1024 * 1024
+_LEGACY_READ_BUFFER_SIZE: Final = 65_536
 
 
 class Coverage(BaseModel):
@@ -13,7 +16,7 @@ class Coverage(BaseModel):
     complete: bool = False
     reasons: list[str] = Field(default_factory=list, max_length=256)
     file_count: int = Field(default=0, ge=0, le=100000)
-    input_bytes: int = Field(default=0, ge=0, le=256 * 1024 * 1024)
+    input_bytes: int = Field(default=0, ge=0, le=_SOURCE_BYTE_LIMIT + _LEGACY_READ_BUFFER_SIZE)
     atomic_compiler_input_provenance: Literal[False] = False
 
 
@@ -53,6 +56,18 @@ class SourceFreshness(BaseModel):
     evidence_diagnostics: EvidenceDiagnostics | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+
+    @model_validator(mode="after")
+    def consistent_input_bytes(self) -> "SourceFreshness":
+        # Older native collectors counted the last buffer before checking the limit.
+        if self.coverage.input_bytes > _SOURCE_BYTE_LIMIT and (
+            self.status not in ("pending", "incomplete")
+            or self.coverage.complete
+            or "complete" not in self.coverage.model_fields_set
+            or "input_limit" not in self.coverage.reasons
+        ):
+            raise ValueError("Source byte overrun requires incomplete input-limit evidence")
+        return self
 
     @model_validator(mode="after")
     def consistent_current(self):

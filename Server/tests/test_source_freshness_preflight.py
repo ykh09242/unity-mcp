@@ -36,6 +36,59 @@ async def test_current_observation_does_not_refresh(transport):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("gap", ["input_limit", "metadata_limit"])
+async def test_public_test_start_returns_coverage_gap_without_refresh_or_dispatch(
+    transport, monkeypatch, gap
+):
+    from services.tools import run_tests as starts
+
+    evidence = {
+        **current(),
+        "status": "incomplete",
+        "reason": "input_coverage_incomplete",
+        "coverage": {"complete": False, "reasons": [gap]},
+    }
+    transport.return_value = {"success": True, "source_freshness": evidence}
+    monkeypatch.setattr(starts, "get_unity_instance_from_context", AsyncMock(return_value="Main"))
+    monkeypatch.setattr(starts, "preflight", AsyncMock(return_value=None))
+
+    result = await starts.run_tests(object())
+
+    assert result.error == "source_freshness_required"
+    assert result.data["source_freshness"]["coverage"]["reasons"] == [gap]
+    assert [call.args[2] for call in transport.await_args_list] == ["get_compile_job"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("membership_updated", [False, True])
+async def test_excluded_compiler_reference_allows_one_import_to_update_membership(
+    transport, membership_updated
+):
+    incomplete = {
+        **current(),
+        "status": "incomplete",
+        "reason": "input_coverage_incomplete",
+        "coverage": {"complete": False, "reasons": ["excluded_compilation_input"]},
+    }
+    transport.side_effect = [
+        {"success": True, "source_freshness": incomplete},
+        {"success": True},
+        {"success": True, "source_freshness": current() if membership_updated else incomplete},
+    ]
+
+    result = await ensure()
+
+    assert result.status == ("observed_current" if membership_updated else "incomplete")
+    assert [call.args[2] for call in transport.await_args_list] == [
+        "get_compile_job",
+        "refresh_unity",
+        "get_compile_job",
+    ]
+    imported = transport.await_args_list[1].args[3]
+    assert (imported["scope"], imported["compile"]) == ("all", "none")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("initial_missing_input", [False, True])
 async def test_bootstrap_imports_then_requests_one_clean_cycle(transport, initial_missing_input):
     stale = {**current(), "status": "incomplete"}

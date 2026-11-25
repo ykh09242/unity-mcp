@@ -12,6 +12,9 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.native_arbitration import VerifiedQueueRefusal
 
 
+_COVERAGE_LIMITS = {"input_limit", "metadata_limit"}
+
+
 async def ensure_source_freshness(
     ctx,
     *,
@@ -95,6 +98,11 @@ async def observe_source_freshness(send, permitted, *, deadline, refresh_policy)
         if all(pair):
             identity = pair
         if evidence.status in ("observed_current", "compile_failed", "unavailable"):
+            return evidence
+        if evidence.status == "incomplete" and _COVERAGE_LIMITS.intersection(
+            evidence.coverage.reasons
+        ):
+            # Reimporting cannot increase the observer's file, byte or metadata budgets.
             return evidence
         if evidence.status == "pending":
             await asyncio.sleep(min(0.1, max(0, deadline - time.monotonic())))
