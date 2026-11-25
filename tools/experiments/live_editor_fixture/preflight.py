@@ -2,9 +2,13 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+from pathlib import Path
 import sys
 
-from lane import SOURCE, WORK, dump, request
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from tools.experiments.live_editor_fixture.lane import SOURCE, WORK, dump, request
 
 
 def originals():

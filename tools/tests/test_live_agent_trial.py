@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments import live_agent_trial as trial
 from tools.experiments.live_agent_wire import Journal
+from tools.experiments.live_editor_fixture.preflight import originals
 
 
 def test_profile_pairs_have_identical_originals_and_counterbalanced_order():
@@ -16,6 +17,7 @@ def test_profile_pairs_have_identical_originals_and_counterbalanced_order():
     assert len(pairs) == len({pair[0]["query"] for pair in pairs}) == 71
     assert len({row["id"] for pair in pairs for row in pair}) == 142
     assert sum(pair[0]["panel"] == "new" for pair in pairs) == 12
+    assert set(originals()) == {(p[0]["task"], p[0]["language"]) for p in pairs}
     for first, second in pairs:
         assert first["query"] == second["query"] and first["seed"] == second["seed"]
         assert {first["profile"], second["profile"]} == {"core", "full"}

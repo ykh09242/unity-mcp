@@ -35,6 +35,13 @@ def write(path, data):
     temporary.replace(path)
 
 
+def actor_version(codex):
+    with Path(codex).open("rb") as executable:
+        sha = hashlib.file_digest(executable, "sha256").hexdigest()
+    version = subprocess.check_output([codex, "--version"], text=True).strip()
+    return {"version": version, "sha256": sha, "model": MODEL, "reasoning_effort": EFFORT}
+
+
 def pairs():
     original = [
         (c.request.query, c.request.task, c.request.language, "existing", c.panel)
@@ -383,6 +390,11 @@ def main():
         parser.error(
             "An installed Codex CLI, production Unity MCP server and valid lane count are required"
         )
+    fingerprint = actor_version(codex)
+    record = root / "actor-version.json"
+    if record.exists() and json.loads(record.read_bytes()) != fingerprint:
+        raise RuntimeError("The actor executable or model settings changed within this run")
+    write(record, fingerprint)
     receipts = root / "receipts-reviewed"
     receipts.mkdir(exist_ok=True)
     with ThreadPoolExecutor(max_workers=args.lanes) as executor:
