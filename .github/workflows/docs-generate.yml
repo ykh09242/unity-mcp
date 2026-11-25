@@ -111,7 +111,8 @@ jobs:
         run: python3 tools/generate_declared_action_contracts.py --check
 
       - name: Check authored resource URI references
+        working-directory: Server
         run: >-
-          uv run --project Server --locked --extra dev --python 3.14 python -m pytest
-          Server/tests/test_resource_uri_references.py
+          uv run --locked --extra dev --python 3.14 python -m pytest
+          tests/test_resource_uri_references.py
           -q -W error -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function

@@ -254,6 +254,8 @@ def test_reference_only_pr_executes_resource_uri_contract(target: str) -> None:
     contract = next(
         step for step in steps if "test_resource_uri_references.py" in step.get("run", "")
     )
+    assert contract["working-directory"] == "Server"
+    assert "tests/test_resource_uri_references.py" in contract["run"].split()
     assert "--extra dev" in contract["run"]
     assert "-W error" in contract["run"]
 
