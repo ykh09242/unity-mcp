@@ -17,6 +17,12 @@ from tools.experiments.blind_tool_factors import (
     earlier_menu_prose,
     install_factor,
 )
+from tools.tests.discovery_agent_contract import (
+    AgentBrowse,
+    ObservationBinding,
+    agent_catalog,
+    assert_observation_browsable,
+)
 from services.registry.action_catalog import SEARCH_TERMS_META
 from services.registry.capability_catalog import MENU_DECLARATIONS_URI
 from services.resources import register_all_resources
@@ -26,36 +32,23 @@ from services.tools import register_all_tools
 @pytest.mark.asyncio
 @pytest.mark.parametrize("profile", ["core", "full"])
 @pytest.mark.parametrize("prompt_file", ["blind_tool_tasks.json", "blind_tool_tasks_natural.json"])
-async def test_raw_localized_menu_requests_find_each_advertised_binding(
-    monkeypatch, profile, prompt_file
+async def test_agent_catalog_exposes_menu_bindings_for_original_localized_requests(
+    profile, prompt_file
 ):
-    monkeypatch.delenv("UNITY_MCP_TOOL_GROUPS", raising=False)
-    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", profile)
     prompts = json.loads(
         (Path(__file__).resolve().parents[1] / "experiments" / prompt_file).read_text(
             encoding="utf-8"
         )
     )["menu-declaration"]
-    server = FastMCP("raw-menu-requests")
-    register_all_tools(server)
-    register_all_resources(server)
-    async with Client(server) as client:
+    target = ObservationBinding(
+        "list_menu_declarations", "menu.declared_paths", uri=MENU_DECLARATIONS_URI
+    )
+    async with agent_catalog(profile, {target.tool}, mode="auto") as catalog:
         for locale in ("ko", "ja", "es", "ar", "tr"):
-            query = prompts[locale]
-            for surface, target in (
-                ("tools", "list_menu_declarations"),
-                ("resources", "mcpforunity://menu-items"),
-                ("both", "list_menu_declarations"),
-            ):
-                reply = await client.call_tool(
-                    "search_unity_tools", {"query": query, "limit": 3, "route_surfaces": surface}
+            for surface in ("tools", "resources", "both"):
+                await assert_observation_browsable(
+                    catalog, AgentBrowse(prompts[locale], surface), target
                 )
-                result = reply.structured_content
-                assert result["query"] == result["matched_query"] == query
-                groups = [group["representative"] for group in result["route_groups"]]
-                assert target in [r.get("tool") or r.get("uri") for r in groups], (locale, surface)
-                assert "list_menu_declarations" in [r["name"] for r in result["results"]]
-                assert result["recommended_action"] == "inspect_candidates"
 
 
 def test_wording_preserves_query_arguments_and_equally_worded_unrelated_descriptions():

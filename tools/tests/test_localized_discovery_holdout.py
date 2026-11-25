@@ -1,19 +1,26 @@
-"""Replay independently authored original requests against the advertised catalog."""
+"""Browse advertised observations with original independent fixture requests."""
 
 import json
 from pathlib import Path
 
 import pytest
-from fastmcp import Client, FastMCP
 
-from services.resources import register_all_resources
-from services.tools import register_all_tools
+from tools.tests.discovery_agent_contract import (
+    AgentBrowse,
+    ObservationBinding,
+    agent_catalog,
+    assert_observation_browsable,
+)
 
 
 TARGETS = {
-    "menu-declaration": ("list_menu_declarations", None, "mcpforunity://menu-items"),
-    "console-errors": ("read_console", "get", None),
-    "camera-depth": ("inspect_scene_cameras", None, "mcpforunity://scene/cameras"),
+    "menu-declaration": ObservationBinding(
+        "list_menu_declarations", "menu.declared_paths", uri="mcpforunity://menu-items"
+    ),
+    "console-errors": ObservationBinding("read_console", "console.entries", action="get"),
+    "camera-depth": ObservationBinding(
+        "inspect_scene_cameras", "unityCameras", uri="mcpforunity://scene/cameras"
+    ),
 }
 
 
@@ -36,35 +43,17 @@ TARGETS = {
         ),
     ],
 )
-async def test_heldout_original_text_ranks_the_observation_first(
-    monkeypatch, profile, filename, locales, tasks, entry
+async def test_agent_catalog_exposes_heldout_observation_bindings(
+    profile, filename, locales, tasks, entry
 ):
-    monkeypatch.delenv("UNITY_MCP_TOOL_GROUPS", raising=False)
-    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", profile)
     prompts = json.loads(
         (Path(__file__).resolve().parents[1] / "experiments" / filename).read_text(encoding="utf-8")
     )
-    server = FastMCP("original-observation-requests")
-    register_all_tools(server)
-    register_all_resources(server)
-    async with Client(server, mode="legacy", cache=False) as client:
+    async with agent_catalog(profile, {TARGETS[task].tool for task in tasks}) as catalog:
         for task in tasks:
-            tool, action, uri = TARGETS[task]
+            target = TARGETS[task]
             for locale in locales:
-                query = prompts[task][locale]
-                for surface in ("tools", "both", "resources") if uri else ("tools", "both"):
-                    args = {"query": query, "route_surfaces": surface, "limit": 3}
-                    if entry == "manage_tools":
-                        args["action"] = "search"
-                    result = (await client.call_tool(entry, args)).structured_content
-                    assert query == result["query"] == result["matched_query"]
-                    first = result["route_groups"][0]["representative"]
-                    if surface == "resources":
-                        assert first["uri"] == uri, (task, locale, surface)
-                    else:
-                        assert (first["tool"], first.get("operation")) == (tool, action), (
-                            task,
-                            locale,
-                            surface,
-                        )
-                    assert tool in [row["name"] for row in result["results"]]
+                for surface in ("tools", "both", "resources") if target.uri else ("tools", "both"):
+                    await assert_observation_browsable(
+                        catalog, AgentBrowse(prompts[task][locale], surface, entry), target
+                    )
