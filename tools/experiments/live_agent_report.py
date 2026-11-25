@@ -77,11 +77,11 @@ def wire_error(result):
     return error
 
 
-def public_case(row):
+def public_case(row, *, extra_facts=()):
     score = outcomes.score(row)
     before = row.get("before") or {}
     after = row.get("after") or {}
-    facts = set(outcomes.REQUIRED[row["task"]])
+    facts = set(outcomes.REQUIRED[row["task"]]).union(extra_facts)
     if row["task"] in outcomes.ACTIVE | outcomes.ACTIVATE | {"scene_list"}:
         facts.update(("activeScene", "loadedScenes"))
     if row["task"] == "menu-path":
@@ -331,7 +331,7 @@ def build(root, *, final, gate_root=None, registry_root=None):
     return report
 
 
-def verify(report):
+def verify_cohort(report):
     planned = {r["id"]: r for pair in trial.pairs() for r in pair}
     rows = report["cases"]
     if len(rows) != len(planned) or {r["id"] for r in rows} != set(planned):
@@ -375,6 +375,11 @@ def verify(report):
         or report["catalogs"]["core"]["tools"] >= report["catalogs"]["full"]["tools"]
     ):
         raise ValueError("Two distinct live catalogs are required")
+
+
+def verify(report):
+    verify_cohort(report)
+    rows = report["cases"]
     gate_ids = {r["id"] for r in rows if r["task"] == "gate_sensor_trigger"}
     if (
         len(gate_ids) != 12
