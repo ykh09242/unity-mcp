@@ -6,13 +6,14 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+import re
 import shutil
 import subprocess
 import time
 import uuid
 import wave
 import zipfile
+from pathlib import Path
 
 
 SOURCE = Path(__file__).resolve().parent
@@ -36,8 +37,12 @@ CACHE = Path(
         Path(os.environ.get("LOCALAPPDATA", Path.home() / ".cache")) / "Unity/cache",
     )
 ).resolve()
-REVISION = "3973b243680eede8639343694edcb075c060b3e5"
+RECORDED_REVISION = "3973b243680eede8639343694edcb075c060b3e5"
+REVISION = os.environ.get("LIVE_AGENT_PRODUCT_REVISION", RECORDED_REVISION).lower()
+if re.fullmatch(r"[0-9a-f]{40}", REVISION) is None:
+    raise ValueError("LIVE_AGENT_PRODUCT_REVISION must be a full Git commit SHA")
 UNITY_VERSION = "6000.0.69f1"
+PRODUCT_PACKAGE = "com.ykh09242.unity-mcp"
 SEED_PACKAGES = {"com.unity.editorcoroutines": "1.0.1", "com.unity.nuget.newtonsoft-json": "3.2.2"}
 
 
@@ -142,7 +147,7 @@ def seed_manifest():
         "dependencies": {
             k: v
             for k, v in data["dependencies"].items()
-            if k.startswith("com.unity.modules.") or k == "com.ykh09242.unity-mcp"
+            if k.startswith("com.unity.modules.") or k == PRODUCT_PACKAGE
         }
     }
 
@@ -227,6 +232,24 @@ def compile_dll(name):
     subprocess.run([runtime, compiler, "@" + str(response)], check=True)
 
 
+def product_archive(shared_dir: Path) -> Path:
+    archive = real_child(shared_dir / "mcp.zip")
+    package = real_child(shared_dir / "MCPForUnity")
+    if not archive.exists():
+        if package.exists():
+            raise ValueError(f"The existing product package has no Git archive: {package}")
+        subprocess.run(
+            ["git", "archive", "-o", str(archive), REVISION, "MCPForUnity"], cwd=ROOT, check=True
+        )
+    with zipfile.ZipFile(archive) as contents:
+        if contents.comment != REVISION.encode("ascii"):
+            raise ValueError(f"Product archive does not match commit {REVISION}: {archive}")
+        if not package.exists():
+            contents.extractall(shared_dir)
+    require_file(package / "package.json", "the selected product archive")
+    return package
+
+
 def shared():
     """Construct offline dependencies only from the registered commit and local package caches."""
     require_file(EDITOR / "Unity.exe", "LIVE_AGENT_UNITY_EDITOR")
@@ -241,17 +264,10 @@ def shared():
     check_work_root()
     shared_dir = real_child(WORK / "dependencies")
     shared_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("mcp.zip", "manifest.json", "tone.wav", "tone.ogg"):
+    for name in ("manifest.json", "tone.wav", "tone.ogg"):
         real_child(shared_dir / name)
-    package = real_child(shared_dir / "MCPForUnity")
-    if not package.exists():
-        archive = shared_dir / "mcp.zip"
-        subprocess.run(
-            ["git", "archive", "-o", str(archive), REVISION, "MCPForUnity"], cwd=ROOT, check=True
-        )
-        with zipfile.ZipFile(archive) as contents:
-            contents.extractall(shared_dir)
-    deps["com.ykh09242.unity-mcp"] = "file:" + package.as_posix()
+    package = product_archive(shared_dir)
+    deps[PRODUCT_PACKAGE] = "file:" + package.as_posix()
     deps["com.unity.inputsystem"] = "file:" + inp.as_posix()
     deps["com.unity.cinemachine"] = "file:" + cine.as_posix()
     deps["com.unity.ugui"] = "2.0.0"

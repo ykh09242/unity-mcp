@@ -4,16 +4,19 @@ import argparse
 import base64
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import sys
 import time
+from pathlib import Path
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from tools.experiments.live_editor_fixture.lane import (
     CACHE,
+    PRODUCT_PACKAGE,
+    RECORDED_REVISION,
+    REVISION,
     ROOT,
     WORK,
     check_work_root,
@@ -23,7 +26,6 @@ from tools.experiments.live_editor_fixture.lane import (
     require_file,
     shared,
 )
-
 
 REGISTRY = "https://packages.unity.com"
 VERSIONS = {"com.unity.cinemachine": "2.6.11", "com.unity.inputsystem": "1.14.2"}
@@ -114,16 +116,13 @@ def restore_cache():
         write_cache_content(db, "package-signature" + suffix, "sha512", signature)
 
 
-def prepare(baseline):
-    if baseline == WORK or baseline.is_relative_to(WORK) or WORK.is_relative_to(baseline):
-        raise ValueError("Use separate baseline and registry trial roots")
-    if (WORK / "lane-0").exists():
-        raise ValueError("Registry preparation requires a fresh lane")
-    entries = {name: official_record(name, version) for name, version in VERSIONS.items()}
-    shared()
+def configure_registry(baseline: Path, output: Path, candidate_product: str | None) -> None:
     old_lock = baseline / "lane-0/project/Packages/packages-lock.json"
     locked = json.loads(require_file(old_lock, "the frozen baseline lane").read_bytes())
     manifest = json.loads((baseline / "dependencies/manifest.json").read_bytes())
+    if candidate_product is not None:
+        manifest["dependencies"][PRODUCT_PACKAGE] = candidate_product
+        locked["dependencies"][PRODUCT_PACKAGE]["version"] = candidate_product
     for name, version in VERSIONS.items():
         manifest["dependencies"][name] = version
         old = locked["dependencies"][name]
@@ -134,8 +133,25 @@ def prepare(baseline):
             "dependencies": old["dependencies"],
             "url": REGISTRY,
         }
-    dump(WORK / "dependencies/manifest.json", manifest)
-    dump(WORK / "dependencies/packages-lock.json", locked)
+    dump(output / "manifest.json", manifest)
+    dump(output / "packages-lock.json", locked)
+
+
+def prepare(baseline):
+    if baseline == WORK or baseline.is_relative_to(WORK) or WORK.is_relative_to(baseline):
+        raise ValueError("Use separate baseline and registry trial roots")
+    if (WORK / "lane-0").exists():
+        raise ValueError("Registry preparation requires a fresh lane")
+    entries = {name: official_record(name, version) for name, version in VERSIONS.items()}
+    shared()
+    output = real_child(WORK / "dependencies")
+    candidate_product = None
+    if REVISION != RECORDED_REVISION:
+        candidate_product = json.loads((output / "manifest.json").read_bytes())["dependencies"][
+            PRODUCT_PACKAGE
+        ]
+    real_child(output / "packages-lock.json")
+    configure_registry(baseline, output, candidate_product)
     shutil.copy2(baseline / "bin/LaneHost.dll", real_child(WORK / "bin/LaneHost.dll"))
     shutil.copy2(baseline / "bin/World.dll", real_child(WORK / "bin/World.dll"))
     dump(
