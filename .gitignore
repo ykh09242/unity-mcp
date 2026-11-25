@@ -96,4 +96,4 @@ docs/superpowers/
 .unity-ci-sdk/
 
 # Local formatting mirrors, tool installs and task scratch files
-/.tmp/
+.tmp/
