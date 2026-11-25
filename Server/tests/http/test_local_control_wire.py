@@ -160,8 +160,9 @@ def local_server_process(
                         if validation_url is None:
                             try:
                                 token = token_path.read_text(encoding="utf-8").strip()
-                            except FileNotFoundError:
-                                pass  # The owned launch has not published its credential yet.
+                            except (FileNotFoundError, PermissionError):
+                                # Windows may briefly deny reads while the owned file is being published.
+                                pass
                         # Owning the address is only the first step; the local
                         # control plane must also enforce this launch's credential.
                         if (
@@ -379,10 +380,21 @@ def controlled_startup(tmp_path, monkeypatch):
     return state, process
 
 
+@pytest.mark.parametrize("publishing", ["missing", "locked"])
 def test_local_readiness_waits_for_launch_credential_before_trusting_health(
-    tmp_path, controlled_startup
+    tmp_path, controlled_startup, publishing, monkeypatch
 ):
     state, process = controlled_startup
+    if publishing == "locked":
+        token_path = tmp_path / "launch-token"
+        read_text = Path.read_text
+
+        def read_during_publication(path, *args, **kwargs):
+            if path == token_path and not state.owned:
+                raise PermissionError("launch file is busy")
+            return read_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", read_during_publication)
     with local_server_process(tmp_path) as (_, _, token):
         assert state.owned, "Public health from an unowned listener certified readiness"
         assert token == state.token
