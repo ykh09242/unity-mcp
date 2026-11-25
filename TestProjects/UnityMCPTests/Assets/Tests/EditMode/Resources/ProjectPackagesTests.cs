@@ -38,10 +38,11 @@ namespace MCPForUnityTests.Editor.Resources
                 Assert.AreEqual(info.version, (string)data["version"]);
                 Assert.AreEqual(info.displayName, (string)data["display_name"]);
                 Assert.AreEqual(PackageSourceSecurity.Redact(info.description), (string)data["description"]);
-                Assert.AreEqual(PackageSourceSecurity.Redact(info.author?.name), (string)data["author"]);
+                string author = string.IsNullOrWhiteSpace(info.author?.name) ? null : PackageSourceSecurity.Redact(info.author.name);
+                Assert.AreEqual(author, (string)data["author"]);
                 Assert.AreEqual(info.source.ToString(), (string)data["source"]);
                 Assert.AreEqual(info.isDirectDependency, (bool)data["is_direct_dependency"]);
-                if (info.registry == null)
+                if (info.source != PackageSource.Registry || info.registry == null)
                     Assert.AreEqual(JTokenType.Null, data["registry"].Type);
                 else
                 {
@@ -50,6 +51,16 @@ namespace MCPForUnityTests.Editor.Resources
                     Assert.AreEqual(expectedUrl, (string)data["registry"]["url"]);
                 }
             }
+        }
+
+        [TestCase(PackageSource.Local)]
+        [TestCase(PackageSource.Git)]
+        [TestCase(PackageSource.Embedded)]
+        public void ConfiguredRegistryIsNotTheOriginOfAnUnregisteredSource(PackageSource source)
+        {
+            var configured = UnityEngine.JsonUtility.FromJson<RegistryInfo>("{}");
+            Assert.IsNotNull(configured);
+            Assert.IsNull(PackageSourceSecurity.RegistryMetadata(source, configured));
         }
 
         [TestCase("")]

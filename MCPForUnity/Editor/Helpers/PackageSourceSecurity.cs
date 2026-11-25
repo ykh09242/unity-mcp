@@ -94,8 +94,13 @@ namespace MCPForUnity.Editor.Helpers
                 && string.IsNullOrEmpty(uri.Fragment);
         }
 
-        internal static object RegistryMetadata(RegistryInfo registry) =>
-            registry == null ? null : new { name = Redact(registry.name), url = IsValidRegistryUrl(registry.url) ? registry.url : null };
+        internal static object RegistryMetadata(PackageSource source, RegistryInfo registry)
+        {
+            // For other sources Unity can return a configured registry that did not supply this package.
+            if (source != PackageSource.Registry || registry == null)
+                return null;
+            return new { name = Redact(registry.name), url = IsValidRegistryUrl(registry.url) ? registry.url : null };
+        }
 
         internal static JToken RedactResponse(object response)
         {

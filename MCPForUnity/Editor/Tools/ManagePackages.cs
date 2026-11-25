@@ -554,7 +554,7 @@ namespace MCPForUnity.Editor.Tools
                         display_name = info.displayName,
                         description = info.description,
                         source = info.source.ToString(),
-                        registry = PackageSourceSecurity.RegistryMetadata(info.registry),
+                        registry = PackageSourceSecurity.RegistryMetadata(info.source, info.registry),
                         resolved_path = info.resolvedPath,
                         author = info.author?.name,
                         dependencies,

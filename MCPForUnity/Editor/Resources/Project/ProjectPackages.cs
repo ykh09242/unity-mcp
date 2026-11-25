@@ -44,9 +44,9 @@ namespace MCPForUnity.Editor.Resources.Project
                             version = info.version,
                             display_name = info.displayName,
                             description = info.description,
-                            author = info.author?.name,
+                            author = string.IsNullOrWhiteSpace(info.author?.name) ? null : info.author.name,
                             source = info.source.ToString(),
-                            registry = PackageSourceSecurity.RegistryMetadata(info.registry),
+                            registry = PackageSourceSecurity.RegistryMetadata(info.source, info.registry),
                             is_direct_dependency = info.isDirectDependency,
                         }
                     )
