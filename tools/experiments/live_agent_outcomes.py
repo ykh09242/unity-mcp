@@ -119,9 +119,13 @@ def _approval_receipts(row):
     receipts = []
     for index, call in enumerate(row.get("host_calls", [])):
         error = str(call.get("error") or "").casefold()
-        if "approval" in error and any(
-            word in error
-            for word in ("denied", "reject", "not allowed", "never", "unavailable", "required")
+        refused = "this action was rejected due to unacceptable risk." in error
+        if refused or (
+            "approval" in error
+            and any(
+                word in error
+                for word in ("denied", "reject", "not allowed", "never", "unavailable", "required")
+            )
         ):
             receipts.append({"index": index, "sha256": _digest(call)})
     return receipts
@@ -267,6 +271,29 @@ def _samples(state):
     return samples
 
 
+def _registry_record(state, language):
+    package = state.get("targetPackage") or {}
+    record = state.get("registryRecord") or {}
+    requested = {"ko": "com.unity.cinemachine", "ja": "com.unity.inputsystem"}.get(language)
+    if not isinstance(package, dict) or not isinstance(record, dict):
+        return False
+    digests = [record.get(field) for field in ("metadataSha256", "tarballSha256")]
+    return (
+        package.get("source") == "Registry"
+        and requested is not None
+        and package.get("name") == record.get("name") == requested
+        and bool(package.get("version"))
+        and package["version"] == record.get("version")
+        and all(record.get(k) for k in ("displayName", "description", "registry"))
+        and all(
+            isinstance(digest, str)
+            and len(digest) == 64
+            and all(char in "0123456789abcdef" for char in digest)
+            for digest in digests
+        )
+    )
+
+
 def _valid_baseline(task, language, before):
     if (
         not before["sceneCollateral"]
@@ -320,11 +347,6 @@ def _valid_baseline(task, language, before):
         return bool(before["menuPaths"]) and before["frameDebuggerWindows"] == 0
     if task == "selected_agent":
         return bool(before["selection"]) and before["selectedAgent"]["name"] == before["selection"]
-    if task == "installed_package":
-        target = {"ko": "com.unity.cinemachine", "ja": "com.unity.inputsystem"}[language]
-        return before["targetPackage"]["name"] == target and bool(
-            before["targetPackage"]["version"]
-        )
     if task == "package_list":
         return bool(before["packages"])
     if task == "saved_controls_identity":
@@ -423,6 +445,8 @@ def _state_verdict(row):
     required = REQUIRED[task] | COMMON
     if not required <= before.keys() or not COMMON <= after.keys():
         return "unobserved", "harness", "missing_native_field"
+    if task == "installed_package" and not _registry_record(before, row["language"]):
+        return "unobserved", "precondition", "registry_record_unavailable"
     try:
         if not _valid_baseline(task, row["language"], before):
             return "unobserved", "precondition", "invalid_starting_state"

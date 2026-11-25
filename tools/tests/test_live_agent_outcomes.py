@@ -144,11 +144,17 @@ def test_host_approval_evidence_is_auditable_even_if_another_route_completed():
             "error": "Approval required.",
         },
         {"server": "unityMCP", "tool": "manage_scene", "status": "completed", "error": None},
+        {
+            "server": "unityMCP",
+            "tool": "scene_lifecycle",
+            "status": "failed",
+            "error": "{'message': 'This action was rejected due to unacceptable risk.'}",
+        },
     ]
     opaque["stage"] = "approval"
     result = trial.score(opaque)
     assert result["outcome"] == "pass" and result["stage"] == "complete"
-    assert [h["index"] for h in result["host_approval_receipts"]] == [0]
+    assert [h["index"] for h in result["host_approval_receipts"]] == [0, 2]
     assert trial.review_packet(opaque)["failed_host_calls"][0]["tool"] == "example"
     opaque["answer"] = "No approval available."
     opaque["host_calls"] = []
@@ -172,17 +178,6 @@ def test_host_approval_evidence_is_auditable_even_if_another_route_completed():
             "selected_agent",
             "ko",
             {"selection": "Guard", "selectedAgent": {"name": "Guard", "speed": 3}},
-        ),
-        (
-            "installed_package",
-            "ja",
-            {
-                "targetPackage": {
-                    "name": "com.unity.inputsystem",
-                    "version": "1.0",
-                    "description": "a package description",
-                }
-            },
         ),
         (
             "package_list",
@@ -360,3 +355,42 @@ def test_missing_package_and_approval_failure_are_not_observed_agent_failures():
     assert [e["stage"] for e in summary["exceptions"]] == ["precondition", "approval"]
     with pytest.raises(ValueError, match="Duplicate"):
         trial.aggregate([missing, missing])
+
+
+def test_registry_questions_require_the_installed_version_and_independent_registry_entry():
+    record = {
+        "name": "com.unity.inputsystem",
+        "version": "1.14.2",
+        "displayName": "Input System",
+        "description": "Reads input from devices.",
+        "registry": "https://packages.unity.com",
+        "metadataSha256": "1" * 64,
+        "tarballSha256": "2" * 64,
+    }
+    package = {k: record[k] for k in ("name", "version", "displayName", "description", "registry")}
+    package["source"] = "Registry"
+    valid = row("installed_package", "ja", targetPackage=package, registryRecord=record)
+    valid["calls"] = [
+        {
+            "name": "manage_packages",
+            "arguments": {"action": "get_package_info"},
+            "success": True,
+            "result": {"success": True, "data": package},
+        }
+    ]
+    valid["answer"] = "Input System 1.14.2 (com.unity.inputsystem) provides device input."
+    assert verdict(valid) == "review"
+    accept(valid)
+    assert verdict(valid) == "pass"
+    for field, value in (("source", "Local"), ("source", "LocalTarball"), ("version", "1.0")):
+        bad = deepcopy(valid)
+        for state in (bad["before"], bad["after"]):
+            state["targetPackage"][field] = value
+        assert trial.score(bad)["reason"] == "registry_record_unavailable"
+        assert trial.score(bad)["delivered"] and not trial.score(bad)["observed"]
+    for field in ("metadataSha256", "tarballSha256", "name", "version"):
+        bad = deepcopy(valid)
+        del bad["before"]["registryRecord"][field]
+        assert trial.score(bad)["reason"] == "registry_record_unavailable"
+    del valid["before"]["registryRecord"]
+    assert trial.score(valid)["reason"] == "registry_record_unavailable"
