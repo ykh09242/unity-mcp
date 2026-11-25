@@ -411,8 +411,18 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             actual = (JObject)actual.DeepClone();
             legacy = (JObject)legacy.DeepClone();
-            ((JObject)actual["data"]).Remove("instanceID");
-            ((JObject)legacy["data"]).Remove("instanceID");
+            var created = (JObject)actual["data"];
+            var control = (JObject)legacy["data"];
+            var uiObservation = (JObject)created["verification"];
+            Assert.That((int)uiObservation["target_instance_id"], Is.EqualTo((int)created["instanceID"]));
+            Assert.That((string)uiObservation["reason"], Is.EqualTo("normal_layout_update_pending"));
+            Assert.That((string)uiObservation["status"], Is.EqualTo("pending"));
+            Assert.That((bool)uiObservation["complete"], Is.False);
+            Assert.That((string)control["verification"]["status"], Is.EqualTo("passed"));
+            created.Remove("verification");
+            control.Remove("verification");
+            created.Remove("instanceID");
+            control.Remove("instanceID");
             Assert.That(JToken.DeepEquals(actual, legacy), Is.True, actual + "\n" + legacy);
         }
 
