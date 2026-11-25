@@ -250,7 +250,12 @@ async def test_activation_can_return_schema_and_declared_readiness(monkeypatch, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "selection", [{"tool": "feature", "include_schema": True}, {"group": "ui"}]
+    "selection",
+    [
+        {"action": "activate", "tool": "feature", "include_schema": True},
+        {"action": "activate", "group": "ui"},
+        {"action": "reset"},
+    ],
 )
 @pytest.mark.parametrize("can_read", [False, True])
 async def test_hosted_selection_observes_inventory_only_with_read_permission(
@@ -267,7 +272,7 @@ async def test_hosted_selection_observes_inventory_only_with_read_permission(
     grants = OperationGrants(
         frozenset({Permission.EDIT, Permission.READ} if can_read else {Permission.EDIT}), True
     )
-    authorize_operation(grants, "manage_tools", {"action": "activate", **selection})
+    authorize_operation(grants, "manage_tools", selection)
     monkeypatch.setattr(config, "http_remote_hosted", True)
     monkeypatch.setattr(
         "services.credential_lease.require_credential_lease",
@@ -281,7 +286,9 @@ async def test_hosted_selection_observes_inventory_only_with_read_permission(
     )
     monkeypatch.setattr(module, "get_group_tool_names", lambda: {"ui": ["feature"]})
     discovery = SimpleNamespace(
-        definitions={"feature": definition}, update=AsyncMock(return_value=True)
+        definitions={"feature": definition},
+        default_groups={"ui"},
+        update=AsyncMock(return_value=True),
     )
     listing = AsyncMock(return_value=[definition])
     ctx = SimpleNamespace(
@@ -289,13 +296,18 @@ async def test_hosted_selection_observes_inventory_only_with_read_permission(
         enable_components=AsyncMock(),
         get_state=AsyncMock(return_value=None),
     )
-    result = await module.manage_tools(ctx, "activate", **selection)
-    assert result["changed"] is True
+    result = await module.manage_tools(ctx, **selection)
     discovery.update.assert_awaited_once()
-    if "tool" in selection:
+    if selection["action"] == "reset":
+        assert result["reset"] is True
+        assert result["visible_tools"] == (["feature"] if can_read else None)
+        assert result["default_groups"] == (["ui"] if can_read else None)
+    elif "tool" in selection:
+        assert result["changed"] is True
         assert result["server_advertised"] is (True if can_read else None)
         assert ("description" in result) == can_read
     else:
+        assert result["changed"] is True
         assert result["server_advertised_tools"] == (["feature"] if can_read else None)
     assert listing.await_count == int(can_read)
 

@@ -648,13 +648,15 @@ async def manage_tools(
             await discovery.update(ctx, reset=True)
         else:
             await ctx.reset_visibility()
-        visible = await _visible_tools(ctx)
+        visible = await _selection_inventory(ctx)
         return {
             "reset": True,
             "default_groups": sorted(
                 discovery.default_groups if discovery else DEFAULT_ENABLED_GROUPS
-            ),
-            "visible_tools": sorted(tool.name for tool in visible),
+            )
+            if visible is not None
+            else None,
+            "visible_tools": sorted(visible) if visible is not None else None,
             "client_inventory_status": "unconfirmed",
             "message": (
                 "Server selection restored to configured defaults. Unity availability still applies. "
