@@ -1,0 +1,10 @@
+[
+  {"task":"beacon_light","query":"How far does the Harbor Lamp reach, and what is its intensity?"},
+  {"task":"hatch_surface","query":"Which material is actually assigned to the Dock Hatch, and which shader does that material use?"},
+  {"task":"bell_audio","query":"What volume and pitch are set on the Wharf Bell?"},
+  {"task":"mist_particles","query":"How many particles per second does Pier Mist emit, and what is its maximum particle count?"},
+  {"task":"hoist_animation","query":"Which animation controller asset is assigned to Cargo Hoist? Give me its project path."},
+  {"task":"float_body","query":"How heavy is the Channel Float, and how much angular damping does its rigid body use?"},
+  {"task":"lower_lamp","query":"Set the intensity of Harbor Lamp to 2.75. Keep everything else as it is."},
+  {"task":"lower_bell","query":"Set the Wharf Bell volume to 0.375 and leave the rest of the scene as it is."}
+]
