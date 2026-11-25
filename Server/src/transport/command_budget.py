@@ -69,6 +69,7 @@ class _CommandBudget:
     prior_dispatch: _CommandBudget | None = None
     editor_state_clock: EditorStateClock | None = None
     editor_state_clock_sent: float | None = None
+    wire_timed_out: bool = False
 
     def execution_evidence(self) -> _CommandBudget:
         current = self.active.execution_evidence() if self.active is not None else self

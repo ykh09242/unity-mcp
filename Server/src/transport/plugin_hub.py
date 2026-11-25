@@ -507,7 +507,18 @@ class PluginHub(WebSocketEndpoint):
         weakref.WeakKeyDictionary()
     )
     _NON_MUTATING_COMMANDS = frozenset(
-        {"ping", "get_editor_state", "get_test_job", "get_compile_job"}
+        {
+            "ping",
+            "get_editor_state",
+            "get_test_job",
+            "get_compile_job",
+            "get_tool_states",
+            "get_selection",
+            "get_active_tool",
+            "get_tags",
+            "get_layers",
+            "get_prefab_stage",
+        }
     )
     _large_results: ClassVar[LargeResultAssembler | None] = None
     _raw_results: ClassVar[ChargeLedger] = ChargeLedger()
@@ -1777,11 +1788,25 @@ class PluginHub(WebSocketEndpoint):
             )
 
     @staticmethod
-    def _is_non_mutating(command_type: str, params: dict[str, Any]) -> bool:
-        """Keep console get read-only; clear and ambiguous actions invalidate."""
+    def _is_non_mutating(command_type: str, params: dict[str, Any], *, control: bool) -> bool:
+        """Only trusted observations can preserve another caller's readiness."""
+        action = params.get("action")
         if command_type == "read_console":
-            action = params.get("action")
             return action is None or isinstance(action, str) and action.lower() == "get"
+        if control and isinstance(action, str):
+            # Admission has already matched the specific command and action in
+            # reserved_control. Its cancellation actions still invalidate reads.
+            return action.lower() in {
+                "status",
+                "suite_status",
+                "bake_status",
+                "profiler_status",
+                "window_status",
+                "get_play_mode_job",
+                "ping",
+                "availability",
+                "capabilities",
+            }
         return command_type in PluginHub._NON_MUTATING_COMMANDS
 
     @staticmethod
@@ -1961,6 +1986,7 @@ class PluginHub(WebSocketEndpoint):
                     _progress=_progress,
                 )
         except TimeoutError:
+            budget.wire_timed_out = True
             result = budget.timeout_response(command_type)
             if not budget.execution_evidence().dispatched:
                 result["data"]["dispatch"] = "not_dispatched"
@@ -2248,6 +2274,7 @@ class PluginHub(WebSocketEndpoint):
                 )
             return MCPResponse(success=False, error="auth_required").model_dump()
         except TimeoutError:
+            budget.wire_timed_out = True
             result = budget.timeout_response(command_type)
             if not budget.execution_evidence().dispatched:
                 result["data"]["dispatch"] = "not_dispatched"
@@ -2491,7 +2518,10 @@ class PluginHub(WebSocketEndpoint):
                 return cls._command_capacity_response()
             # Unknown/custom/batch commands may mutate. Advance before socket
             # I/O so later readers cannot join an earlier observation.
-            if not cls._is_non_mutating(command_type, params):
+            may_mutate = _catalog_guard is not None or not cls._is_non_mutating(
+                command_type, params, control=control
+            )
+            if may_mutate:
                 epoch = getattr(websocket.state, "plugin_command_epoch", 0)
                 websocket.state.plugin_command_epoch = epoch + 1 if type(epoch) is int else 1
             # Readiness-gated mutations carry an observation identity too. Their
@@ -2746,9 +2776,6 @@ class PluginHub(WebSocketEndpoint):
                         clock if isinstance(clock, EditorStateClock) else None
                     )
                 if "rejected_result_observed" in entry:
-                    may_mutate = _catalog_guard is not None or not cls._is_non_mutating(
-                        command_type, params
-                    )
                     if budget.dispatched and may_mutate and receipt is not None:
                         receipt.mark_unknown()
                     return _result_limit_response(
@@ -2763,6 +2790,7 @@ class PluginHub(WebSocketEndpoint):
                 raise
             except TimeoutError:
                 canceled = budget.dispatched
+                budget.wire_timed_out = True
                 result = budget.timeout_response(command_type)
                 if not budget.dispatched:
                     result["data"]["dispatch"] = "not_dispatched"
@@ -4970,21 +4998,31 @@ class PluginHub(WebSocketEndpoint):
 
             def observe_flight(task: asyncio.Task) -> None:
                 owner = cls._ordinary_state_flights.setdefault(task, budget)
-                if owner is not budget:
-                    budget.active = owner
+                budget.active = owner if owner is not budget else None
 
             try:
                 async with cls._ordinary_state_reads.session(identity) as read:
-                    return await read.fetch(
-                        lambda: cls.send_command(
-                            session_id,
-                            command_type,
-                            params,
-                            _expected_read=identity,
-                            _budget=budget,
-                        ),
-                        on_flight=observe_flight,
-                    )
+                    while True:
+                        result = await read.fetch(
+                            lambda: cls.send_command(
+                                session_id,
+                                command_type,
+                                params,
+                                _expected_read=identity,
+                                _budget=budget,
+                            ),
+                            on_flight=observe_flight,
+                        )
+                        source = budget.active
+                        # A later observer may join a nearly expired wire read. Only
+                        # its actual owner's timeout can trigger a fresh observation.
+                        if (
+                            source is None
+                            or not source.wire_timed_out
+                            or source.remaining() > 0
+                            or budget.remaining() <= 0
+                        ):
+                            return result
             except SharedReadCapacityError:
                 source = budget.active or budget
                 return _result_limit_response(

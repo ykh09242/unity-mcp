@@ -287,6 +287,40 @@ async def test_readiness_window_expires_while_another_caller_still_needs_the_pro
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("native_failure", [False, True])
+async def test_later_state_reader_keeps_its_own_observation_budget(
+    peer, monkeypatch, native_failure
+):
+    loop = asyncio.get_running_loop()
+    clock = loop.time
+    offset = 0
+    monkeypatch.setattr(loop, "time", lambda: clock() + offset)
+    monkeypatch.setenv("UNITY_MCP_STATE_TIMEOUT", "5")
+    options = {"editor_state_read_mode": "ordinary", "retry_on_reload": False}
+    short = asyncio.create_task(read(peer, "get_editor_state", **options))
+    first = await peer.next_command()
+    monkeypatch.setenv("UNITY_MCP_STATE_TIMEOUT", "30")
+    remaining = [asyncio.create_task(read(peer, "get_editor_state", **options)) for _ in range(2)]
+    await yield_callers()
+    assert peer.counts() == {"get_editor_state": 1}
+    if native_failure:
+        failure = {"success": False, "data": {"reason": "command_deadline_exceeded"}}
+        await peer.reply(first, failure)
+        assert all(result == failure for result in await asyncio.gather(short, *remaining))
+        assert peer.counts() == {"get_editor_state": 1}
+        return
+    offset = 6
+    await yield_callers()
+    assert (await short)["data"]["command_id"] == first["id"]
+    assert all(not task.done() for task in remaining)
+    next_read = await peer.next_command()
+    assert next_read["name"] == "get_editor_state"
+    await peer.reply(next_read)
+    assert all(result["success"] for result in await asyncio.gather(*remaining))
+    assert peer.counts() == {"get_editor_state": 2}
+
+
+@pytest.mark.asyncio
 async def test_last_readiness_waiter_cancels_orphan_without_retained_result(peer):
     # Given: one pending readiness probe.
     caller = asyncio.create_task(read(peer))
@@ -411,30 +445,57 @@ async def test_replaced_socket_between_capture_and_admission_never_receives_old_
 
 
 @pytest.mark.asyncio
-async def test_compile_status_between_probe_and_tool_dispatch_preserves_readiness(peer):
+@pytest.mark.parametrize(
+    "observation,params",
+    [
+        ("get_compile_job", {}),
+        ("get_selection", {}),
+        ("manage_build", {"action": "status", "job_id": "owned"}),
+        ("manage_editor", {"action": "get_play_mode_job", "job_id": "owned"}),
+    ],
+)
+async def test_observation_between_probe_and_tool_dispatch_preserves_readiness(
+    peer, observation, params
+):
     # Given: a console reader is waiting for an in-flight readiness probe.
     caller = asyncio.create_task(read(peer))
     probe = await peer.next_command()
-    status = asyncio.create_task(read(peer, "get_compile_job"))
+    status = asyncio.create_task(
+        peer.request(
+            PluginHub.send_command_for_instance,
+            "ownedhash",
+            observation,
+            params,
+            user_id="owned-user",
+        )
+    )
     command = await peer.next_command()
-    assert command["name"] == "get_compile_job"
-    # When: the observational compile-status call finishes before the old probe.
+    assert command["name"] == observation
+    # When: another caller's observation finishes before the old probe.
     await peer.reply(command)
     assert (await status)["success"]
     await peer.reply(probe)
     await yield_callers()
     # Then: the existing readiness is still valid for the console dispatch.
-    assert peer.counts() == {"ping": 1, "get_compile_job": 1, "read_console": 1}
+    assert peer.counts() == {"ping": 1, observation: 1, "read_console": 1}
     await peer.reply(await peer.next_command())
     assert (await caller)["success"]
 
 
 @pytest.mark.asyncio
-async def test_mutation_between_probe_and_tool_dispatch_refuses_old_readiness(peer):
+@pytest.mark.parametrize(
+    "name,params",
+    [("unknown_custom_tool", {}), ("manage_build", {"action": "cancel", "job_id": "owned"})],
+)
+async def test_mutation_between_probe_and_tool_dispatch_refuses_old_readiness(peer, name, params):
     # Given: a reader is waiting for a ping started before mutation admission.
     caller = asyncio.create_task(read(peer))
     probe = await peer.next_command()
-    mutation = asyncio.create_task(read(peer, "unknown_custom_tool"))
+    mutation = asyncio.create_task(
+        peer.request(
+            PluginHub.send_command_for_instance, "ownedhash", name, params, user_id="owned-user"
+        )
+    )
     command = await peer.next_command()
     # When: that old probe replies after mutation admission.
     await peer.reply(probe)
@@ -442,7 +503,7 @@ async def test_mutation_between_probe_and_tool_dispatch_refuses_old_readiness(pe
     # Then: the actual read is not dispatched using pre-mutation readiness.
     assert (await caller)["data"]["reason"] == "read_invalidated"
     assert (await mutation)["success"]
-    assert peer.counts() == {"ping": 1, "unknown_custom_tool": 1}
+    assert peer.counts() == {"ping": 1, name: 1}
 
 
 @pytest.mark.asyncio
