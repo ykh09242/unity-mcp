@@ -527,16 +527,16 @@ def _build_instructions(project_scoped_tools: bool) -> str:
     custom_tools_note = (
         "Project tools: mcpforunity://custom-tools."
         if project_scoped_tools
-        else "Use the advertised tools for this connection."
+        else "Use this connection's advertised tools."
     )
     return f"""Unity Editor tools. Use live schemas. Editor reads can return saved files.
 
 Target and discover
 - Resolve the Editor via mcpforunity://instances. Sessionless: use unity_instance=Name@hash on tools and _meta.unity_instance on resources, or supported set_active_instance.
-- Preserve names, paths and text verbatim. Bind templates with observed values.
+- Keep names, paths and text verbatim. Bind templates to observed values.
 - Discover by meaning: search_unity_tools(selection="agent", query=original, limit=20). Page all families, then every operation in each relevant family via family and next_offset. Compare purposes, results, inputs and effects.
 - Describe the binding. manage_tools(action="catalog") lists selectable tools. Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck scene/mode.
-- Missing tools: inspect manage_tools(action="list_groups").discovery, project scope, Editor toggles and consent. Activate the permitted tool and refresh tools/list. Fixed inventory: set startup groups and reconnect. {custom_tools_note}
+- Check manage_tools(action="list_groups").discovery, client scope/project binding, Editor toggles and consent. Activate and refresh tools/list. Fixed inventory: restart with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full and reconnect. {custom_tools_note}
 
 Observe and execute
 - Direct read unavailable? Find an advertised measurement of the property. Verify target, units and coverage. Label inferences. Respect disabled edits.
