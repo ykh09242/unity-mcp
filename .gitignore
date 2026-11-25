@@ -16,6 +16,8 @@
 # Python-generated files
 __pycache__/
 __pycache__.meta
+.pytest_cache/
+.pytest_cache_*/
 build/
 !MCPForUnity/**/Build/
 dist/
