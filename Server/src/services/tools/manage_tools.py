@@ -96,6 +96,14 @@ _Family = Annotated[
 ]
 
 
+async def _retry_project_binding(ctx: Context) -> dict[str, str]:
+    """Retain the resolved ID when the caller selected a project on this call."""
+    from transport.unity_instance_middleware import EXPLICIT_REQUEST_INSTANCE_STATE
+
+    target = await ctx.get_state(EXPLICIT_REQUEST_INSTANCE_STATE)
+    return {"unity_instance": target} if isinstance(target, str) else {}
+
+
 @mcp_for_unity_tool(
     unity_target=None,
     group=None,
@@ -190,6 +198,7 @@ async def search_unity_tools(
         ]
         if observation_source is None and required_values is None:
             modes.append(("agent", RANKED_SEARCH_FIELDS, "Browse complete operation pages."))
+        project_binding = await _retry_project_binding(ctx)
         retries = []
         for mode, fields, purpose in modes:
             candidate = {
@@ -202,7 +211,7 @@ async def search_unity_tools(
                 retry = SearchRequest.model_validate(candidate)
             except ValidationError:
                 continue
-            payload = retry.model_dump(mode="json", exclude_unset=True)
+            payload = {**retry.model_dump(mode="json", exclude_unset=True), **project_binding}
             for name in ("query", "catalog_query"):
                 if name in candidate:
                     payload[name] = candidate[name]
@@ -261,6 +270,7 @@ async def search_unity_tools(
                             mode="json",
                         ),
                         "query": query,
+                        **(await _retry_project_binding(ctx)),
                     },
                     "omit": ["observation_source", "required_values"],
                 }

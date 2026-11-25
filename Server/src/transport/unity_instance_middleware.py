@@ -7,6 +7,7 @@ into the request-scoped state, allowing tools to access it via ctx.get_state("un
 
 from threading import RLock
 from types import CodeType, FunctionType, SimpleNamespace
+from typing import Final
 from inspect import getclosurevars
 import asyncio
 import logging
@@ -77,6 +78,7 @@ _diag = logging.getLogger("transport.unity_instance_middleware")
 # with it to set or clear the active unity instance.
 _unity_instance_middleware = None
 _middleware_lock = RLock()
+EXPLICIT_REQUEST_INSTANCE_STATE: Final = "mcpforunity.explicit_request_instance"
 # These controls operate on server/session state or retained output. A registry
 # unity_target=None alone is insufficient: execute_custom_tool uses that too.
 _LOCAL_TARGET_CONTROL_TOOLS = frozenset(
@@ -555,7 +557,12 @@ class UnityInstanceMiddleware(Middleware):
         self, ctx, authenticated_user_id: str | None = None
     ) -> str | None:
         # Shadow transient values persisted by older server versions in this session.
-        for key in ("unity_instance", "unity_session_id", "user_id"):
+        for key in (
+            "unity_instance",
+            "unity_session_id",
+            "user_id",
+            EXPLICIT_REQUEST_INSTANCE_STATE,
+        ):
             await ctx.set_state(key, None, serializable=False)
 
         # Resolve user_id from the HTTP request's API key header
@@ -595,6 +602,9 @@ class UnityInstanceMiddleware(Middleware):
                     # Raises ValueError with a user-friendly message on invalid input.
                     active_instance = await self._resolve_instance_value(
                         value, ctx, allow_reconnect=allow_reconnect
+                    )
+                    await ctx.set_state(
+                        EXPLICIT_REQUEST_INSTANCE_STATE, active_instance, serializable=False
                     )
                     logger.debug("Per-call unity_instance resolved to: %s", active_instance)
 

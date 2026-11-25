@@ -8,16 +8,16 @@ does not require repeating `query`; the directory still requires the original.
 Compare the bindings' results, required inputs and effects before choosing an action.
 Tool bindings carry their exact tool name and selector. Resource bindings identify a
 readable URI or template. This path enumerates the live scope without loading search
-weights or calling Unity. Preserve `route_surfaces` and host inventory constraints
-across pages. The offline CLI provides the same pages with
+weights or calling Unity. Preserve `route_surfaces`, host inventory constraints and
+any explicit `unity_instance` across pages. The offline CLI provides the same pages with
 `tool search QUERY --selection agent`, `--family ID`, `--limit` and `--offset`.
 
 Use `selection="ranked"` for lexical or required evidence search. Only this mode
 accepts `catalog_query`, `intent`, `observation_source` and `required_values`.
 When a request mixes the two modes, MCP returns `incompatible_fields` and
 `search_retries` with valid arguments for that same entry point. A retry keeps the
-original query, route surfaces and host inventory constraints. Required evidence
-is preserved in the ranked retry, and no unfiltered browse is offered in its place.
+original query, route surfaces, host inventory constraints and any explicit per-call
+`unity_instance`. Only the ranked retry is offered when the request requires evidence.
 
 Use `manage_tools(action="catalog")` to read the group index and the entry for
 readable Unity state. Follow `resources` for fixed URIs or `resource_templates`

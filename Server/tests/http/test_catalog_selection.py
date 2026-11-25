@@ -14,7 +14,7 @@ from core.config import config
 from models.models import ToolDefinitionModel
 from services.custom_tool_service import CustomToolService
 from services.tools import sync_tool_visibility_from_unity
-from services.tools.manage_tools import manage_tools
+from services.tools.manage_tools import manage_tools, search_unity_tools
 from tests.timing import await_signal, watchdog_timeout
 import transport.legacy.unity_connection as connections
 from transport.plugin_hub import PluginHub
@@ -142,6 +142,65 @@ async def test_project_switch_and_reconnect_keep_selection_with_current_cap(cata
         assert await names(client) == {"effect_probe", "manage_tools"}
         await client.call_tool("manage_tools", {"action": "reset"})
         assert await names(client) == {"manage_tools"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize("kind", ["family", "evidence"])
+async def test_search_retries_preserve_only_an_explicit_project_binding(
+    catalog_server, monkeypatch, protocol, kind
+):
+    server, registry, _, _ = catalog_server
+    server.tool(name="search_unity_tools")(search_unity_tools)
+    middleware = next(
+        item for item in server.middleware if isinstance(item, UnityInstanceMiddleware)
+    )
+    monkeypatch.setattr(
+        middleware,
+        "_inject_unity_instance",
+        UnityInstanceMiddleware._inject_unity_instance.__get__(middleware),
+    )
+    monkeypatch.setattr(
+        middleware, "_maybe_autoselect_instance", AsyncMock(return_value="First@first")
+    )
+    await registry.register("one", "First", "first", "6000")
+    await registry.register("two", "Second", "second", "6001")
+    await publish(registry, "one", [])
+    await publish(registry, "two", ["scene_probe"])
+    form = {"query": "scene_probe", "route_surfaces": "tools", "host_tool_names": ["scene_probe"]}
+    if kind == "family":
+        tool_name = "manage_tools"
+        form.update(action="search", selection="agent", family="scene_probe", intent="observe")
+    else:
+        tool_name = "search_unity_tools"
+        form.update(
+            intent="edit", observation_source="editor_live", required_values=["render_size.width"]
+        )
+
+    async with Client(server, mode=protocol, cache=False) as client:
+        explicit = (
+            await client.call_tool(tool_name, {**form, "unity_instance": "seco"})
+        ).structured_content
+        implicit = (await client.call_tool(tool_name, form)).structured_content
+        if kind == "family":
+            retry = next(
+                option["arguments"]
+                for option in explicit["search_retries"]
+                if option["arguments"]["selection"] == "agent"
+            )
+            assert all(
+                "unity_instance" not in option["arguments"] for option in implicit["search_retries"]
+            )
+        else:
+            retry = explicit["retry_search"]["arguments"]
+            assert "unity_instance" not in implicit["retry_search"]["arguments"]
+        assert retry["unity_instance"] == "Second@second"
+        accepted = (await client.call_tool(tool_name, retry)).structured_content
+
+    if kind == "family":
+        assert [row["tool"] for row in accepted["operations"]] == ["scene_probe"]
+    else:
+        assert [row["name"] for row in accepted["results"]] == ["scene_probe"]
 
 
 @pytest.mark.asyncio
