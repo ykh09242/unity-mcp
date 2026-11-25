@@ -1,0 +1,4 @@
+# Wheel hashes from the previous reviewed Server lock at fac7211b3.
+fastmcp==4.2.3 --hash=sha256:82fde5c1db2a6d865015726b15502a2657205e4549295dc1357fcb7b1c521a4d
+fastmcp-slim==4.2.3 --hash=sha256:6d68766ad18d5966230d7216c1e070325ffc547a3c8bc49172174f6c42ea617d
+authlib==1.9.10 --hash=sha256:c62d10e1b23945c6d4c578a16170bfefe4879bd23d4be62edea494993dce70aa

@@ -660,7 +660,8 @@ class UnityMCP(ServerRuntimeOwner, FastMCP):
             if getattr(self, "_test_job_tasks", None) is not None:
                 app.add_middleware(WaitTaskDeliveryMiddleware)
             app.add_middleware(McpVersionMiddleware, path=app.state.path)
-            app.add_middleware(CatalogSubscriptionLifetimeMiddleware)
+            if self._catalog_subscriptions is not None:
+                app.add_middleware(CatalogSubscriptionLifetimeMiddleware)
         app.add_middleware(
             RequestBodyLimitMiddleware,
             max_body_size=MAX_HTTP_REQUEST_BYTES,
@@ -725,7 +726,9 @@ def create_mcp_server(
     install_execution_receipts(
         mcp, execution_receipts_root, private_root=execution_receipts_private_root
     )
-    install_catalog_subscriptions(mcp, remote_hosted=config.http_remote_hosted)
+    # Older SDK overrides predate FastMCP's modern-listener setting.
+    if getattr(fastmcp.settings, "enable_subscriptions_listen", True):
+        install_catalog_subscriptions(mcp, remote_hosted=config.http_remote_hosted)
 
     global custom_tool_service
     custom_tool_service = CustomToolService(mcp, project_scoped_tools=project_scoped_tools)

@@ -61,6 +61,24 @@ def test_modern_discover_advertises_supported_resource_notifications(catalog_wir
     assert caps["resources"]["subscribe"] is True
 
 
+def test_modern_listen_opt_out_keeps_discovery_available(tmp_path, monkeypatch):
+    monkeypatch.setenv("FASTMCP_ENABLE_SUBSCRIPTIONS_LISTEN", "false")
+    with local_server_process(tmp_path) as (url, _, token):
+        headers = {LOCAL_AUTH_HEADER: token, "Accept": "application/json, text/event-stream"}
+        with httpx.Client(base_url=url, headers=headers, trust_env=False, timeout=5) as client:
+
+            def request(method, params=None):
+                response = client.post("/mcp", headers=_headers(method), json=_body(method, params))
+                return _message(response)
+
+            caps = request("server/discover")["result"]["capabilities"]
+            assert not caps["tools"].get("listChanged")
+            assert not caps["resources"].get("subscribe")
+            assert request("tools/list")["result"]["tools"]
+            reply = request("subscriptions/listen", {"notifications": {"toolsListChanged": True}})
+            assert reply["error"]["code"] == -32601
+
+
 class LegacyChanges(MessageHandler):
     def __init__(self):
         self.changed = anyio.Event()

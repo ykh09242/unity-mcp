@@ -4,7 +4,7 @@ from contextlib import AsyncExitStack
 import json
 
 import anyio
-from fastmcp import FastMCP
+from fastmcp import FastMCP, settings
 import pytest
 from starlette.responses import Response
 
@@ -32,9 +32,10 @@ MISSING = "absent_from_both_pages"
     ],
 )
 async def test_actual_sdk_catalog_notifications_fence_paged_absence(
-    mode, changed, notifications, expected
+    mode, changed, notifications, expected, monkeypatch
 ):
     subscribe = mode == "auto" and notifications
+    monkeypatch.setattr(settings, "enable_subscriptions_listen", notifications)
     server = FastMCP("paged-doctor-notifications")
     server.tool(name=PRESENT)(lambda: "visible")
     runtime = install_catalog_subscriptions(server, remote_hosted=False) if subscribe else None

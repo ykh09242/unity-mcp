@@ -51,10 +51,9 @@ set, and both optional adapters with private temporary stores, without opening a
 network listener or starting Unity. Candidate checkout installs also run that
 probe before the locked test suite, covering the published dependency metadata.
 
-## Tool registration on FastMCP 4.2.3
+## Tool registration
 
-The supported SDK floor and current SDK are the same exact package set:
-FastMCP 4.2.3, MCP 2.3.0 and MCP Types 2.3.0. The Python Tests server matrix
+The reviewed SDK set contains FastMCP 4.2.6, MCP 2.3.0 and MCP Types 2.3.0. The Python Tests server matrix
 installs the lock on Python 3.11 through 3.15. Its registration regression uses
 both `legacy` and `2026-07-28` clients on each interpreter. It registers the
 original handlers on one server first, then discovers and calls the derived
@@ -77,39 +76,27 @@ validates Windows UNC overrides. [FastMCP 4.2.3 release](https://github.com/Pref
 
 ### Isolated SDK comparison
 
-The [installed SDK workflow](../.github/workflows/dependency-sdk-comparison.yml)
-builds one server wheel from the checked commit and installs it into separate
-environments on Python 3.11 and 3.14. uv installs hash-verified requirements
-exported from the server lock. The preceding environment substitutes the
-previously locked FastMCP and FastMCP-Slim 4.2.2 wheel hashes for the co-versioned
-4.2.3 packages. Both runs attest the actual installed versions, the shared wheel
-SHA-256 and the packaged compatibility manifest. The comparison asserts that
-every other installed package version matches, including MCP and MCP Types
-2.3.0. The supported release floor remains the exact reviewed 4.2.3 pair and
-Python 3.11. [FastMCP 4.2.2 wheel](https://pypi.org/project/fastmcp/4.2.2/#files) · [FastMCP-Slim 4.2.2 wheel](https://pypi.org/project/fastmcp-slim/4.2.2/#files)
+The workflow builds one server wheel per interpreter and installs that wheel twice.
+Both environments use the same hash-verified lock export. The previous arm
+substitutes FastMCP and FastMCP-Slim 4.2.3 and installs their Authlib 1.9.10
+dependency. The reviewed arm uses 4.2.6. The comparison checks every shared
+dependency version and records each installed inventory, the wheel hash and the
+packaged manifest. [Installed SDK workflow](../.github/workflows/dependency-sdk-comparison.yml) · [Authlib removal](https://github.com/PrefectHQ/fastmcp/pull/6794)
 
-The SDK fix covers a positional array with fewer supplied elements than its
-`prefixItems` declarations, nested in an object with typed extra fields. The
-fixture exposes this shape through the production object-result schema adapter.
-It registers a fixture tool and performs actual MCP listing and calls over the
-SDK's in-memory transport with both protocol modes. The gate requires identical
-wire schemas and payloads. Both SDKs must hydrate the full slot, while the 4.2.2
-client must lose typed hydration for the short slot and the 4.2.3 client must
-retain it. Existing project tool descriptors remain governed by their own tests.
-[Upstream positional array fix](https://github.com/PrefectHQ/fastmcp/pull/6572)
+Both clients list and call a tool whose result includes a typed positional array.
+The complete and short forms must hydrate correctly over both protocols.
+On a negotiated modern session, the reviewed SDK also advertises a native tools
+listener and delivers a tools-list change. The Unity server uses its scoped
+publisher to direct changes to the appropriate Editor and caller. Setting
+`FASTMCP_ENABLE_SUBSCRIPTIONS_LISTEN=false` before startup turns off the modern
+listener and its worker. Discovery and ordinary reads remain available.
+[Native listener release](https://github.com/PrefectHQ/fastmcp/releases/tag/v4.2.5) · [Unity wire contracts](../Server/tests/http/test_mcp_catalog_subscriptions.py)
 
-The same probes construct the installed application and exercise the optional
-execution-receipt and Tasks stores under private temporary paths. The 4.2.2
-override must report `sdk_unsupported`, reject opening the receipt store and
-leave both store paths absent. The reviewed environment must report both adapters
-active. The workflow verifies runtime doctor registration and records the same
-runtime data the resource returns. The probes run without sockets or Unity.
-
-Run the `Installed SDK dependency comparison` workflow and inspect its
-`sdk-comparison-python-*` artifacts for the paired installed package inventories,
-adapter decisions, MCP results and the application commit. To run the same
-gate with uv 0.13.9 in an isolated development environment, use an unused output
-directory and choose `3.11` or `3.14`.
+The same probes construct the installed application and check the execution
+receipt and Tasks stores under private temporary paths. The previous SDK must
+report `sdk_unsupported` and leave both paths absent. The reviewed SDK must open
+both stores and report them active. Run the comparison with uv 0.13.10, an
+unused output directory and Python 3.11 or 3.14.
 
 ```sh
 uv run --no-project --python 3.11 python tools/experiments/dependencies/compare_sdk.py --output .tmp/sdk-comparison

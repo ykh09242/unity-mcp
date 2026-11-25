@@ -1,4 +1,4 @@
-"""Replay the FastMCP 4.2.2/4.2.3 result and installed runtime comparison."""
+"""Compare catalog notifications, result hydration and adapter admission on two SDKs."""
 
 import argparse
 import hashlib
@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 SDK_PAIR = ("fastmcp", "fastmcp-slim")
-ARMS = {"previous": "4.2.2", "reviewed": "4.2.3"}
+ARMS = {"previous": "4.2.3", "reviewed": "4.2.6"}
 
 
 def run(*command, **kwargs):
@@ -38,18 +38,22 @@ def validate(previous, reviewed):
         expected_state = "active" if active else "sdk_unsupported"
         for feature in ("execution_receipts", "wait_tasks"):
             assert runtime["features"][feature] == {"configured": True, "state": expected_state}
+    assert previous["packages"]["authlib"] == "1.9.10"
+    assert "authlib" not in reviewed["packages"]
+    assert previous["modern_tools_changed"] is False
+    assert reviewed["modern_tools_changed"] is True
     assert {
-        pkg: version for pkg, version in previous["packages"].items() if pkg not in SDK_PAIR
+        pkg: version
+        for pkg, version in previous["packages"].items()
+        if pkg not in (*SDK_PAIR, "authlib")
     } == {pkg: version for pkg, version in reviewed["packages"].items() if pkg not in SDK_PAIR}
 
     for mode in ("legacy", "2026-07-28"):
         old = previous["results"][mode]
         new = reviewed["results"][mode]
-        assert old["complete"] == new["complete"]
-        assert old["complete"]["hydrated"] == old["complete"]["wire"]
-        assert old["short"]["wire"] == new["short"]["wire"]
-        assert old["short"]["hydrated"] is None
-        assert new["short"]["hydrated"] == new["short"]["wire"]
+        assert old == new
+        for case in ("complete", "short"):
+            assert new[case]["hydrated"] == new[case]["wire"]
 
 
 def compare(scratch: Path, output: Path):
@@ -77,7 +81,7 @@ def compare(scratch: Path, output: Path):
         inputs = [requirements]
         if arm == "previous":
             omit = [part for pkg in SDK_PAIR for part in ("--no-emit-package", pkg)]
-            inputs.append(HERE / "fastmcp-4.2.2.txt")
+            inputs.append(HERE / "fastmcp-4.2.3.txt")
         run(
             "uv",
             "export",
@@ -110,7 +114,7 @@ def compare(scratch: Path, output: Path):
         ).stdout.strip(),
         "same_server_wheel_sha256": wheel_hash,
         "uv": uv_version,
-        "results": "Both protocol modes preserved wire content. Only FastMCP 4.2.3 hydrated the short result and activated the reviewed adapters.",
+        "results": "Both SDKs hydrated both result shapes. Only the reviewed SDK delivered a native modern catalog notification and activated the optional adapters.",
     }
     (output / "comparison.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2))
