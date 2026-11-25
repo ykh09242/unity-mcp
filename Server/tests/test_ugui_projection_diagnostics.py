@@ -5,6 +5,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import textwrap
@@ -173,6 +174,38 @@ def decoder():
 def test_valid_complete_and_unavailable_contracts():
     for value in (sample(), complete_sample()):
         assert decoder()(value) == value
+
+
+@pytest.mark.parametrize("pixel_rect", [[0.000001, 0.0, 320.0, 240.0], [0.0, 0.0, 320.0, 239.9]])
+def test_fractional_display_viewport_preserves_native_pixel_evidence(pixel_rect):
+    # Given the display edge and projected bounds accepted from the native Single rectangle.
+    data = complete_sample()
+    context = dict(data["context"])
+    data["context"] = context
+    context["camera_pixel_rect"] = pixel_rect
+    context["output"].update(
+        kind="display",
+        dimension_source="current_screen",
+        viewport_pixels=pixel_rect,
+        camera_rect_ignored=False,
+        texture_id=None,
+        texture_dimension=None,
+        volume_depth=None,
+        dynamic_scale=None,
+    )
+    x, y, width, height = struct.unpack("!4f", struct.pack("!4f", *pixel_rect))
+    data["nodes"][0]["clipped_target_pixel_bounds"] = [
+        x + 0.25 * width,
+        y + 0.25 * height,
+        0.5 * width,
+        0.5 * height,
+    ]
+
+    # When the server checks the native camera evidence.
+    result = decoder()(data)
+
+    # Then the valid display route and its fractional pixel geometry survive unchanged.
+    assert result == data
 
 
 def test_nonfull_texture_preserves_normalized_geometry_without_pixel_claim():

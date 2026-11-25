@@ -3,6 +3,7 @@
 import json
 import math
 import re
+import struct
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
@@ -160,6 +161,17 @@ def _units(value: str) -> int:
     return len(value.encode("utf-16-le")) // 2
 
 
+def unity_float(value: float) -> float:
+    """Narrow JSON numbers before domain checks, matching Unity Single arithmetic."""
+    try:
+        narrowed = struct.unpack("!f", struct.pack("!f", value))[0]
+    except (OverflowError, struct.error) as error:
+        raise ValueError("invalid_unity_float") from error
+    if not math.isfinite(narrowed):
+        raise ValueError("invalid_unity_float")
+    return narrowed
+
+
 def _matrix_valid(value: list[float], row: tuple[int, int, int, int]) -> bool:
     if any(abs(value[index] - expected) > 1e-6 for index, expected in zip((3, 7, 11, 15), row)):
         return False
@@ -234,6 +246,7 @@ class UguiProjectionDiagnosticsV1(Closed):
             raise ValueError("invalid context")
         characters = 0
         fields_truncated = False
+        viewport = None
         if ctx is not None:
             if (
                 ctx.stereo_enabled
@@ -289,19 +302,22 @@ class UguiProjectionDiagnosticsV1(Closed):
             ):
                 raise ValueError("invalid display route")
             if o.pixel_status == "available":
+                if o.viewport_pixels is None:
+                    raise ValueError("unsafe pixel route")
+                x, y, width, height = (unity_float(value) for value in o.viewport_pixels)
+                viewport = x, y, width, height
                 if (
                     not o.active
                     or o.width is None
                     or o.height is None
                     or not 1 <= o.width <= 16384
                     or not 1 <= o.height <= 16384
-                    or o.viewport_pixels is None
-                    or o.viewport_pixels[2] <= 0
-                    or o.viewport_pixels[3] <= 0
-                    or o.viewport_pixels[0] < 0
-                    or o.viewport_pixels[1] < 0
-                    or o.viewport_pixels[0] + o.viewport_pixels[2] > o.width
-                    or o.viewport_pixels[1] + o.viewport_pixels[3] > o.height
+                    or width <= 0
+                    or height <= 0
+                    or x < 0
+                    or y < 0
+                    or unity_float(x + width) > o.width
+                    or unity_float(y + height) > o.height
                     or ctx.allow_dynamic_resolution
                     or ctx.non_jittered_projection_mismatch
                     or ctx.pixel_width != ctx.scaled_pixel_width
@@ -421,8 +437,7 @@ class UguiProjectionDiagnosticsV1(Closed):
                     raise ValueError("nonconvex polygon")
                 if ctx is None:
                     raise ValueError("missing camera")
-                if ctx.output.pixel_status == "available":
-                    viewport = ctx.output.viewport_pixels
+                if viewport is not None:
                     expected = _bounds(
                         [
                             [viewport[0] + v[0] * viewport[2], viewport[1] + v[1] * viewport[3]]

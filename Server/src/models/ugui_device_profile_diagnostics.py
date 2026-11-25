@@ -2,7 +2,6 @@
 
 import json
 import math
-import struct
 from typing import Annotated, Final, Literal, Self
 
 from pydantic import (
@@ -16,7 +15,7 @@ from pydantic import (
     model_validator,
 )
 
-from models.ugui_projection_diagnostics import UguiProjectionDiagnosticsV1
+from models.ugui_projection_diagnostics import UguiProjectionDiagnosticsV1, unity_float
 from models.response_limits import response_size
 
 Dimension = Annotated[int, Field(strict=True, ge=64, le=8192)]
@@ -24,17 +23,6 @@ Finite = Annotated[float, Field(strict=True, allow_inf_nan=False)]
 Positive = Annotated[Finite, Field(gt=0)]
 Orientation = Literal["portrait", "portrait_upside_down", "landscape_left", "landscape_right"]
 Rect = Annotated[list[Finite], Field(min_length=4, max_length=4)]
-
-
-def unity_float(value: float) -> float:
-    """Narrow JSON numbers before domain checks, matching Unity Single arithmetic."""
-    try:
-        narrowed = struct.unpack("!f", struct.pack("!f", value))[0]
-    except (OverflowError, struct.error) as error:
-        raise ValueError("invalid_unity_float") from error
-    if not math.isfinite(narrowed):
-        raise ValueError("invalid_unity_float")
-    return narrowed
 
 
 def positive_unity_float(value: float) -> float:
