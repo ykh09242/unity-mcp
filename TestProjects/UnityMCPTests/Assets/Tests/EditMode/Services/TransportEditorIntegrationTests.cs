@@ -106,7 +106,7 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
-        public async Task Stdio_UnauthenticatedReplacement_PreservesEstablishedPeer()
+        public async Task Stdio_UnauthenticatedPeer_PreservesEstablishedPeer()
         {
             int port = StartOwned();
             using var established = await StdioPeer.Connect(port, Token);
@@ -117,7 +117,7 @@ namespace MCPForUnityTests.Editor.Services
             Assert.That(banner, Does.Contain("AUTH=HMAC-SHA256"));
             await StdioPeer.WriteFrame(unauthorized.GetStream(), Encoding.UTF8.GetBytes("ping"));
             await Task.Delay(100);
-            Assert.That(await established.Ping(), Does.Contain("pong"), "A peer without a valid proof must never replace the established peer.");
+            Assert.That(await established.Ping(), Does.Contain("pong"), "The authenticated peer must retain its connection.");
         }
 
         [Test]
@@ -192,8 +192,8 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsTrue(await settled.Task, "Handler must observe its owned connection cancellation token.");
             try
             {
-                await command;
-                Assert.Fail("A disposed peer must not receive a successful RPC.");
+                var response = await command;
+                Assert.AreEqual("error", response.Value<string>("status"), response.ToString());
             }
             catch (IOException) { }
             catch (ObjectDisposedException) { }
@@ -204,12 +204,12 @@ namespace MCPForUnityTests.Editor.Services
 
         [TestCase(false)]
         [TestCase(true)]
-        public async Task Stdio_LegacyHandler_TimeoutOrAuthenticatedReplacementRetainsMutationOrder(bool replacement)
+        public async Task Stdio_LegacyHandler_TimeoutOrConcurrentPeerRetainsMutationOrder(bool concurrentPeer)
         {
             Assert.AreEqual(
                 "1000",
                 Environment.GetEnvironmentVariable("UNITY_MCP_STDIO_COMMAND_TIMEOUT_MS"),
-                "This bounded deadline regression requires the owned launch's explicit1000ms timeout."
+                "This bounded deadline regression requires the owned launch's explicit 1000ms timeout."
             );
             const string legacyName = "__editor_qa_legacy_blocked";
             const string nextName = "__editor_qa_legacy_next";
@@ -217,9 +217,12 @@ namespace MCPForUnityTests.Editor.Services
             var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             var nextStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int legacyInvocations = 0;
+            int nextInvocations = 0;
             bool legacySettled = false;
             Register(legacyName, new HandlerInfo(legacyName, null, async _ =>
                 {
+                    legacyInvocations++;
                     started.TrySetResult(true);
                     try
                     {
@@ -237,6 +240,7 @@ namespace MCPForUnityTests.Editor.Services
                     nextName,
                     _ =>
                     {
+                        nextInvocations++;
                         nextStarted.TrySetResult(true);
                         return new { oldHandlerSettled = legacySettled };
                     },
@@ -246,20 +250,28 @@ namespace MCPForUnityTests.Editor.Services
             int port = StartOwned();
             using var first = await StdioPeer.Connect(port, Token);
             StdioPeer second = null;
-            var original = first.Command(legacyName, new JObject());
+            var original = first.Command(legacyName, concurrentPeer ? new JObject { ["timeout_seconds"] = 5 } : new JObject());
             try
             {
                 Assert.AreSame(started.Task, await Task.WhenAny(started.Task, Task.Delay(10000)));
-                if (replacement)
+                JObject originalResponse = null;
+                if (concurrentPeer)
+                {
                     second = await StdioPeer.Connect(port, Token);
+                    Assert.AreEqual(first.Server, second.Server);
+                    Assert.That(second.Session, Is.Not.Empty.And.Not.EqualTo(first.Session));
+                    Assert.That(await second.Ping(), Does.Contain("pong"));
+                    Assert.IsFalse(original.IsCompleted, "Authenticating another peer must preserve the pending original response.");
+                }
                 else
                 {
-                    var timeout = await original;
-                    Assert.AreEqual("error", timeout.Value<string>("status"));
-                    Assert.That(timeout.Value<string>("error"), Does.Contain("timed out"));
+                    originalResponse = await original;
+                    Assert.AreEqual("error", originalResponse.Value<string>("status"), originalResponse.ToString());
+                    Assert.That(originalResponse.Value<string>("error"), Does.Contain("timed out"));
                     Assert.IsFalse(legacySettled, "The legacy handler remains active after its response deadline.");
                 }
-                var following = (second ?? first).Command(nextName, new JObject());
+                var followingPeer = second ?? first;
+                var following = followingPeer.Command(nextName, new JObject { ["timeout_seconds"] = 5 });
                 var queuedDeadline = DateTime.UtcNow.AddSeconds(5);
                 while (StdioBridgeHost.QueuedCommandCount < 2 && !nextStarted.Task.IsCompleted)
                 {
@@ -267,26 +279,26 @@ namespace MCPForUnityTests.Editor.Services
                         throw new TimeoutException("Owned following mutation arrival");
                     await Task.Delay(10);
                 }
-                Assert.IsFalse(nextStarted.Task.IsCompleted, "Response cancellation must not let a following mutation overtake an active legacy handler.");
+                Assert.IsFalse(nextStarted.Task.IsCompleted, "The active legacy handler must retain ownership ahead of the queued mutation.");
                 release.TrySetResult(new { settled = true });
+                if (concurrentPeer)
+                {
+                    originalResponse = await original;
+                    Assert.AreEqual("success", originalResponse.Value<string>("status"), originalResponse.ToString());
+                    Assert.IsTrue(originalResponse["result"].Value<bool>("settled"));
+                    Assert.That(await first.Ping(), Does.Contain("pong"));
+                }
                 var response = await following;
                 Assert.AreEqual("success", response.Value<string>("status"), response.ToString());
                 Assert.IsTrue(response["result"].Value<bool>("oldHandlerSettled"));
-                Assert.That(await (second ?? first).Ping(), Does.Contain("pong"));
-                if (replacement)
-                {
-                    try
-                    {
-                        await original;
-                        Assert.Fail("The superseded peer cannot receive a successful response.");
-                    }
-                    catch (IOException) { }
-                    catch (ObjectDisposedException) { }
-                }
+                Assert.AreEqual(1, legacyInvocations);
+                Assert.AreEqual(1, nextInvocations);
+                Assert.That(await followingPeer.Ping(), Does.Contain("pong"));
                 TestContext.WriteLine(
                     "LEGACY_TRIGGER="
-                        + (replacement ? "authenticated-replacement" : "response-timeout")
-                        + "; FOLLOWING_QUEUED_BEFORE_RELEASE=true; OVERTAKE=false; OLD_SETTLED_BEFORE_NEXT=true; FOLLOWUP_PONG=true"
+                        + (concurrentPeer ? "concurrent-authenticated-peer" : "response-timeout")
+                        + $"; ORIGINAL_STATUS={originalResponse.Value<string>("status")}; ORIGINAL_INVOCATIONS={legacyInvocations}; FOLLOWING_INVOCATIONS={nextInvocations}"
+                        + "; FOLLOWING_QUEUED_BEFORE_RELEASE=true; OLD_SETTLED_BEFORE_NEXT=true; FOLLOWUP_PONG=true"
                 );
             }
             finally
@@ -306,7 +318,7 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
-        public async Task Stdio_DisconnectedQueuedReplacementOwners_ArePrunedWhileLegacyExecutionRemains()
+        public async Task Stdio_DisconnectedQueuedPeers_ArePrunedWhileLegacyExecutionRemains()
         {
             const string activeName = "__editor_qa_prune_active";
             const string queuedName = "__editor_qa_prune_queued";
@@ -340,40 +352,39 @@ namespace MCPForUnityTests.Editor.Services
             );
             int port = StartOwned();
             using var active = await StdioPeer.Connect(port, Token);
-            var original = active.Command(activeName, new JObject());
+            var original = active.Command(activeName, new JObject { ["timeout_seconds"] = 8 });
             try
             {
                 Assert.AreSame(started.Task, await Task.WhenAny(started.Task, Task.Delay(10000)));
                 for (int attempt = 0; attempt < 3; attempt++)
                 {
-                    var replacement = await StdioPeer.Connect(port, Token);
-                    var queued = replacement.Command(queuedName, new JObject { ["attempt"] = attempt });
+                    using var peer = await StdioPeer.Connect(port, Token);
+                    var queued = peer.Command(queuedName, new JObject { ["attempt"] = attempt, ["timeout_seconds"] = 5 });
                     await WaitQueue(count => count >= 2);
-                    replacement.Dispose();
+                    peer.Dispose();
                     try
                     {
-                        await queued;
-                        Assert.Fail("A disconnected queued peer must not receive successful execution.");
+                        var canceled = await queued;
+                        Assert.AreEqual("error", canceled.Value<string>("status"), canceled.ToString());
                     }
                     catch (IOException) { }
                     catch (ObjectDisposedException) { }
                     await WaitQueue(count => count == 1);
-                    Assert.AreEqual(0, queuedInvocations, "Canceled queued replacements must neither execute nor accumulate behind the active legacy handler.");
+                    Assert.AreEqual(0, queuedInvocations, "The disconnected peers' queued commands must remain unexecuted.");
                 }
+                Assert.IsFalse(original.IsCompleted, "Disconnecting queued peers must preserve the pending original response.");
                 release.TrySetResult(new { settled = true });
+                var activeResponse = await original;
+                Assert.AreEqual("success", activeResponse.Value<string>("status"), activeResponse.ToString());
+                Assert.IsTrue(activeResponse["result"].Value<bool>("settled"));
                 await WaitQueue(count => count == 0);
                 using var next = await StdioPeer.Connect(port, Token);
                 var response = await next.Command(queuedName, new JObject());
                 Assert.AreEqual("success", response.Value<string>("status"));
                 Assert.AreEqual(1, queuedInvocations);
-                TestContext.WriteLine("DISCONNECTED_QUEUED_REPLACEMENTS=3; QUEUE_RETAINS_ONLY_ACTIVE=1; CANCELED_INVOCATIONS=0; FOLLOWUP_RPC=success");
-                try
-                {
-                    await original;
-                    Assert.Fail("Superseded active peer cannot receive success.");
-                }
-                catch (IOException) { }
-                catch (ObjectDisposedException) { }
+                TestContext.WriteLine(
+                    "DISCONNECTED_QUEUED_PEERS=3; QUEUE_RETAINS_ONLY_ACTIVE=1; CANCELED_INVOCATIONS=0; ACTIVE_RPC=success; FOLLOWUP_RPC=success"
+                );
             }
             finally
             {
