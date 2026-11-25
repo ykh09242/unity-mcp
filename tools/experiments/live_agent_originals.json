@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "tasks": {
+    "lookout_fov": {
+      "queries": {
+        "el": "Πόσες μοίρες είναι αυτή τη στιγμή το κατακόρυφο οπτικό πεδίο της κάμερας προοπτικής στο αντικείμενο Lookout της σκηνής; Άφησε τα πάντα όπως είναι.",
+        "fi": "Mikä on Lookout-objektin perspektiivikameran tämänhetkinen pystysuuntainen näkökenttä asteina? Jätä kohtaus kokonaan ennalleen.",
+        "id": "Saat ini, berapa derajat sudut pandang vertikal kamera perspektif pada objek Lookout di adegan ini? Jangan ubah apa pun.",
+        "bn": "দৃশ্যের Lookout নামের অবজেক্টে থাকা পার্সপেক্টিভ ক্যামেরার বর্তমান উল্লম্ব দৃষ্টিক্ষেত্র কত ডিগ্রি? কোনো কিছু বদলাবেন না।",
+        "sw": "Kamera ya perspektivu kwenye kipengee cha Lookout katika mandhari ina pembe ya kuona kwa wima ya digrii ngapi kwa sasa? Usibadilishe chochote.",
+        "ka": "სცენაზე Lookout ობიექტზე დამაგრებული პერსპექტიული კამერის ვერტიკალური ხედვის კუთხე ამჟამად რამდენი გრადუსია? არაფერი შეცვალო."
+      }
+    },
+    "gate_sensor_trigger": {
+      "queries": {
+        "el": "Ρύθμισε τον υπάρχοντα ανιχνευτή συγκρούσεων σε σχήμα κουτιού στο αντικείμενο GateSensor της σκηνής ώστε να λειτουργεί ως σκανδάλη. Διατήρησε το μέγεθος, τη θέση και την κατάσταση ενεργοποίησής του και άφησε όλα τα άλλα αντικείμενα όπως είναι.",
+        "fi": "Aseta kohtauksessa olevan GateSensor-objektin nykyinen laatikonmuotoinen törmäytin toimimaan laukaisimena. Säilytä sen koko, sijainti ja käytössäolon tila ennallaan äläkä muuta muita objekteja.",
+        "id": "Atur kolider berbentuk kotak yang sudah ada pada objek GateSensor di adegan ini agar berfungsi sebagai pemicu. Pertahankan ukuran, posisi, dan status aktif kolider itu, serta biarkan semua objek lain seperti semula.",
+        "bn": "দৃশ্যের GateSensor নামের অবজেক্টে যে বাক্সের মতো দেখতে কলাইডারটি আছে, সেটিকে ট্রিগার হিসেবে কাজ করার জন্য সেট করুন। এর মাপ, অবস্থান এবং চালু বা বন্ধ থাকার অবস্থা আগের মতো রাখুন। অন্য কোনো অবজেক্ট বদলাবেন না।",
+        "sw": "Weka kigunduzi cha migongano chenye umbo la kisanduku ambacho tayari kipo kwenye kipengee cha GateSensor katika mandhari kifanye kazi kama kichochezi. Acha ukubwa wake, mahali kilipo na hali yake ya kuwashwa au kuzimwa kama zilivyo, na usibadilishe kipengee kingine chochote.",
+        "ka": "სცენაზე GateSensor ობიექტზე უკვე არსებული ყუთის ფორმის კოლაიდერი ტრიგერად დააყენე. მისი ზომა და მდებარეობა უცვლელად დატოვე და ჩართვის მდგომარეობასაც ნუ შეცვლი. სხვა ობიექტებს არ შეეხო."
+      }
+    }
+  }
+}
