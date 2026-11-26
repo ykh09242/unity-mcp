@@ -57,6 +57,7 @@ def mcp_for_unity_tool(
     unity_target: str | None = "self",
     group: str | None = "core",
     maturity: ToolMaturity = "stable",
+    input_conditions: tuple[dict, ...] = (),
     **kwargs,
 ) -> Callable:
     """
@@ -78,6 +79,7 @@ def mcp_for_unity_tool(
         maturity: Support status only; independent of visibility, readiness and permissions.
             Existing declarations default to stable. Experimental contracts may evolve;
             deprecated contracts remain available subject to normal selection/admission.
+        input_conditions: Cross-field JSON Schema constraints enforced by the handler.
         **kwargs: Additional arguments passed to @mcp.tool()
 
     Example:
@@ -132,6 +134,7 @@ def mcp_for_unity_tool(
                 "group": resolved_group,
                 "maturity": maturity,
                 "kwargs": tool_kwargs,
+                **({"input_conditions": input_conditions} if input_conditions else {}),
             }
         )
 

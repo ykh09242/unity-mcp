@@ -84,6 +84,11 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         registered.output_schema = direct_object_output_schema(registered.output_schema)
         if tool_name in ACTION_RULES:
             registered.parameters = action_input_schema(tool_name, registered.parameters)
+        if conditions := tool_info.get("input_conditions"):
+            registered.parameters = {
+                **registered.parameters,
+                "allOf": [*registered.parameters.get("allOf", ()), *conditions],
+            }
         if tool_name != "get_execution_receipt":
             registered.parameters = with_unity_instance(registered.parameters)
         mcp.add_tool(registered)

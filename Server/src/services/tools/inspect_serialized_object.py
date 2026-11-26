@@ -7,6 +7,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field, StrictBool, StrictInt, StrictStr
 from services.registry import mcp_for_unity_tool
+from services.registry.call_preparation import PAGE_SIZE
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -54,6 +55,24 @@ def _path(value: Any, *, empty: bool = False) -> bool:
 @mcp_for_unity_tool(
     unity_target="inspect_serialized_object_v1",
     group="scripting_ext",
+    input_conditions=(
+        {
+            "if": {"required": ["page_size"]},
+            "then": {"properties": {"mode": {"enum": ["fields", "array"]}}},
+        },
+        {"if": {"required": ["after_path"]}, "then": {"properties": {"mode": {"const": "fields"}}}},
+        {
+            "if": {"required": ["start_index"]},
+            "then": {"required": ["mode"], "properties": {"mode": {"const": "array"}}},
+        },
+        {
+            "if": {"required": ["mode"], "properties": {"mode": {"enum": ["value", "array"]}}},
+            "then": {
+                "required": ["property_path"],
+                "properties": {"property_path": {"minLength": 1}},
+            },
+        },
+    ),
     description=(
         "Inspect one exact Component or ScriptableObject instance ID through SerializedObject. "
         "The initial Unity ID lookup MAY load a previously unloaded asset and invoke OnEnable or "
@@ -79,10 +98,14 @@ def _path(value: Any, *, empty: bool = False) -> bool:
 )
 async def inspect_serialized_object(
     ctx: Context,
-    instance_id: Annotated[StrictInt, Field(ge=-2147483648, le=2147483647)],
+    instance_id: Annotated[
+        StrictInt, Field(ge=-2147483648, le=2147483647, json_schema_extra={"not": {"const": 0}})
+    ],
     mode: Literal["fields", "value", "array"] = "fields",
     property_path: Annotated[StrictStr, Field(max_length=512)] = "",
-    page_size: Annotated[StrictInt, Field(ge=1, le=64)] = _DEFAULT,
+    page_size: Annotated[
+        StrictInt, Field(ge=1, le=64, json_schema_extra={PAGE_SIZE: True})
+    ] = _DEFAULT,
     after_path: Annotated[StrictStr, Field(max_length=512)] = _DEFAULT,
     start_index: Annotated[StrictInt, Field(ge=0, le=2147483647)] = _DEFAULT,
     include_values: StrictBool = True,

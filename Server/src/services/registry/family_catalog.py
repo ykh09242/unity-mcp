@@ -29,6 +29,9 @@ class FamilyCatalogResponse(TypedDict):
     hint: NotRequired[str]
     total: NotRequired[int]
     next_offset: NotRequired[int | None]
+    next_call: NotRequired[dict]
+    open_family: NotRequired[dict]
+    selectable_catalog: NotRequired[dict]
     success: NotRequired[Literal[False]]
     error: NotRequired[str]
 

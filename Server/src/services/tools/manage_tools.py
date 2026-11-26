@@ -12,6 +12,7 @@ session group activation cannot grant access to a Unity-disabled tool.
 """
 
 import asyncio
+import inspect
 import logging
 from typing import Annotated, Any, Literal
 
@@ -29,6 +30,12 @@ from services.registry import (
     get_registered_tools,
 )
 from services.registry.action_catalog import ActionIntent, CatalogResource, ObservationSource
+from services.registry.call_preparation import (
+    ORIGINAL_REQUEST,
+    PAGE_SIZE,
+    not_prepared,
+    prepare_tool_call,
+)
 from services.registry.task_search import RequiredValues, RouteSurfaces
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -37,12 +44,35 @@ _SearchQuery = Annotated[
     str | None,
     Field(
         max_length=512,
+        json_schema_extra={ORIGINAL_REQUEST: {}},
         description=(
             "Original user request. Keep its language, names, paths and text verbatim. Required "
             "for the agent directory. Optional for an exact agent family or ranked evidence search."
         ),
     ),
 ]
+_ManageQuery = Annotated[
+    _SearchQuery,
+    Field(
+        description="For search or prepare, the original request verbatim, including names, paths and text.",
+        json_schema_extra={ORIGINAL_REQUEST: {"action": "search"}},
+    ),
+]
+
+
+def _one_search_value(*names):
+    return {
+        "anyOf": [
+            {"required": [name], "properties": {name: {"not": {"type": "null"}}}} for name in names
+        ]
+    }
+
+
+_SEARCH_INPUT = {
+    "if": {"required": ["selection"], "properties": {"selection": {"const": "agent"}}},
+    "then": _one_search_value("query", "family"),
+    "else": _one_search_value("query", "observation_source", "required_values"),
+}
 _CatalogQuery = Annotated[
     str | None,
     Field(
@@ -107,6 +137,7 @@ async def _retry_project_binding(ctx: Context) -> dict[str, str]:
 @mcp_for_unity_tool(
     unity_target=None,
     group=None,
+    input_conditions=(_SEARCH_INPUT,),
     description=(
         "Search Unity tools, actions and readable resources without changing selection or invoking "
         "Unity. "
@@ -125,7 +156,11 @@ async def _retry_project_binding(ctx: Context) -> dict[str, str]:
 async def search_unity_tools(
     ctx: Context,
     query: _SearchQuery = None,
-    limit: Annotated[int, Field(strict=True, ge=1, le=20), "Maximum results per page."] = 5,
+    limit: Annotated[
+        int,
+        Field(strict=True, ge=1, le=20, json_schema_extra={PAGE_SIZE: True}),
+        "Maximum results per page.",
+    ] = 5,
     catalog_query: _CatalogQuery = None,
     intent: Annotated[
         ActionIntent | None, Field(description="Ranked search only. " + _INTENT_DESCRIPTION)
@@ -247,6 +282,37 @@ async def search_unity_tools(
         visible_names=set(visible),
         resources=await _catalog_resources(ctx),
     )
+    if outcome.get("view") in {"families", "operations"}:
+        page = request.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
+        project = await _retry_project_binding(ctx)
+        page.update(selection="agent", limit=request.limit, **project)
+        if outcome["view"] == "families":
+            outcome["open_family"] = {
+                "tool": "search_unity_tools",
+                "arguments": {k: v for k, v in page.items() if k != "offset"},
+            }
+            if (
+                request.route_surfaces != "resources"
+                and host_tool_names is None
+                and host_tool_evidence is None
+                and "manage_tools" in visible
+            ):
+                outcome["selectable_catalog"] = {
+                    "tool": "manage_tools",
+                    "arguments": {"action": "catalog", **project},
+                }
+        if (offset_next := outcome.get("next_offset")) is not None:
+            outcome["next_call"] = {
+                "tool": "search_unity_tools",
+                "arguments": {**page, "offset": offset_next},
+            }
+        for binding in outcome.get("operations", []):
+            if binding["kind"] == "resource":
+                params = {"uri": binding["uri"]}
+                if project:
+                    params["_meta"] = project
+                binding["read_call"] = {"method": "resources/read", "params": params}
+        return outcome
     if (
         outcome["matching"] == "observation"
         and "no_match" in outcome
@@ -284,12 +350,26 @@ async def search_unity_tools(
 @mcp_for_unity_tool(
     unity_target=None,
     group=None,
+    input_conditions=(
+        {"if": {"properties": {"action": {"const": "search"}}}, "then": _SEARCH_INPUT},
+        {
+            "if": {"properties": {"action": {"const": "prepare"}}},
+            "then": {
+                "required": ["tool", "arguments"],
+                "properties": {
+                    "tool": {"type": "string", "minLength": 1},
+                    "arguments": {"type": "object"},
+                },
+            },
+        },
+    ),
     description=(
         "Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. "
         "Actions: list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (full schema for one tool, optionally bind operation), "
+        "prepare (check a draft against a visible tool's input schema and return call arguments without execution), "
         "catalog (choose a domain by purpose, then browse tools, actions or readable resources), "
         "search (discover routes for a task in any language), "
         "inspect_inventory (compare server advertisement with this host's exact-name evidence). "
@@ -318,6 +398,7 @@ async def manage_tools(
             "search",
             "catalog",
             "inspect_inventory",
+            "prepare",
         ],
         "Action to perform.",
     ],
@@ -329,11 +410,13 @@ async def manage_tools(
     ] = None,
     tool: Annotated[
         str | None,
-        "Single exact tool name for activate/deactivate/describe/catalog/inspect_inventory.",
+        "Single exact tool name for activate/deactivate/describe/prepare/catalog/inspect_inventory.",
     ] = None,
-    query: _SearchQuery = None,
+    query: _ManageQuery = None,
     limit: Annotated[
-        int, Field(strict=True, ge=1, le=20), "Maximum search or catalog page entries (1..20)."
+        int,
+        Field(strict=True, ge=1, le=20, json_schema_extra={PAGE_SIZE: True}),
+        "Maximum search or catalog page entries (1..20).",
     ] = 5,
     include_schema: Annotated[
         bool,
@@ -348,7 +431,7 @@ async def manage_tools(
     operation: Annotated[
         str | None,
         Field(min_length=1, max_length=128),
-        "For describe, select one exact action from catalog. The returned full schema binds that action.",
+        "For describe or prepare, bind an exact action from the catalog.",
     ] = None,
     intent: Annotated[
         ActionIntent | None,
@@ -365,20 +448,58 @@ async def manage_tools(
     ] = None,
     host_tool_names: Annotated[
         HostToolNames | None,
-        "For search or inspect_inventory, supply this host's complete callable tool names. Omit if unknown.",
+        "For search, prepare or inspect_inventory, supply the host's complete callable tool names. Omit if unknown.",
     ] = None,
     host_tool_evidence: Annotated[
         HostToolEvidence | None,
-        "For search or inspect_inventory, check exact candidate names on this host's same connection "
+        "For search, prepare or inspect_inventory, check exact names on this host's same connection "
         "and target. Use instead of host_tool_names. Incomplete misses stay unknown.",
     ] = None,
     selection: _Selection = "ranked",
     family: _Family = None,
+    arguments: Annotated[
+        dict[str, Any] | None,
+        Field(max_length=128),
+        "Prepare only: proposed input object for the exact tool. Pass the original user text in query when needed.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
     discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
     modern = is_sessionless(ctx)
+    if action == "prepare":
+        if not tool or arguments is None:
+            return not_prepared("Supply one exact tool name and its draft arguments.")
+        if (
+            any(
+                value is not None
+                for value in (
+                    group,
+                    family,
+                    intent,
+                    observation_source,
+                    required_values,
+                    route_surfaces,
+                    catalog_query,
+                )
+            )
+            or selection != "ranked"
+            or offset
+            or limit != 5
+            or include_schema
+        ):
+            return not_prepared(
+                "Put target call parameters in arguments. Use tool, operation, query or host evidence on prepare."
+            )
+        if host_tool_evidence is not None and host_tool_names is not None:
+            return not_prepared("Supply host_tool_names or host_tool_evidence.")
+        if (host_tool_names is not None and tool not in host_tool_names) or (
+            host_tool_evidence is not None and host_tool_evidence.received(tool) is False
+        ):
+            return not_prepared("The tool is absent from the reported host inventory.")
+        return await _prepare_binding(ctx, tool, arguments, query, operation)
+    if arguments is not None:
+        return {"success": False, "error": "arguments is supported only for prepare."}
     if host_tool_names is not None and action not in {"search", "inspect_inventory"}:
         return {"success": False, "error": "host_tool_names requires search or inspect_inventory."}
     if host_tool_evidence is not None and action not in {"search", "inspect_inventory"}:
@@ -494,6 +615,10 @@ async def manage_tools(
             retry["arguments"]["action"] = "search"
         if "retry_search" in result:
             result["retry_search"]["arguments"]["action"] = "search"
+        for key in ("next_call", "open_family"):
+            if key in result:
+                result[key]["tool"] = "manage_tools"
+                result[key]["arguments"]["action"] = "search"
         return result
     if action in ("activate", "deactivate", "reset") and modern:
         if discovery is None or await discovery.scope_key(ctx) is None:
@@ -679,6 +804,38 @@ def _describe_binding(entry, definition, operation, visible):
         )
     except ValueError as error:
         return {"success": False, "error": str(error)}
+
+
+async def _prepare_binding(ctx, name, draft, original, operation):
+    visible = await _selection_inventory(ctx)
+    if visible is None or name not in visible:
+        return not_prepared("The tool is unavailable on this connection.")
+    definition = visible[name]
+    entry = next((item for item in get_registered_tools() if item["name"] == name), None)
+    schema = definition.parameters
+    if operation is not None:
+        descriptor = _describe_binding(
+            entry or {"name": name, "kwargs": {}}, definition, operation, visible
+        )
+        if descriptor.get("success") is False:
+            return not_prepared(descriptor["error"])
+        schema = descriptor["tool"]["inputSchema"]
+    func = entry.get("func") if entry else None
+    closed = func is not None and all(
+        p.kind is not inspect.Parameter.VAR_KEYWORD
+        for p in inspect.signature(func).parameters.values()
+    )
+    project = (await _retry_project_binding(ctx)).get("unity_instance")
+    return prepare_tool_call(
+        name,
+        schema,
+        draft,
+        operation=operation,
+        original=original,
+        project=project,
+        registered=func is not None,
+        closed_signature=closed,
+    )
 
 
 async def _selection_inventory(ctx: Context):
