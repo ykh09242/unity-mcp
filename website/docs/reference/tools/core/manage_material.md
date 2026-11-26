@@ -14,7 +14,7 @@ description: "Manages Unity materials (properties, colors, shaders, render state
 
 ## Description
 
-Manages Unity materials (properties, colors, shaders, render state). Read-only actions: ping, get_material_info, get_render_state. Modifying actions: create, set_material_shader_property, set_material_color, assign_material_to_renderer, set_renderer_color, set_render_state. Render-state edits require explicit shared/instance mode. Explicit render_mode presets support Built-in Standard shaders; URP/HDRP/custom presets are unsupported.
+Manages Unity materials (properties, colors, shaders, render state). Read-only actions: ping, get_material_info, get_render_state. Modifying actions: create, set_material_shader_property, set_material_color, assign_material_to_renderer, set_renderer_color, set_render_state. Render-state edits require explicit shared/instance mode. With material_path, a clean standalone material is saved and disk_verified confirms the patch. Renderer targets report loaded_only. Explicit render_mode presets support Built-in Standard shaders; URP/HDRP/custom presets are unsupported.
 
 ## Parameters
 
