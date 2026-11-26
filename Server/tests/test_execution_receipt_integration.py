@@ -168,18 +168,18 @@ async def sdk_wire(
                         headers["Mcp-Method"] = method
                         if method == "tools/call":
                             headers["Mcp-Name"] = params["name"]
-                            params = {
-                                **params,
-                                "_meta": {
-                                    "io.modelcontextprotocol/protocolVersion": protocol,
-                                    "io.modelcontextprotocol/clientCapabilities": {},
-                                    "io.modelcontextprotocol/clientInfo": {
-                                        "name": "receipt-test",
-                                        "version": "1",
-                                    },
-                                    **params.get("_meta", {}),
+                        params = {
+                            **params,
+                            "_meta": {
+                                "io.modelcontextprotocol/protocolVersion": protocol,
+                                "io.modelcontextprotocol/clientCapabilities": {},
+                                "io.modelcontextprotocol/clientInfo": {
+                                    "name": "receipt-test",
+                                    "version": "1",
                                 },
-                            }
+                                **params.get("_meta", {}),
+                            },
+                        }
                     payload = {"jsonrpc": "2.0", "method": method, "params": params}
                     if identifier is not None:
                         payload["id"] = identifier
@@ -356,6 +356,84 @@ async def test_control_lookup_is_offline_and_authorized_without_selection(tmp_pa
             "count": 17,
         }
         assert counts["body"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["2025-11-25", "2026-07-28"])
+async def test_prepared_lookup_recovers_without_original_reply_or_another_invocation(
+    tmp_path, monkeypatch, protocol
+):
+    async with sdk_wire(tmp_path, monkeypatch, protocol) as (runtime, counts, call):
+        control = "get_execution_receipt"
+        descriptor = (await call("tools/list", {}))["result"]["tools"]
+        entry = next(tool for tool in descriptor if tool["name"] == control)
+        assert entry["annotations"]["readOnlyHint"] is True
+        scope = {"store_id": runtime.store.store_id, "project_hash": PROJECT}
+        args = {"name": control, "arguments": {"action": "prepare", **scope}}
+        handle = (await call("tools/call", args))["result"]["structuredContent"]
+        second = (await call("tools/call", args))["result"]["structuredContent"]
+        assert second["lookup"] != handle["lookup"]
+        options = handle["request_meta"][META_KEY]
+        assert options["retain_result"] is False
+        method, params = handle["lookup"]["method"], handle["lookup"]["params"]
+        assert params == {
+            "name": control,
+            "arguments": {"action": "get", **scope, "idempotency_key": options["idempotency_key"]},
+        }
+        # Preparation produces no history and runs no application callbacks.
+        missing = await call(method, params)
+        assert missing.get("error") or missing["result"]["isError"]
+        assert counts == {"body": 0, "validator": 0, "default": 0}
+        await call(
+            "tools/call",
+            {
+                "name": "receipt_exercise",
+                "arguments": {"checked": 5},
+                "_meta": handle["request_meta"],
+            },
+        )
+        # The original response, including its server-assigned receipt ID, is unused.
+        found = (await call(method, params))["result"]["structuredContent"]
+        assert found["status"] == "completed"
+        assert found["evidence"] == {
+            "native_dispatch": "unknown",
+            "native_reply": "unobserved",
+            "public_result": "observed",
+            "client_acknowledgement": "unobserved",
+            "native_postcondition": "unverified",
+            "agent_final": "unobserved",
+        }
+        for overrides in ({"store_id": "f" * 32}, {"project_hash": "f" * 16}):
+            wrong = {**params, "arguments": {**params["arguments"], **overrides}}
+            refused = await call(method, wrong)
+            assert refused.get("error") or refused["result"]["isError"]
+            assert not refused.get("result", {}).get("structuredContent")
+        assert counts == {"body": 1, "validator": 1, "default": 1}
+
+
+@pytest.mark.asyncio
+async def test_prepare_refuses_unavailable_store_or_invalid_handles_without_dispatch(
+    tmp_path, monkeypatch
+):
+    for enabled in (True, False):
+        async with sdk_wire(tmp_path, monkeypatch, enabled=enabled) as (runtime, counts, call):
+            scope = {
+                "action": "prepare",
+                "store_id": runtime.store.store_id if enabled else "0" * 32,
+                "project_hash": PROJECT,
+            }
+            for overrides in (
+                ({"project_hash": PROJECT[:8]}, {"store_id": "f" * 32}, {"idempotency_key": KEY})
+                if enabled
+                else ({},)
+            ):
+                result = await call(
+                    "tools/call",
+                    {"name": "get_execution_receipt", "arguments": {**scope, **overrides}},
+                )
+                assert result.get("error") or result["result"]["isError"]
+                assert not result.get("result", {}).get("structuredContent")
+            assert counts == {"body": 0, "validator": 0, "default": 0}
 
 
 @pytest.mark.asyncio

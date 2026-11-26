@@ -24,6 +24,7 @@ import anyio
 from fastmcp import Context as FastMCPContext
 from fastmcp.tools import FunctionTool
 from fastmcp.tools.base import ToolResult
+from mcp.types import ToolAnnotations
 from mcp_types import CallToolResult
 from pydantic import BaseModel
 
@@ -806,7 +807,7 @@ class ExecutionReceipts:
     ) -> ToolResult:
         if (
             type(action) is not str
-            or action not in {"describe", "get"}
+            or action not in {"describe", "prepare", "get"}
             or type(include_result) is not bool
         ):
             raise ReceiptInvalid("invalid_receipt_lookup")
@@ -839,6 +840,7 @@ class ExecutionReceipts:
                 "max_result_bytes": RESULT_BYTES,
                 "max_records": 1024,
                 "surfaces": ["mcp-tool", "/api/command", "/api/context-command"],
+                "recovery": {"prepare_action": "prepare", "lookup_action": "get"},
                 "limits": {
                     "metadata_bytes": 8192,
                     "metadata_quota": 16 * 1024 * 1024,
@@ -859,12 +861,42 @@ class ExecutionReceipts:
                 },
             }
             return ToolResult(structured_content=data)
-        if action != "get" or project_hash is None or store_id is None:
+        if project_hash is None or store_id is None:
             raise ReceiptInvalid("invalid_receipt_lookup")
         # Metadata-only history is also a bounded decode/copy/delivery operation.
         _working.reserve(METADATA_WORKING_BYTES, _delivery_owner())
         authority = await self.authority(project_hash, ctx=ctx, request=request)
         await authority.check()
+        if action == "prepare":
+            if receipt_id is not None or idempotency_key is not None or include_result:
+                raise ReceiptInvalid("invalid_receipt_lookup")
+            store = self.require_store()
+            if store_id != store.store_id:
+                raise ReceiptNotFound("receipt_not_found")
+            if not store.available:
+                raise ReceiptUnavailable("execution_receipts_unavailable")
+            # This handle creates no record. Only the original invocation can bind
+            # the generated key to its authorized principal, project and arguments.
+            options = ReceiptOptions(store_id, project_hash, uuid4().hex)
+            options.validate()
+            return ToolResult(
+                structured_content={
+                    "version": 1,
+                    "request_meta": {META_KEY: {"version": 1, **asdict(options)}},
+                    "lookup": {
+                        "method": "tools/call",
+                        "params": {
+                            "name": "get_execution_receipt",
+                            "arguments": {
+                                "action": "get",
+                                "store_id": store_id,
+                                "project_hash": project_hash,
+                                "idempotency_key": options.idempotency_key,
+                            },
+                        },
+                    },
+                }
+            )
         view = await self.io(
             lambda: self.require_store().get(
                 authority.scope,
@@ -891,6 +923,17 @@ class ExecutionReceipts:
                         exclude_none=True,
                         include={"content", "structured_content", "is_error", "meta"},
                     )
+        # A missing flag in the bounded attempt journal cannot disprove a send.
+        # Only a confirmed pre-handler rejection proves that nothing dispatched.
+        dispatch = "not_dispatched" if view.status == "not_dispatched" else "unknown"
+        data["evidence"] = {
+            "native_dispatch": "observed" if any(a.dispatched for a in view.attempts) else dispatch,
+            "native_reply": "observed" if any(a.observed for a in view.attempts) else "unobserved",
+            "public_result": "observed" if view.status == "completed" else "unconfirmed",
+            "client_acknowledgement": "unobserved",
+            "native_postcondition": "unverified",
+            "agent_final": "unobserved",
+        }
         await authority.check()
         return ToolResult(content=[], structured_content=data)
 
@@ -901,17 +944,19 @@ def install_execution_receipts(server, root: Path | None, *, private_root: bool 
 
     async def get_execution_receipt(
         ctx: FastMCPContext,
-        action: Literal["describe", "get"] = "describe",
+        action: Literal["describe", "prepare", "get"] = "describe",
         store_id: str | None = None,
         project_hash: str | None = None,
         receipt_id: str | None = None,
         idempotency_key: str | None = None,
         include_result: bool = False,
     ) -> ToolResult:
-        """Describe optional execution receipts or retrieve one authorized historical receipt.
+        """Prepare a recovery handle before dispatch or look up a scoped execution receipt.
 
-        Retained application results may contain sensitive content. UNKNOWN is not
-        proof that execution failed and must never trigger an automatic resend.
+        Use describe for availability and prepare for request metadata and a read-only
+        lookup. After response loss, use that lookup once and check native state
+        independently. Unknown outcomes must never trigger an automatic resend.
+        Retained application results may contain sensitive content.
         """
         if execution_options(ctx) is not None:
             raise ReceiptInvalid("receipt_control_cannot_create_receipt")
@@ -925,7 +970,9 @@ def install_execution_receipts(server, root: Path | None, *, private_root: bool 
             ctx=ctx,
         )
 
-    tool = FunctionTool.from_function(get_execution_receipt)
+    tool = FunctionTool.from_function(
+        get_execution_receipt, annotations=ToolAnnotations(readOnlyHint=True)
+    )
     lookup_keys = ("receipt_id", "idempotency_key")
     tool.parameters["oneOf"] = [
         {
@@ -933,6 +980,17 @@ def install_execution_receipts(server, root: Path | None, *, private_root: bool 
             "properties": {
                 "action": {"const": "describe"},
                 **{field: {"type": "null"} for field in ("store_id", "project_hash", *lookup_keys)},
+                "include_result": {"const": False},
+            },
+        },
+        {
+            "description": "Generate request metadata and a read-only lookup to save before the original call. No receipt is created until admission.",
+            "required": ["action", "store_id", "project_hash"],
+            "properties": {
+                "action": {"const": "prepare"},
+                "store_id": {"type": "string"},
+                "project_hash": {"type": "string"},
+                **{field: {"type": "null"} for field in lookup_keys},
                 "include_result": {"const": False},
             },
         },

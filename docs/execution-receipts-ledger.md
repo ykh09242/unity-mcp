@@ -37,6 +37,69 @@ The optional case-sensitive ASCII key matches `[A-Za-z0-9_.:-]{16,128}`. A keyle
 cannot be recovered if its first receipt ID is lost. Unknown fields/types, unsupported
 versions and envelopes above 1 KiB refuse protected execution; there is no silent fallback.
 
+### Save a read-only lookup before dispatch
+
+Use the public MCP client session that will issue the original action. Read
+`mcpforunity://instances` to confirm the intended Editor and its complete
+16-character project hash. Call `get_execution_receipt(action="describe")` and
+check `available`. The following example uses the Python MCP SDK. The caller
+supplies its own durable private checkpoint and the normally authorized tool
+name and arguments.
+
+```python
+scope = {"store_id": description["store_id"], "project_hash": project_hash}
+prepared = await session.call_tool("get_execution_receipt", {"action": "prepare", **scope})
+if prepared.is_error:
+    raise RuntimeError("Unable to prepare receipt lookup")
+handle = prepared.structured_content
+save_checkpoint(handle["lookup"])
+result = await session.call_tool(
+    tool_name, {**arguments, "unity_instance": instance_id}, meta=handle["request_meta"]
+)
+```
+
+Preparation generates a fresh key. The original invocation binds it to the
+authenticated principal, selected project and exact request at admission.
+Preparation alone creates no history and grants no permission. Result retention
+defaults off. To retain bounded application output, set `retain_result` to
+`true` in the vendor metadata before sending the original.
+
+If delivery fails, reconnect with the same authority and store. Use the saved
+lookup's `params.name` and `params.arguments` with `session.call_tool`.
+A missing, expired, foreign or unavailable receipt leaves the outcome unknown.
+An unprotected request or a lost keyless receipt ID has no corresponding lookup.
+
+| Field returned under `evidence` | Meaning |
+| --- | --- |
+| `native_dispatch` | `observed` means at least one retained native send was witnessed. Only proven rejection before dispatch yields `not_dispatched`. Otherwise this is `unknown`. |
+| `native_reply` | `observed` means the server recorded at least one validated native reply in its bounded attempt history. Other attempts may still be unresolved. |
+| `public_result` | `observed` means the public wrapper reached a completed result, including a tool error. Other statuses are `unconfirmed`. |
+| `client_acknowledgement`, `agent_final` | Both remain `unobserved`. The server has no evidence that the original client delivered a reply or that its agent answered. |
+| `native_postcondition` | `unverified`. Read the relevant native state through an independently authorized, read-only operation on the same project, or query the original job ID. |
+
+The lookup only reads the ledger. A current state observation can establish that a
+postcondition holds at the time of the read. The client must decide separately
+whether it can attribute the change to the original request.
+
+#### Native response-loss verification
+
+The Python MCP SDK 2.3.0 commissioned this flow against Unity 6000.0.69f1
+with native package revision `8126f53a6`. The isolated Editor published the full
+identity from its production project identity helper. The SDK client and MCP
+server shared an in-process HTTP transport. The Editor ran separately and
+authenticated its normal native TCP connection.
+
+| Original request | What a separate MCP client observed after the transport discarded the reply |
+| --- | --- |
+| One advertised `scene_lifecycle(set_active_scene)` request returned HTTP 200 with a successful public result. | The saved lookup reported `completed` and two witnessed native attempts, including the wrapper's internal work. A targeted `editor/state` resource read confirmed the second loaded scene was now active. Recovery issued zero edit calls. Wrong-project lookup and a client with a different local credential were refused. |
+| An earlier request used a scene tool name absent from the active inventory. Its error reply was also discarded. | The lookup reported `unknown`, zero witnessed native attempts and no retained result. An independent read found the original scene still active. Recovery issued zero edit calls. |
+
+The original client received neither discarded reply. This exercise used no
+model, so it established no agent final answer. Its positive postcondition came
+from the independent scene read.
+
+### Original results and other surfaces
+
 The first MCP result preserves content, structured output schema and `isError`, adding
 fresh vendor receipt metadata. An exact duplicate with available retained output
 rehydrates public typed content, structured content, error flag and application metadata
