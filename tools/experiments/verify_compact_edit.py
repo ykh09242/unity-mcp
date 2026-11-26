@@ -404,8 +404,62 @@ def verify_native_receipt(row, raw, sealed, spec, disk_verdicts=None):
         )
 
 
+def host_error_records(attempt):
+    records = []
+    events = attempt / "host.events.jsonl"
+    for index, raw in enumerate(events.read_bytes().splitlines() if events.is_file() else ()):
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            records.append({"index": index, "class": "unparsed_host_event"})
+            continue
+        kind = event.get("type")
+        item = event.get("item") or {}
+        result = item.get("result") or {}
+        error = item.get("error") or (result.get("content") if result.get("isError") else None)
+        if kind in {"error", "turn.failed"} or (
+            kind == "item.completed" and (error or item.get("status") == "failed")
+        ):
+            approval = any(
+                token in str(event).casefold()
+                for token in ("approval", "rejected due to unacceptable risk")
+            )
+            records.append(
+                {
+                    "index": index,
+                    "stream": "events",
+                    "class": "approval" if approval else kind,
+                    "sha256": digest(raw),
+                }
+            )
+    stderr = attempt / "host.stderr"
+    for index, raw in enumerate(stderr.read_bytes().splitlines() if stderr.is_file() else ()):
+        if re.search(rb"(?:^|[\s\[])ERROR(?:\s|[:\]])", raw, re.IGNORECASE) is None:
+            continue
+        line = raw.lower()
+        if b"approval" in line and any(
+            word in line for word in (b"denied", b"refused", b"rejected")
+        ):
+            kind = "approval"
+        elif b"unknown mcp server" in line or b"failed to parse function arguments" in line:
+            kind = "host_router_without_public_request"
+        else:
+            kind = "stderr_error"
+        records.append({"index": index, "stream": "stderr", "class": kind, "sha256": digest(raw)})
+    return records
+
+
 def verify_host_receipts(row, folder, work):
     attempt = folder / "attempt-1"
+    if row["prompt_reached_model"] or row["model_turns_started"]:
+        require(
+            all((attempt / name).is_file() for name in ("host.events.jsonl", "host.stderr")),
+            "Delivered actor is missing its host event or stderr stream",
+        )
+    require(
+        host_error_records(attempt) == row["host_errors"],
+        "Host errors differ from the original event and stderr records",
+    )
     verify_wire(attempt, row)
     host_events = attempt / "host.events.jsonl"
     if host_events.is_file():

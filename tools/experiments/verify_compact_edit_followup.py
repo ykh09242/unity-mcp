@@ -121,6 +121,19 @@ def rejection_reason(result):
         ):
             return "unknown_catalog_family"
     if isinstance(result, str):
+        header = re.match(r"^(\d+) validation errors? for call\[manage_tools\]\n", result)
+        if header:
+            # Keep only known field paths and validation types. Raw inputs can include user text.
+            fields = re.findall(
+                r"^exact_text\.\d+\.(path|expected|field|text)\n"
+                r"  [^\n]+?\[type=(missing|list_type|extra_forbidden),",
+                result,
+                re.MULTILINE,
+            )
+            if fields and len(fields) == int(header[1]):
+                return "schema/" + "+".join(
+                    sorted({f"exact_text.{name}/{error}" for name, error in fields})
+                )
         issues = re.fullmatch(r"Invalid arguments for tool '[a-z][a-z0-9_]*': (.+)", result)
         if issues:
             fields = issues[1].split("; ")
@@ -182,17 +195,23 @@ def call_outcomes(cases):
 
 
 def verify(data, archive, pins):
-    require(canonical(archive) == previous.PUBLISHED, "Archived comparison changed")
+    verdicts = verify_matched_run(data, archive, pins, previous.PUBLISHED, "candidate")
+    require(canonical(data) == PUBLISHED, "Frozen follow-up payload differs")
+    return verdicts
+
+
+def verify_matched_run(data, archive, pins, archive_digest, prior_label):
+    require(canonical(archive) == archive_digest, "Archived comparison changed")
     require(
         data["schema"] == 1
         and data["preseal_sha256"] == archive["preseal_sha256"] == previous.SEAL
         and data["specs"] == archive["specs"]
         and data["languages"] == archive["languages"]
-        and data["prior_report_sha256"] == previous.PUBLISHED,
+        and data["prior_report_sha256"] == archive_digest,
         "Prior report, originals, expectations or languages differ",
     )
     run = data["runs"]["followup"]
-    prior = archive["runs"]["candidate"]
+    prior = archive["runs"][prior_label]
     require(
         set(data["runs"]) == {"followup"}
         and run["product_pins"] == pins
@@ -233,7 +252,6 @@ def verify(data, archive, pins):
             valid = disk_valid(specs[row["task"]], pair)
             require(row["persisted_scope_valid"] is valid, "Verdict differs from on-disk state")
             disk_verdicts[row["id"]] = valid
-    require(canonical(data) == PUBLISHED, "Frozen follow-up payload differs")
     return disk_verdicts
 
 
@@ -316,13 +334,17 @@ def main():
         for panel, records in data["runs"]["followup"]["panels"].items()
     }
     print(json.dumps(totals, indent=2))
-    if args.require_perfect and not all(
+    if args.require_perfect and not perfect(totals):
+        raise SystemExit(1)
+
+
+def perfect(totals):
+    return all(
         group["completed"] == group["scheduled"] == 6
         and all(group[key] == 0 for key in STRICT_ZERO)
         for panel in totals.values()
         for group in panel.values()
-    ):
-        raise SystemExit(1)
+    )
 
 
 FROZEN_PINS = {
