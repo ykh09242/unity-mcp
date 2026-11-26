@@ -108,7 +108,10 @@ def test_invalid_file_ordering_is_rejected(ordering):
 
 @pytest.mark.parametrize("workers", [0, 2])
 def test_real_worker_plugin_preserves_failures_skips_and_file_isolation(tmp_path, workers):
-    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    # This fixture observes worker shutdown even in a scratch directory without a writable cache.
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\naddopts = -p no:cacheprovider\n", encoding="utf-8"
+    )
     (tmp_path / "test_a.py").write_text(
         "import pytest\n"
         "@pytest.fixture\ndef state():\n    yield []\n"
