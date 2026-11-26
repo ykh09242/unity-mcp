@@ -38,6 +38,33 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
         }
 
         [Test]
+        public void DiscoveryAndTogglesUseTheSelectedPreferenceStore()
+        {
+            string terrain = EditorPrefKeys.ToolEnabledPrefix + "manage_terrain";
+            string console = EditorPrefKeys.ToolEnabledPrefix + "read_console";
+            var values = new Dictionary<string, bool> { [terrain] = false };
+            var service = new ToolDiscoveryService(
+                values.ContainsKey,
+                (key, fallback) => values.TryGetValue(key, out var value) ? value : fallback,
+                (key, value) => values[key] = value
+            );
+
+            var tools = service.DiscoverAllTools();
+            Assert.That(tools.Select(tool => tool.Name), Does.Contain("manage_terrain"));
+            Assert.That(values[console], Is.EqualTo(tools.Single(tool => tool.Name == "read_console").EnabledByDefault));
+            Assert.That(service.IsToolEnabled("manage_terrain"), Is.False);
+            Assert.That(
+                tools.Where(tool => tool.RequiresExplicitConsent).Select(tool => EditorPrefKeys.ToolEnabledPrefix + tool.Name).Any(values.ContainsKey),
+                Is.False
+            );
+
+            service.SetToolEnabled("manage_terrain", true);
+            service.InvalidateCache();
+            Assert.That(service.IsToolEnabled("manage_terrain"), Is.True);
+            Assert.That(values[terrain], Is.True);
+        }
+
+        [Test]
         public void SetToolEnabled_WritesToEditorPrefs()
         {
             // Arrange

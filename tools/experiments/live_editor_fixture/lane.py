@@ -212,7 +212,7 @@ def compile_dll(name):
             "LIVE_AGENT_SEED_PROJECT",
         ),
     ]
-    if name == "World":
+    if name in {"World", "IsolatedToolPreferences"}:
         refs.append(require_file(out / "LaneHost.dll", "the prior shared step"))
     real_child(out / f"{name}.dll")
     response = real_child(out / f"{name}.rsp")
@@ -295,7 +295,7 @@ def shared():
     compile_dll("LaneHost")
 
 
-def launch(index, *, registry=None):
+def launch(index, *, registry=None, isolated_tools=None):
     if index not in range(4):
         raise ValueError("Lane index must be 0 through 3")
     if registry is not None and registry != "https://packages.unity.com":
@@ -359,6 +359,27 @@ def launch(index, *, registry=None):
             real_child(project / "Packages/packages-lock.json"),
         )
     shutil.copy2(WORK / "bin/LaneHost.dll", project / "Assets/Editor/LaneHost.dll")
+    entry = "LaneHost.Start"
+    if isolated_tools is not None:
+        if not isinstance(isolated_tools, (list, tuple)) or any(
+            not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", name)
+            for name in isolated_tools
+        ):
+            raise ValueError("isolated_tools must be an explicit sequence of tool names")
+        preferences = json.loads(
+            require_file(
+                real_child(WORK / "tool-preferences.json"), "frozen tool preferences"
+            ).read_bytes()
+        )
+        bootstrap = require_file(
+            real_child(WORK / "bin/IsolatedToolPreferences.dll"), "the preferences step"
+        )
+        shutil.copy2(bootstrap, real_child(project / "Assets/Editor/IsolatedToolPreferences.dll"))
+        dump(
+            real_child(control / "tool-preferences.json"),
+            preferences | {"enableTools": sorted(set(isolated_tools))},
+        )
+        entry = "IsolatedToolPreferences.Start"
     for asset in ["tone.wav", "tone.ogg"]:
         shutil.copy2(WORK / "dependencies" / asset, control / asset)
     for file in ["startup-error.txt", "request.json", "response.json"]:
@@ -392,7 +413,7 @@ def launch(index, *, registry=None):
         "-projectPath",
         project,
         "-executeMethod",
-        "LaneHost.Start",
+        entry,
         "-logFile",
         lane / "editor.log",
     ]
@@ -419,15 +440,22 @@ def launch(index, *, registry=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "command", choices=["shared", "launch", "world", "ping", "prepare", "snapshot", "stop"]
+        "command",
+        choices=["shared", "preferences", "launch", "world", "ping", "prepare", "snapshot", "stop"],
     )
     parser.add_argument("lanes", nargs="*", type=int)
     parser.add_argument("--task", default="")
     parser.add_argument("--language", default="")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--isolated-tools", nargs="*", metavar="TOOL")
     args = parser.parse_args()
     if args.command == "shared":
         shared()
+        return
+    if args.command == "preferences":
+        check_work_root()
+        require_file(real_child(WORK / "tool-preferences.json"), "tool_preferences.py capture")
+        compile_dll("IsolatedToolPreferences")
         return
     if args.command == "world":
         for index in args.lanes:
@@ -439,7 +467,7 @@ def main():
         if args.command == "world":
             shutil.copy2(WORK / "bin/World.dll", real_child(lane / "control/World.dll"))
         elif args.command == "launch":
-            launch(index)
+            launch(index, isolated_tools=args.isolated_tools)
         else:
             print(
                 json.dumps(

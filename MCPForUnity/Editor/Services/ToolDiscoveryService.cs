@@ -13,8 +13,21 @@ namespace MCPForUnity.Editor.Services
 {
     public class ToolDiscoveryService : IToolDiscoveryService, IToolDiscoveryDiagnostics
     {
+        private readonly Func<string, bool> hasPreference;
+        private readonly Func<string, bool, bool> getPreference;
+        private readonly Action<string, bool> setPreference;
         private Dictionary<string, ToolMetadata> _cachedTools;
         private ToolDiscoveryDiagnostics _diagnostics = new ToolDiscoveryDiagnostics();
+
+        public ToolDiscoveryService()
+            : this(EditorPrefs.HasKey, EditorPrefs.GetBool, EditorPrefs.SetBool) { }
+
+        internal ToolDiscoveryService(Func<string, bool> hasPreference, Func<string, bool, bool> getPreference, Action<string, bool> setPreference)
+        {
+            this.hasPreference = hasPreference ?? throw new ArgumentNullException(nameof(hasPreference));
+            this.getPreference = getPreference ?? throw new ArgumentNullException(nameof(getPreference));
+            this.setPreference = setPreference ?? throw new ArgumentNullException(nameof(setPreference));
+        }
 
         public List<ToolMetadata> DiscoverAllTools()
         {
@@ -35,7 +48,7 @@ namespace MCPForUnity.Editor.Services
             // A new capability cannot silently override a user's previous combined-tool choice.
             // Capture before discovery initializes missing legacy preferences on fresh installs.
             var existingLegacyPreferences = new HashSet<string>(
-                ToolCapabilityCatalog.LegacyNames.Where(name => EditorPrefs.HasKey(GetToolPreferenceKey(name))),
+                ToolCapabilityCatalog.LegacyNames.Where(name => hasPreference(GetToolPreferenceKey(name))),
                 StringComparer.Ordinal
             );
 
@@ -217,9 +230,9 @@ namespace MCPForUnity.Editor.Services
                 return MCPServiceLocator.ToolConsent.GetStatus(metadata.Name).Enabled;
 
             string key = GetToolPreferenceKey(toolName);
-            if (EditorPrefs.HasKey(key))
+            if (hasPreference(key))
             {
-                return EditorPrefs.GetBool(key, true);
+                return getPreference(key, true);
             }
 
             return metadata?.EnabledByDefault ?? false;
@@ -240,7 +253,7 @@ namespace MCPForUnity.Editor.Services
                 MCPServiceLocator.ToolConsent.SetEnabled(metadata.Name, enabled);
                 return;
             }
-            EditorPrefs.SetBool(GetToolPreferenceKey(toolName), enabled);
+            setPreference(GetToolPreferenceKey(toolName), enabled);
         }
 
         private ToolMetadata ExtractToolMetadata(Type type, McpForUnityToolAttribute toolAttr) =>
@@ -423,12 +436,12 @@ namespace MCPForUnity.Editor.Services
             if (metadata.RequiresExplicitConsent)
                 return;
             string key = GetToolPreferenceKey(metadata.Name);
-            if (!EditorPrefs.HasKey(key))
+            if (!hasPreference(key))
             {
                 string source = ToolCapabilityCatalog.GetSource(metadata.Name);
                 bool retainedLegacyChoice = source != null && existingLegacyPreferences.Contains(source);
                 bool defaultValue = !retainedLegacyChoice && metadata.EnabledByDefault;
-                EditorPrefs.SetBool(key, defaultValue);
+                setPreference(key, defaultValue);
             }
         }
 
