@@ -61,7 +61,8 @@ async def test_default_tools_only_client_can_find_and_read_the_same_inventory(
     await install_native_replies(command_hub, {"get_cameras": INVENTORY})
     async with Client(inventory_server(monkeypatch), mode=mode, cache=False) as client:
         tools = {item.name: item for item in await client.list_tools()}
-        assert not {"manage_cameras", "manage_camera"} & tools.keys()
+        assert "manage_cameras" in tools
+        assert "manage_camera" not in tools
         tool = tools[TOOL]
         assert tool.annotations.read_only_hint is True
         assert tool.annotations.destructive_hint is False
@@ -73,7 +74,10 @@ async def test_default_tools_only_client_can_find_and_read_the_same_inventory(
         both = (await client.call_tool("search_unity_tools", query)).structured_content
         (group,) = both["route_groups"]
         assert group["representative"]["tool"] == TOOL
-        assert [route["uri"] for route in group["alternatives"]] == [URI]
+        assert [route.get("uri") or route["tool"] for route in group["alternatives"]] == [
+            URI,
+            "manage_cameras",
+        ]
         tools_only = await client.call_tool(
             "search_unity_tools",
             {**query, "route_surfaces": "tools", "host_tool_names": [TOOL]},
