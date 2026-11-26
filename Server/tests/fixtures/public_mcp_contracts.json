@@ -23193,6 +23193,26 @@
                 "if": {
                   "properties": {
                     "action": {
+                      "const": "list_instances"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "unity_instance": {
+                      "type": "null"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
                       "const": "search"
                     }
                   }
@@ -23370,12 +23390,39 @@
                     "arguments"
                   ]
                 }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "exact_text": {
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "exact_text"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "const": "prepare"
+                    },
+                    "query": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ]
+                }
               }
             ],
             "properties": {
               "action": {
                 "enum": [
                   "list_groups",
+                  "list_instances",
                   "activate",
                   "deactivate",
                   "sync",
@@ -23406,6 +23453,50 @@
                   {
                     "maxLength": 512,
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "exact_text": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expected": {
+                          "maxLength": 512,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "path": {
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "minimum": 0,
+                                "type": "integer"
+                              }
+                            ]
+                          },
+                          "maxItems": 32,
+                          "minItems": 1,
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "expected"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 16,
+                    "minItems": 1,
+                    "type": "array"
                   },
                   {
                     "type": "null"
@@ -53133,6 +53224,26 @@
                 "if": {
                   "properties": {
                     "action": {
+                      "const": "list_instances"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "unity_instance": {
+                      "type": "null"
+                    }
+                  },
+                  "required": []
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
                       "const": "search"
                     }
                   }
@@ -53310,12 +53421,39 @@
                     "arguments"
                   ]
                 }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "exact_text": {
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "exact_text"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "const": "prepare"
+                    },
+                    "query": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ]
+                }
               }
             ],
             "properties": {
               "action": {
                 "enum": [
                   "list_groups",
+                  "list_instances",
                   "activate",
                   "deactivate",
                   "sync",
@@ -53346,6 +53484,50 @@
                   {
                     "maxLength": 512,
                     "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "exact_text": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expected": {
+                          "maxLength": 512,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "path": {
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "minimum": 0,
+                                "type": "integer"
+                              }
+                            ]
+                          },
+                          "maxItems": 32,
+                          "minItems": 1,
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "expected"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 16,
+                    "minItems": 1,
+                    "type": "array"
                   },
                   {
                     "type": "null"
