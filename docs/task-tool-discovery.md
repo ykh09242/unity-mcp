@@ -14,8 +14,9 @@ any explicit `unity_instance` across pages. The offline CLI provides the same pa
 
 MCP returns `next_call` for the next page. Add the chosen ID as `family` in
 `open_family.arguments`. Send the original text as the string value of `query`
-alongside `selection`. When `manage_tools` is available, a tool operation's
-`describe_call` identifies the exact binding and operation. Its response lists
+alongside `selection`. Inspect inputs with `manage_tools(action="describe", tool=name,
+operation=action)`. Omit `operation` for an actionless tool. When `describe_call`
+is present, invoke its `tool` with its `arguments` unchanged. The response lists
 required and declared optional parameters alongside the typed input schema. Concrete
 resources have a complete `read_call`. When the tool
 directory is unrestricted, `selectable_catalog` opens the normal selection

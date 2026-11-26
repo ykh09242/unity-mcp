@@ -538,7 +538,7 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 Target and discover
 - Resolve the Editor via mcpforunity://instances. Sessionless: use unity_instance=Name@hash on tools and _meta.unity_instance on resources, or supported set_active_instance.
 - Keep names, paths and text verbatim. Use advertised URIs and observed template values.
-- Discover by meaning with search_unity_tools({{"selection":"agent","query":"<original text>"}}). Follow next_call (next_offset). Set family in open_family.arguments. Compare operations and use describe_call for inputs.
+- Search by meaning with search_unity_tools({{"selection":"agent","query":"<original text>"}}). Page via next_call (next_offset). Set open_family.arguments.family. Compare operations. Inspect inputs with manage_tools(action="describe",tool=name,operation=action).
 - Before indirect reads, check manage_tools(action="catalog") for a direct tool. Prepare uncertain inputs via manage_tools(action="prepare",tool=name,arguments=draft,query=original). Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck scene/mode.
 - Check manage_tools(action="list_groups").discovery, client scope/project binding, Editor toggles and consent. Activate and refresh tools/list. Fixed inventory: let the user reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
 
