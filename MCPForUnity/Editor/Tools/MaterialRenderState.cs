@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
+using UnityEditorInternal;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -32,12 +34,27 @@ namespace MCPForUnity.Editor.Tools
 
             // Prepare the complete patch before creating a clone, assigning a slot or recording Undo.
             var operations = Prepare(source, patch);
+            string assetPath = null;
             if (mode == "shared" && EditorUtility.IsPersistent(source))
-                AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(source));
+            {
+                string path = AssetDatabase.GetAssetPath(source);
+                string physical = AssetPathUtility.GetFullAssetPath(path);
+                if (renderer == null)
+                {
+                    if (!AssetDatabase.IsMainAsset(source) || AssetDatabase.LoadAllAssetsAtPath(path).Length != 1)
+                        throw new ArgumentException("Saving render state requires a standalone material asset.");
+                    if (EditorUtility.IsDirty(source))
+                        throw new InvalidOperationException($"Material has pending unsaved edits. Resolve them before editing by asset path: {path}");
+                    if (!File.Exists(physical) || new FileInfo(physical).IsReadOnly || !AssetDatabase.IsOpenForEdit(path))
+                        throw new IOException($"Material asset is missing or not editable: {path}");
+                    assetPath = path;
+                }
+            }
 
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName(UndoLabel);
+            JObject state;
             try
             {
                 Material material = source;
@@ -52,15 +69,69 @@ namespace MCPForUnity.Editor.Tools
                 foreach (var operation in operations)
                     operation(material);
                 EditorUtility.SetDirty(material);
-                var state = Snapshot(material, renderer, slot, mode);
+                state = Snapshot(material, renderer, slot, mode);
                 state["verification"] = Graphics.RenderingObservation.Material(material, Array.Empty<string>(), renderer, slot, mode);
                 Undo.CollapseUndoOperations(group);
-                return new SuccessResponse("Updated material render state", state);
             }
             catch
             {
                 Undo.RevertAllDownToGroup(group);
                 throw;
+            }
+
+            state["persistence"] = "loaded_only";
+            state["disk_verified"] = false;
+            if (assetPath != null)
+            {
+                // A save failure can occur after Unity has written the file. Preserve the live edit and its Undo group.
+                try
+                {
+                    AssetDatabase.SaveAssetIfDirty(source);
+                    VerifySavedPatch(source, assetPath, operations);
+                }
+                catch (Exception e)
+                {
+                    state["persistence"] = "save_unconfirmed";
+                    return new ErrorResponse($"Edited the loaded material, but could not confirm its save: {e.Message}", state);
+                }
+                state["persistence"] = "asset_saved";
+                state["disk_verified"] = true;
+            }
+            return new SuccessResponse("Updated material render state", state);
+        }
+
+        private static void VerifySavedPatch(Material source, string path, List<Action<Material>> operations)
+        {
+            string physical = AssetPathUtility.GetFullAssetPath(path);
+            if (AssetDatabase.GetAssetPath(source) != path || EditorUtility.IsDirty(source) || !File.Exists(physical))
+                throw new IOException($"The material moved, remains dirty, or its file is missing: {path}");
+
+            // Read the file through Unity's serializer without reimporting the live material or losing its identity/Undo.
+            var copies = InternalEditorUtility.LoadSerializedFileAndForget(physical);
+            try
+            {
+                if (
+                    copies == null
+                    || copies.Length != 1
+                    || !(copies[0] is Material disk)
+                    || disk == source
+                    || EditorUtility.IsPersistent(disk)
+                    || disk.shader != source.shader
+                )
+                    throw new IOException($"Could not inspect an independent saved copy of {path}.");
+                // Every prepared operation sets an absolute value. An already persisted patch leaves the serialized copy unchanged.
+                string saved = EditorJsonUtility.ToJson(disk);
+                foreach (var operation in operations)
+                    operation(disk);
+                if (EditorJsonUtility.ToJson(disk) != saved)
+                    throw new IOException($"The saved material does not contain the requested render state: {path}");
+            }
+            finally
+            {
+                if (copies != null)
+                    foreach (var copy in copies)
+                        if (copy != null && copy != source && !EditorUtility.IsPersistent(copy))
+                            UnityEngine.Object.DestroyImmediate(copy);
             }
         }
 

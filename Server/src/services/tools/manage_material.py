@@ -9,6 +9,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
+from services.registry.action_contracts import required_for_actions, used_by_actions
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import (
     parse_json_payload,
@@ -21,7 +22,14 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 
 
 @mcp_for_unity_tool(
-    description="Manages Unity materials (properties, colors, shaders, render state). Read-only actions: ping, get_material_info, get_render_state. Modifying actions: create, set_material_shader_property, set_material_color, assign_material_to_renderer, set_renderer_color, set_render_state. Render-state edits require explicit shared/instance mode. Explicit render_mode presets support Built-in Standard shaders; URP/HDRP/custom presets are unsupported.",
+    description=(
+        "Manages Unity materials (properties, colors, shaders, render state). Read-only actions: "
+        "ping, get_material_info, get_render_state. Modifying actions: create, set_material_shader_property, "
+        "set_material_color, assign_material_to_renderer, set_renderer_color, set_render_state. "
+        "Render-state edits require explicit shared/instance mode. With material_path, a clean standalone "
+        "material is saved and disk_verified confirms the patch. Renderer targets report loaded_only. "
+        "Explicit render_mode presets support Built-in Standard shaders; URP/HDRP/custom presets are unsupported."
+    ),
     annotations=ToolAnnotations(
         title="Manage Material",
         destructiveHint=True,
@@ -44,7 +52,11 @@ async def manage_material(
         "Action to perform.",
     ],
     # Common / Shared
-    material_path: Annotated[str, "Path to material asset (Assets/...)"] | None = None,
+    material_path: Annotated[
+        str | None,
+        used_by_actions("get_render_state", "set_render_state"),
+        "Path to material asset (Assets/...)",
+    ] = None,
     property: Annotated[str, "Shader property name (e.g., _BaseColor, _MainTex)"] | None = None,
     # create
     shader: Annotated[str, "Shader name (default: Standard)"] | None = None,
@@ -66,28 +78,47 @@ async def manage_material(
     ]
     | None = None,
     # assign_material_to_renderer / set_renderer_color
-    target: Annotated[str, "Target GameObject (name, path, or find instruction)"] | None = None,
+    target: Annotated[
+        str | None,
+        used_by_actions("get_render_state", "set_render_state"),
+        "Target GameObject (name, path, or find instruction)",
+    ] = None,
     search_method: Annotated[
-        Literal["by_id", "by_name", "by_path", "by_tag", "by_layer", "by_component"],
+        Literal["by_id", "by_name", "by_path", "by_tag", "by_layer", "by_component"] | None,
+        used_by_actions(
+            "assign_material_to_renderer",
+            "set_renderer_color",
+            "get_render_state",
+            "set_render_state",
+        ),
         "Search method for target",
-    ]
-    | None = None,
-    slot: Annotated[int, "Material slot index (0-based)"] | None = None,
+    ] = None,
+    slot: Annotated[
+        int | None,
+        used_by_actions(
+            "assign_material_to_renderer",
+            "set_renderer_color",
+            "get_render_state",
+            "set_render_state",
+        ),
+        "Material slot index (0-based)",
+    ] = None,
     mode: Annotated[
-        Literal["shared", "instance", "property_block", "create_unique"],
+        Literal["shared", "instance", "property_block", "create_unique"] | None,
+        required_for_actions("set_render_state"),
+        used_by_actions("assign_material_to_renderer", "set_renderer_color"),
         "Assignment/modification mode; behavior when omitted is action-specific on the Unity side.",
-    ]
-    | None = None,
+    ] = None,
     render_state: Annotated[
-        dict[str, Any] | str,
+        dict[str, Any] | str | None,
+        required_for_actions("set_render_state"),
         "Render-state patch object or JSON object string: render_queue (-1 or 0..5000), "
         "keywords ({declared_name: bool}), shader_passes ({LightMode: bool}), "
         "texture_transforms ({exact_texture_property: {scale: [x,y], offset: [x,y]}}). "
         "render_mode is opaque/cutout/fade/transparent for Built-in Standard shaders only; "
         "it resets the queue and cannot coexist with render_queue or owned alpha keywords. "
         "Maps are limited to 128 entries. No automatic blending changes for raw edits.",
-    ]
-    | None = None,
+    ] = None,
     color_range: Annotated[
         Literal["float", "byte"],
         "Numeric color range: float (default) preserves HDR values and defaults alpha to 1; "
@@ -100,6 +131,9 @@ async def manage_material(
     get_render_state reads sharedMaterials without instantiation. set_render_state requires
     mode shared or instance (asset addressing supports shared only). Instance edits clone
     only the selected slot, with one Undo group; all patch members validate before mutation.
+    A standalone editable material_path with no pending edits is saved and its patch verified from disk
+    (data.persistence=asset_saved, disk_verified=true). Renderer targets update loaded
+    state only (loaded_only). A save_unconfirmed error retains the loaded edit and Undo.
     Returned keyword states distinguish local state and global overrides. Queue readback is
     Unity's effective queue, including shader-default resolution after a -1 reset. LightMode
     pass flags describe enablement, not proof that the active pipeline draws that pass.

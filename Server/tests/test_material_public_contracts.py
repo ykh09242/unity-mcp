@@ -387,6 +387,7 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
         from fastmcp import FastMCP, Client
         from fastmcp.exceptions import ToolError
         from fastmcp.server.middleware import Middleware
+        from jsonschema import Draft202012Validator
         from services.tools import register_all_tools
         from services.tools.manage_material import manage_material
         from core.config import config
@@ -786,6 +787,21 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                         {'get_render_state', 'set_render_state'} <= set(action_enum),
                         'render-state registered schema ' + mode,
                     )
+                    validator = Draft202012Validator(tools['manage_material'].inputSchema)
+                    edit = {'action': 'set_render_state', 'material_path': path, 'mode': 'shared',
+                            'render_state': {'render_queue': 2457}}
+                    check(validator.is_valid(edit), 'complete render-state edit ' + mode)
+                    for key in ('mode', 'render_state'):
+                        check(not validator.is_valid({k: v for k, v in edit.items() if k != key}),
+                              'missing render-state field ' + key + mode)
+                        check(not validator.is_valid({**edit, key: None}),
+                              'null render-state field ' + key + mode)
+                    check(validator.is_valid({'action': 'get_render_state', 'material_path': path}),
+                          'inspection without mutation fields ' + mode)
+                    for color_mode in ('shared', 'instance', 'property_block', 'create_unique'):
+                        check(validator.is_valid({'action': 'set_renderer_color', 'target': 'Fixture',
+                                                  'color': [1, 0, 0], 'mode': color_mode}),
+                              'renderer color mode ' + color_mode + mode)
                     print(
                         'FULL_SCHEMA',
                         mode,

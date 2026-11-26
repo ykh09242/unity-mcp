@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -104,6 +105,8 @@ namespace MCPForUnityTests.Editor.Tools
             // Then only the selected slot has a clone with actual state readback.
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var instance = _renderer.sharedMaterials[1];
+            Assert.AreEqual("loaded_only", result["data"]["persistence"].Value<string>());
+            Assert.IsFalse(result["data"]["disk_verified"].Value<bool>());
             Assert.AreNotSame(_material, instance);
             Assert.AreSame(_material, _renderer.sharedMaterials[0]);
             Assert.AreSame(_material, _peerRenderer.sharedMaterial);
@@ -297,48 +300,171 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void SetRenderState_AssetAddressRequiresSharedAndReturnsPersistentIdentity()
+        public void SetRenderState_AssetAddressPersistsOnlyTheRequestedMaterialAndPreservesUndo()
         {
-            // Given a uniquely owned material asset.
+            string prefix = "Assets/RenderStateFixture_" + Guid.NewGuid().ToString("N");
+            string path = prefix + ".mat";
+            string otherPath = prefix + "_other.mat";
+            string copyPath = prefix + "_readback.mat";
+            var asset = new Material(_material);
+            var other = new Material(_material);
+            AssetDatabase.CreateAsset(asset, path);
+            try
+            {
+                AssetDatabase.CreateAsset(other, otherPath);
+                int originalQueue = asset.renderQueue;
+                byte[] originalOther = File.ReadAllBytes(otherPath);
+                other.renderQueue = 2401;
+                EditorUtility.SetDirty(other);
+                var rejected = SetAssetState(path, "instance");
+                Assert.IsFalse(rejected.Value<bool>("success"), rejected.ToString());
+                var result = SetAssetState(path);
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(path, result["data"]["material"]["asset_path"].Value<string>());
+                Assert.AreEqual(AssetDatabase.AssetPathToGUID(path), result["data"]["material"]["asset_guid"].Value<string>());
+                Assert.IsTrue(result["data"]["material"]["persistent"].Value<bool>());
+                Assert.AreEqual("asset_saved", result["data"]["persistence"].Value<string>());
+                Assert.IsTrue(result["data"]["disk_verified"].Value<bool>());
+                Assert.IsTrue(EditorUtility.IsDirty(other));
+                CollectionAssert.AreEqual(originalOther, File.ReadAllBytes(otherPath));
+
+                // A fresh GUID and import ensure these assertions read the actual saved bytes.
+                File.Copy(path, copyPath);
+                AssetDatabase.ImportAsset(copyPath, ImportAssetOptions.ForceSynchronousImport);
+                var saved = AssetDatabase.LoadAssetAtPath<Material>(copyPath);
+                Assert.AreNotSame(asset, saved);
+                Assert.AreEqual(3001, saved.renderQueue);
+                Assert.IsTrue(saved.IsKeywordEnabled("FIXTURE_LOCAL"));
+                Assert.IsFalse(saved.GetShaderPassEnabled("FixtureForward"));
+                Assert.AreEqual(new Vector2(0, 2), saved.GetTextureScale("_MainTex"));
+                Assert.AreEqual(new Vector2(-1, 0.25f), saved.GetTextureOffset("_MainTex"));
+                Undo.PerformUndo();
+                Assert.AreEqual(originalQueue, asset.renderQueue);
+            }
+            finally
+            {
+                Undo.ClearAll();
+                AssetDatabase.DeleteAsset(copyPath);
+                AssetDatabase.DeleteAsset(otherPath);
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        private static JObject SetAssetState(string path, string mode = "shared") =>
+            ToJObject(
+                ManageMaterial.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_render_state",
+                        ["materialPath"] = path,
+                        ["mode"] = mode,
+                        ["renderState"] = Patch(),
+                    }
+                )
+            );
+
+        [Test]
+        public void SetRenderState_DirtyAssetPreservesLoadedEditsDiskAndUndo()
+        {
             string path = "Assets/RenderStateFixture_" + Guid.NewGuid().ToString("N") + ".mat";
             var asset = new Material(_material);
             AssetDatabase.CreateAsset(asset, path);
             try
             {
-                var rejected = ToJObject(
-                    ManageMaterial.HandleCommand(
-                        new JObject
-                        {
-                            ["action"] = "set_render_state",
-                            ["materialPath"] = path,
-                            ["mode"] = "instance",
-                            ["renderState"] = Patch(),
-                        }
-                    )
-                );
-                Assert.IsFalse(rejected.Value<bool>("success"), rejected.ToString());
-                // When the asset is edited with explicit shared mode.
-                var result = ToJObject(
-                    ManageMaterial.HandleCommand(
-                        new JObject
-                        {
-                            ["action"] = "set_render_state",
-                            ["materialPath"] = path,
-                            ["mode"] = "shared",
-                            ["renderState"] = Patch(),
-                        }
-                    )
-                );
-                // Then readback identifies the actual persistent asset.
-                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-                Assert.AreEqual(path, result["data"]["material"]["asset_path"].Value<string>());
-                Assert.AreEqual(AssetDatabase.AssetPathToGUID(path), result["data"]["material"]["asset_guid"].Value<string>());
-                Assert.IsTrue(result["data"]["material"]["persistent"].Value<bool>());
-                Assert.AreEqual(3001, asset.renderQueue);
+                int originalQueue = asset.renderQueue;
+                var bytes = File.ReadAllBytes(path);
+                Undo.IncrementCurrentGroup();
+                Undo.RegisterCompleteObjectUndo(asset, "Edit render queue");
+                asset.renderQueue = 2401;
+                EditorUtility.SetDirty(asset);
+                Undo.FlushUndoRecordObjects();
+
+                var result = SetAssetState(path);
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                StringAssert.Contains("pending unsaved edits", result.Value<string>("error"));
+                Assert.IsTrue(EditorUtility.IsDirty(asset));
+                Assert.AreEqual(2401, asset.renderQueue);
+                Assert.IsFalse(asset.IsKeywordEnabled("FIXTURE_LOCAL"));
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+                Undo.PerformUndo();
+                Assert.AreEqual(originalQueue, asset.renderQueue);
             }
             finally
             {
                 Undo.ClearAll();
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void SetRenderState_ReadOnlyMaterialIsRejectedBeforeMutation()
+        {
+            string path = "Assets/RenderStateFixture_" + Guid.NewGuid().ToString("N") + ".mat";
+            var asset = new Material(_material);
+            AssetDatabase.CreateAsset(asset, path);
+            var file = new FileInfo(path);
+            try
+            {
+                int queue = asset.renderQueue;
+                file.IsReadOnly = true;
+                var result = SetAssetState(path);
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(queue, asset.renderQueue);
+            }
+            finally
+            {
+                file.IsReadOnly = false;
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void SetRenderState_MaterialWithSubAssetIsRejectedBeforeSaving()
+        {
+            string path = "Assets/RenderStateFixture_" + Guid.NewGuid().ToString("N") + ".mat";
+            var asset = new Material(_material);
+            AssetDatabase.CreateAsset(asset, path);
+            try
+            {
+                var child = new Material(_material) { name = "Embedded" };
+                AssetDatabase.AddObjectToAsset(child, asset);
+                AssetDatabase.SaveAssetIfDirty(asset);
+                var bytes = File.ReadAllBytes(path);
+                int queue = asset.renderQueue;
+                child.renderQueue = 2401;
+                EditorUtility.SetDirty(child);
+                var result = SetAssetState(path);
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(queue, asset.renderQueue);
+                Assert.IsTrue(EditorUtility.IsDirty(child));
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
+        public void SetRenderState_TargetedSharedAssetUpdatesLoadedMaterialOnly()
+        {
+            string path = "Assets/RenderStateFixture_" + Guid.NewGuid().ToString("N") + ".mat";
+            var asset = new Material(_material);
+            AssetDatabase.CreateAsset(asset, path);
+            try
+            {
+                _renderer.sharedMaterials = new[] { _material, asset };
+                var bytes = File.ReadAllBytes(path);
+                var result = ToJObject(ManageMaterial.HandleCommand(Request("set_render_state", "shared", Patch())));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual("loaded_only", result["data"]["persistence"].Value<string>());
+                Assert.IsFalse(result["data"]["disk_verified"].Value<bool>());
+                Assert.AreEqual(3001, asset.renderQueue);
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+            }
+            finally
+            {
+                _renderer.sharedMaterials = new[] { _material, _material };
                 AssetDatabase.DeleteAsset(path);
             }
         }
