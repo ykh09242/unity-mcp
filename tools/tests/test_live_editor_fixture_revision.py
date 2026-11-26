@@ -11,7 +11,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.experiments.live_editor_fixture import lane, registry
+from tools.experiments.live_editor_fixture import lane, registry, tool_preferences
+
+
+def test_native_preferences_report_a_missing_windows_registry(monkeypatch):
+    monkeypatch.setitem(sys.modules, "winreg", None)
+    with pytest.raises(OSError, match="requires the Windows registry"):
+        tool_preferences.snapshot()
 
 
 def test_native_response_can_be_replaced_during_poll(tmp_path):

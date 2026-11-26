@@ -10,7 +10,12 @@ from pathlib import Path
 
 
 def snapshot():
-    import winreg
+    try:
+        import winreg
+    except ImportError as error:
+        raise OSError(
+            "Capturing Unity Editor tool preferences requires the Windows registry"
+        ) from error
 
     values = {}
     physical = {}
