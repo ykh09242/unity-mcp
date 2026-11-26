@@ -80,9 +80,11 @@ from transport.response_limit_middleware import ResponseLimitMiddleware, Respons
 from starlette.routing import WebSocketRoute
 import argparse
 import asyncio
+from base64 import b64encode
 import contextvars
 import anyio
 from functools import partial
+from importlib.resources import files
 import sys
 
 import logging
@@ -125,6 +127,7 @@ except Exception:
 
 import fastmcp
 from fastmcp import FastMCP
+from mcp.types import Icon
 from starlette.middleware import Middleware
 from logging.handlers import RotatingFileHandler
 
@@ -693,6 +696,12 @@ class UnityMCP(ServerRuntimeOwner, FastMCP):
         return app
 
 
+def _server_icon(filename: str, mime_type: str, size: str) -> Icon:
+    data = files("core").joinpath(filename).read_bytes()
+    encoded = b64encode(data).decode("ascii")
+    return Icon(src=f"data:{mime_type};base64,{encoded}", mime_type=mime_type, sizes=[size])
+
+
 def create_mcp_server(
     project_scoped_tools: bool,
     *,
@@ -707,6 +716,10 @@ def create_mcp_server(
     mcp = UnityMCP(
         name="mcp-for-unity-server",
         version=RUNNING_SERVER.version,
+        icons=[
+            _server_icon("server-icon.svg", "image/svg+xml", "any"),
+            _server_icon("server-icon.png", "image/png", "32x32"),
+        ],
         lifespan=server_lifespan,
         session_state_store=state_store,
         instructions=append_custom_instructions(

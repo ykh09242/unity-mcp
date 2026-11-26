@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Unity MCP</title>
+  <style>
+    @media (prefers-reduced-motion: no-preference) {
+      .left { animation: open-left 3.2s ease-in-out infinite; }
+      .right { animation: open-right 3.2s ease-in-out infinite; }
+    }
+    @keyframes open-left {
+      0%, 70%, 100% { transform: translateX(0); }
+      30%, 40% { transform: translateX(-2px); }
+    }
+    @keyframes open-right {
+      0%, 70%, 100% { transform: translateX(0); }
+      30%, 40% { transform: translateX(2px); }
+    }
+  </style>
+  <path d="M12 9h8 M12 16h8 M12 23h8" fill="none" stroke="#22d3ee" stroke-width="2"/>
+  <g stroke-width="1.5" stroke-linejoin="round">
+    <g class="left" stroke="#60a5fa">
+      <path d="M14.5 2 3.5 8.4v15.2l11 6.4Z" fill="#2563eb"/>
+      <path d="m3.5 8.4 11 6.4" fill="none"/>
+    </g>
+    <g class="right" stroke="#2dd4bf">
+      <path d="m17.5 2 11 6.4v15.2l-11 6.4Z" fill="#0d9488"/>
+      <path d="m28.5 8.4-11 6.4" fill="none"/>
+    </g>
+  </g>
+</svg>

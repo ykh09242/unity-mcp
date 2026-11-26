@@ -83,7 +83,7 @@ where = ["src"]
 "" = "src"
 
 [tool.setuptools.package-data]
-core = ["sdk_compatibility.json"]
+core = ["sdk_compatibility.json", "server-icon.svg", "server-icon.png"]
 services = ["skills_bundle.json", "test_results_view.html"]
 
 [tool.setuptools]

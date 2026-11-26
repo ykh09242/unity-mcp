@@ -3,6 +3,7 @@
 import base64
 import json
 from collections.abc import Iterator, Mapping
+from importlib.resources import files
 from typing import Final
 
 import httpx
@@ -87,6 +88,20 @@ def _message(response: httpx.Response) -> Mapping[str, JsonValue]:
             pytest.fail(f"Unexpected MCP response content type: {unexpected}")
 
 
+def _assert_server_icons(info):
+    icons = info["icons"]
+    for icon, filename, mime_type, size in (
+        (icons[0], "server-icon.svg", "image/svg+xml", "any"),
+        (icons[1], "server-icon.png", "image/png", "32x32"),
+    ):
+        assert icon["mimeType"] == mime_type
+        assert icon["sizes"] == [size]
+        header, encoded = icon["src"].split(",", 1)
+        assert header == f"data:{mime_type};base64"
+        asset = files("core").joinpath(filename).read_bytes()
+        assert base64.b64decode(encoded, validate=True) == asset
+
+
 @pytest.mark.parametrize("omit_client_info", [False, True])
 def test_modern_discovery_is_self_contained(protocol_http, omit_client_info):
     # Given: no initialize exchange, with client identity supplied or legitimately omitted.
@@ -107,6 +122,7 @@ def test_modern_discovery_is_self_contained(protocol_http, omit_client_info):
     info = result["_meta"]["io.modelcontextprotocol/serverInfo"]
     assert info["name"] == "mcp-for-unity-server"
     assert info["version"]
+    _assert_server_icons(info)
     assert type(result["ttlMs"]) is int and result["ttlMs"] >= 0
     assert result["cacheScope"] in {"public", "private"}
     assert "mcp-session-id" not in response.headers
@@ -358,6 +374,7 @@ def test_explicit_legacy_initialize_and_tool_listing_remain_compatible(protocol_
     result = _message(initialized)["result"]
     assert result["protocolVersion"] == LEGACY_VERSION
     assert result["serverInfo"]["name"] == "mcp-for-unity-server"
+    _assert_server_icons(result["serverInfo"])
     assert "resultType" not in result
     headers = {"MCP-Protocol-Version": LEGACY_VERSION}
     if session_id := initialized.headers.get("mcp-session-id"):
