@@ -7272,6 +7272,81 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "page_size"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "mode": {
+                      "enum": [
+                        "fields",
+                        "array"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "after_path"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "mode": {
+                      "const": "fields"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "start_index"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "mode": {
+                      "const": "array"
+                    }
+                  },
+                  "required": [
+                    "mode"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "mode": {
+                      "enum": [
+                        "value",
+                        "array"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "mode"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "property_path": {
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "property_path"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "after_path": {
                 "maxLength": 512,
@@ -7284,6 +7359,9 @@
               "instance_id": {
                 "maximum": 2147483647,
                 "minimum": -2147483648,
+                "not": {
+                  "const": 0
+                },
                 "type": "integer"
               },
               "mode": {
@@ -7298,7 +7376,8 @@
               "page_size": {
                 "maximum": 64,
                 "minimum": 1,
-                "type": "integer"
+                "type": "integer",
+                "x-unity-mcp-page-size": true
               },
               "property_path": {
                 "default": "",
@@ -19995,6 +20074,56 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "verify": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "verify"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "load",
+                        "save"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "scene_handle": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "scene_handle"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "validate",
+                        "save"
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "enum": [
@@ -20330,7 +20459,11 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "validate",
+                  "save"
+                ]
               },
               "scene_name": {
                 "anyOf": [
@@ -20415,7 +20548,11 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "load",
+                  "save"
+                ]
               }
             },
             "required": [
@@ -22739,6 +22876,190 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "search"
+                    }
+                  }
+                },
+                "then": {
+                  "allOf": [
+                    {
+                      "else": {
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "query": {
+                                "not": {
+                                  "type": "null"
+                                }
+                              }
+                            },
+                            "required": [
+                              "query"
+                            ]
+                          },
+                          {
+                            "properties": {
+                              "observation_source": {
+                                "not": {
+                                  "type": "null"
+                                }
+                              }
+                            },
+                            "required": [
+                              "observation_source"
+                            ]
+                          },
+                          {
+                            "properties": {
+                              "required_values": {
+                                "not": {
+                                  "type": "null"
+                                }
+                              }
+                            },
+                            "required": [
+                              "required_values"
+                            ]
+                          }
+                        ],
+                        "properties": {
+                          "family": {
+                            "type": "null"
+                          },
+                          "offset": {
+                            "const": 0
+                          }
+                        }
+                      },
+                      "if": {
+                        "properties": {
+                          "selection": {
+                            "const": "agent"
+                          }
+                        },
+                        "required": [
+                          "selection"
+                        ]
+                      },
+                      "not": {
+                        "properties": {
+                          "host_tool_evidence": {
+                            "not": {
+                              "type": "null"
+                            }
+                          },
+                          "host_tool_names": {
+                            "not": {
+                              "type": "null"
+                            }
+                          }
+                        },
+                        "required": [
+                          "host_tool_names",
+                          "host_tool_evidence"
+                        ]
+                      },
+                      "properties": {
+                        "catalog_query": {
+                          "pattern": "\\S"
+                        },
+                        "query": {
+                          "pattern": "\\S"
+                        }
+                      },
+                      "then": {
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "query": {
+                                "not": {
+                                  "type": "null"
+                                }
+                              }
+                            },
+                            "required": [
+                              "query"
+                            ]
+                          },
+                          {
+                            "properties": {
+                              "family": {
+                                "not": {
+                                  "type": "null"
+                                }
+                              }
+                            },
+                            "required": [
+                              "family"
+                            ]
+                          }
+                        ],
+                        "properties": {
+                          "catalog_query": {
+                            "type": "null"
+                          },
+                          "intent": {
+                            "type": "null"
+                          },
+                          "observation_source": {
+                            "type": "null"
+                          },
+                          "required_values": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "properties": {
+                    "arguments": {
+                      "type": "null"
+                    },
+                    "group": {
+                      "type": "null"
+                    },
+                    "include_schema": {
+                      "const": false
+                    },
+                    "operation": {
+                      "type": "null"
+                    },
+                    "tool": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "prepare"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "arguments": {
+                      "type": "object"
+                    },
+                    "tool": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "tool",
+                    "arguments"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "enum": [
@@ -22750,9 +23071,23 @@
                   "describe",
                   "search",
                   "catalog",
-                  "inspect_inventory"
+                  "inspect_inventory",
+                  "prepare"
                 ],
                 "type": "string"
+              },
+              "arguments": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "maxProperties": 128,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "catalog_query": {
                 "anyOf": [
@@ -22874,7 +23209,8 @@
                 "default": 5,
                 "maximum": 20,
                 "minimum": 1,
-                "type": "integer"
+                "type": "integer",
+                "x-unity-mcp-page-size": true
               },
               "observation_source": {
                 "anyOf": [
@@ -22922,7 +23258,10 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-original-request": {
+                  "action": "search"
+                }
               },
               "required_values": {
                 "anyOf": [
@@ -26153,6 +26492,56 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "verify": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "verify"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "load",
+                        "save"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "scene_handle": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "scene_handle"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "validate",
+                        "save"
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "enum": [
@@ -26252,7 +26641,11 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "validate",
+                  "save"
+                ]
               },
               "scene_name": {
                 "anyOf": [
@@ -26323,7 +26716,11 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "load",
+                  "save"
+                ]
               }
             },
             "required": [
@@ -26500,6 +26897,32 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "scene_handle": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "scene_handle"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "validate",
+                        "save"
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "const": "validate",
@@ -26567,7 +26990,11 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "validate",
+                  "save"
+                ]
               },
               "unity_instance": {
                 "anyOf": [
@@ -26786,6 +27213,136 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "else": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "query": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "required": [
+                        "query"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "observation_source": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "required": [
+                        "observation_source"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "required_values": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "required": [
+                        "required_values"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "family": {
+                      "type": "null"
+                    },
+                    "offset": {
+                      "const": 0
+                    }
+                  }
+                },
+                "if": {
+                  "properties": {
+                    "selection": {
+                      "const": "agent"
+                    }
+                  },
+                  "required": [
+                    "selection"
+                  ]
+                },
+                "not": {
+                  "properties": {
+                    "host_tool_evidence": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "host_tool_names": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "host_tool_names",
+                    "host_tool_evidence"
+                  ]
+                },
+                "properties": {
+                  "catalog_query": {
+                    "pattern": "\\S"
+                  },
+                  "query": {
+                    "pattern": "\\S"
+                  }
+                },
+                "then": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "query": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "required": [
+                        "query"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "family": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "required": [
+                        "family"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "catalog_query": {
+                      "type": "null"
+                    },
+                    "intent": {
+                      "type": "null"
+                    },
+                    "observation_source": {
+                      "type": "null"
+                    },
+                    "required_values": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "catalog_query": {
                 "anyOf": [
@@ -26892,7 +27449,8 @@
                 "default": 5,
                 "maximum": 20,
                 "minimum": 1,
-                "type": "integer"
+                "type": "integer",
+                "x-unity-mcp-page-size": true
               },
               "observation_source": {
                 "anyOf": [
@@ -26927,7 +27485,8 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-original-request": {}
               },
               "required_values": {
                 "anyOf": [
@@ -35808,6 +36367,81 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "page_size"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "mode": {
+                      "enum": [
+                        "fields",
+                        "array"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "after_path"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "mode": {
+                      "const": "fields"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "start_index"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "mode": {
+                      "const": "array"
+                    }
+                  },
+                  "required": [
+                    "mode"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "mode": {
+                      "enum": [
+                        "value",
+                        "array"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "mode"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "property_path": {
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "property_path"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "after_path": {
                 "maxLength": 512,
@@ -35820,6 +36454,9 @@
               "instance_id": {
                 "maximum": 2147483647,
                 "minimum": -2147483648,
+                "not": {
+                  "const": 0
+                },
                 "type": "integer"
               },
               "mode": {
@@ -35834,7 +36471,8 @@
               "page_size": {
                 "maximum": 64,
                 "minimum": 1,
-                "type": "integer"
+                "type": "integer",
+                "x-unity-mcp-page-size": true
               },
               "property_path": {
                 "default": "",
@@ -48531,6 +49169,56 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "verify": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "verify"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "load",
+                        "save"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "scene_handle": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "scene_handle"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "validate",
+                        "save"
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "enum": [
@@ -48866,7 +49554,11 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "validate",
+                  "save"
+                ]
               },
               "scene_name": {
                 "anyOf": [
@@ -48951,7 +49643,11 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "load",
+                  "save"
+                ]
               }
             },
             "required": [
@@ -51275,6 +51971,190 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "search"
+                    }
+                  }
+                },
+                "then": {
+                  "allOf": [
+                    {
+                      "else": {
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "query": {
+                                "not": {
+                                  "type": "null"
+                                }
+                              }
+                            },
+                            "required": [
+                              "query"
+                            ]
+                          },
+                          {
+                            "properties": {
+                              "observation_source": {
+                                "not": {
+                                  "type": "null"
+                                }
+                              }
+                            },
+                            "required": [
+                              "observation_source"
+                            ]
+                          },
+                          {
+                            "properties": {
+                              "required_values": {
+                                "not": {
+                                  "type": "null"
+                                }
+                              }
+                            },
+                            "required": [
+                              "required_values"
+                            ]
+                          }
+                        ],
+                        "properties": {
+                          "family": {
+                            "type": "null"
+                          },
+                          "offset": {
+                            "const": 0
+                          }
+                        }
+                      },
+                      "if": {
+                        "properties": {
+                          "selection": {
+                            "const": "agent"
+                          }
+                        },
+                        "required": [
+                          "selection"
+                        ]
+                      },
+                      "not": {
+                        "properties": {
+                          "host_tool_evidence": {
+                            "not": {
+                              "type": "null"
+                            }
+                          },
+                          "host_tool_names": {
+                            "not": {
+                              "type": "null"
+                            }
+                          }
+                        },
+                        "required": [
+                          "host_tool_names",
+                          "host_tool_evidence"
+                        ]
+                      },
+                      "properties": {
+                        "catalog_query": {
+                          "pattern": "\\S"
+                        },
+                        "query": {
+                          "pattern": "\\S"
+                        }
+                      },
+                      "then": {
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "query": {
+                                "not": {
+                                  "type": "null"
+                                }
+                              }
+                            },
+                            "required": [
+                              "query"
+                            ]
+                          },
+                          {
+                            "properties": {
+                              "family": {
+                                "not": {
+                                  "type": "null"
+                                }
+                              }
+                            },
+                            "required": [
+                              "family"
+                            ]
+                          }
+                        ],
+                        "properties": {
+                          "catalog_query": {
+                            "type": "null"
+                          },
+                          "intent": {
+                            "type": "null"
+                          },
+                          "observation_source": {
+                            "type": "null"
+                          },
+                          "required_values": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "properties": {
+                    "arguments": {
+                      "type": "null"
+                    },
+                    "group": {
+                      "type": "null"
+                    },
+                    "include_schema": {
+                      "const": false
+                    },
+                    "operation": {
+                      "type": "null"
+                    },
+                    "tool": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "prepare"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "arguments": {
+                      "type": "object"
+                    },
+                    "tool": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "tool",
+                    "arguments"
+                  ]
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "enum": [
@@ -51286,9 +52166,23 @@
                   "describe",
                   "search",
                   "catalog",
-                  "inspect_inventory"
+                  "inspect_inventory",
+                  "prepare"
                 ],
                 "type": "string"
+              },
+              "arguments": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "maxProperties": 128,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "catalog_query": {
                 "anyOf": [
@@ -51410,7 +52304,8 @@
                 "default": 5,
                 "maximum": 20,
                 "minimum": 1,
-                "type": "integer"
+                "type": "integer",
+                "x-unity-mcp-page-size": true
               },
               "observation_source": {
                 "anyOf": [
@@ -51458,7 +52353,10 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-original-request": {
+                  "action": "search"
+                }
               },
               "required_values": {
                 "anyOf": [
@@ -54689,6 +55587,56 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "verify": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "verify"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "load",
+                        "save"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "scene_handle": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "scene_handle"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "validate",
+                        "save"
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "enum": [
@@ -54788,7 +55736,11 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "validate",
+                  "save"
+                ]
               },
               "scene_name": {
                 "anyOf": [
@@ -54859,7 +55811,11 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "load",
+                  "save"
+                ]
               }
             },
             "required": [
@@ -55036,6 +55992,32 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "scene_handle": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "scene_handle"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "validate",
+                        "save"
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "const": "validate",
@@ -55103,7 +56085,11 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "validate",
+                  "save"
+                ]
               },
               "unity_instance": {
                 "anyOf": [
@@ -55322,6 +56308,136 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "else": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "query": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "required": [
+                        "query"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "observation_source": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "required": [
+                        "observation_source"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "required_values": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "required": [
+                        "required_values"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "family": {
+                      "type": "null"
+                    },
+                    "offset": {
+                      "const": 0
+                    }
+                  }
+                },
+                "if": {
+                  "properties": {
+                    "selection": {
+                      "const": "agent"
+                    }
+                  },
+                  "required": [
+                    "selection"
+                  ]
+                },
+                "not": {
+                  "properties": {
+                    "host_tool_evidence": {
+                      "not": {
+                        "type": "null"
+                      }
+                    },
+                    "host_tool_names": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "host_tool_names",
+                    "host_tool_evidence"
+                  ]
+                },
+                "properties": {
+                  "catalog_query": {
+                    "pattern": "\\S"
+                  },
+                  "query": {
+                    "pattern": "\\S"
+                  }
+                },
+                "then": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "query": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "required": [
+                        "query"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "family": {
+                          "not": {
+                            "type": "null"
+                          }
+                        }
+                      },
+                      "required": [
+                        "family"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "catalog_query": {
+                      "type": "null"
+                    },
+                    "intent": {
+                      "type": "null"
+                    },
+                    "observation_source": {
+                      "type": "null"
+                    },
+                    "required_values": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            ],
             "properties": {
               "catalog_query": {
                 "anyOf": [
@@ -55428,7 +56544,8 @@
                 "default": 5,
                 "maximum": 20,
                 "minimum": 1,
-                "type": "integer"
+                "type": "integer",
+                "x-unity-mcp-page-size": true
               },
               "observation_source": {
                 "anyOf": [
@@ -55463,7 +56580,8 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "x-unity-mcp-original-request": {}
               },
               "required_values": {
                 "anyOf": [

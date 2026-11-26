@@ -64,8 +64,10 @@ Preparation alone creates no history and grants no permission. Result retention
 defaults off. To retain bounded application output, set `retain_result` to
 `true` in the vendor metadata before sending the original.
 
-If delivery fails, reconnect with the same authority and store. Use the saved
-lookup's `params.name` and `params.arguments` with `session.call_tool`.
+If delivery fails, reconnect with the same authority and store. Verify that
+the saved lookup names `tools/call`, `get_execution_receipt` and action `get`,
+and that its store and project match the intended scope. Pass its saved
+arguments to `session.call_tool("get_execution_receipt", arguments)`.
 A missing, expired, foreign or unavailable receipt leaves the outcome unknown.
 An unprotected request or a lost keyless receipt ID has no corresponding lookup.
 
