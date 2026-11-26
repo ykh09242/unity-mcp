@@ -13,13 +13,14 @@ import json
 import socket
 from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 from tests.transport_socket import JsonSocket, bind_json_text
 
 import httpx2
 import pytest
 import pytest_asyncio
 import uvicorn
-from fastmcp import Client
+from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.middleware import Middleware
 from starlette.websockets import WebSocket, WebSocketState
@@ -60,6 +61,52 @@ class _ReadyServer(uvicorn.Server):
     async def startup(self, sockets=None):
         await super().startup(sockets=sockets)
         self.ready.set()
+
+
+@asynccontextmanager
+async def loopback_http(app):
+    """Serve the test ASGI app until Uvicorn has drained its connections and lifespan."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(16)
+        port = listener.getsockname()[1]
+        runner = _ReadyServer(
+            uvicorn.Config(
+                app,
+                host="127.0.0.1",
+                port=port,
+                access_log=False,
+                log_level="error",
+                timeout_graceful_shutdown=2,
+                ws="none",
+            )
+        )
+        task = asyncio.create_task(runner.serve(sockets=[listener]))
+        try:
+            await await_signal(runner.ready, "HTTP listener startup", producers=(task,))
+            assert runner.started and not task.done()
+            yield f"http://127.0.0.1:{port}/mcp"
+        finally:
+            runner.should_exit = True
+            try:
+                await asyncio.wait_for(task, watchdog_timeout())
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_loopback_http_releases_listener_on_exception():
+    app = FastMCP("listener-lifetime").http_app(path="/mcp")
+    with pytest.raises(RuntimeError, match="end the request scenario"):
+        async with loopback_http(app) as url:
+            endpoint = urlsplit(url)
+            raise RuntimeError("end the request scenario")
+
+    # With no client connections the address can be rebound immediately after teardown.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((endpoint.hostname, endpoint.port))
 
 
 @pytest_asyncio.fixture
@@ -121,40 +168,17 @@ async def progress_http(command_hub, monkeypatch):
 
         await app(scope, receive, capture)
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        listener.listen(16)
-        runner = _ReadyServer(
-            uvicorn.Config(
-                observed,
-                host="127.0.0.1",
-                port=listener.getsockname()[1],
-                access_log=False,
-                log_level="error",
-                timeout_graceful_shutdown=2,
-                ws="none",
-            )
-        )
-        task = asyncio.create_task(runner.serve(sockets=[listener]))
-        try:
-            await await_signal(runner.ready, "runner.ready")
-            assert runner.started and not task.done()
+    try:
+        async with loopback_http(observed) as url:
             yield SimpleNamespace(
-                url=f"http://127.0.0.1:{listener.getsockname()[1]}/mcp",
+                url=url,
                 executions=executions,
                 hub=command_hub,
                 request_tokens=request_tokens,
                 progress_frames=progress_frames,
             )
-        finally:
-            runner.should_exit = True
-            try:
-                await asyncio.wait_for(task, watchdog_timeout())
-            finally:
-                if not task.done():
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
-            invalidate_cached_max_commands()
+    finally:
+        invalidate_cached_max_commands()
 
 
 async def _progress(fixture, execution, **changes):

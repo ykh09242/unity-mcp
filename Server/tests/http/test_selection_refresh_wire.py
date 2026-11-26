@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
-from fastmcp.utilities.tests import run_server_async
 from mcp.shared.exceptions import MCPError
 from mcp.types import PaginatedRequestParams, ToolListChangedNotification
 import pytest
 
 from tests.http.test_discovery_profiles import discovery_server, names  # noqa: F401
 from tests.http.test_catalog_selection import catalog_server, publish  # noqa: F401
+from tests.http.test_plugin_command_progress import loopback_http
 from tests.timing import watchdog_timeout
 from transport.unity_instance_middleware import UnityInstanceMiddleware
 
@@ -36,7 +36,7 @@ async def test_authenticated_refresh_notification_list_and_native_call(discovery
         if isinstance(message, ToolListChangedNotification):
             received.set()
 
-    async with run_server_async(server) as url, AsyncExitStack() as stack:
+    async with loopback_http(server.http_app(path="/mcp")) as url, AsyncExitStack() as stack:
 
         def transport(token):
             return StreamableHttpTransport(url, headers={"Authorization": f"Bearer {token}"})
@@ -101,7 +101,10 @@ async def test_result_refresh_uses_the_request_editor_and_respects_its_toggles(
     await registry.register("two", "Second", "second", "6001")
     await publish(registry, "one", [])
     await publish(registry, "two", ["effect_probe"])
-    async with run_server_async(server) as url, Client(url, mode="legacy", cache=False) as client:
+    async with (
+        loopback_http(server.http_app(path="/mcp")) as url,
+        Client(url, mode="legacy", cache=False) as client,
+    ):
         result = (
             await client.call_tool(
                 "manage_tools", {"action": "activate", "group": "vfx", "unity_instance": "seco"}
@@ -144,7 +147,10 @@ async def test_prepare_compares_draft_selectors_on_the_current_request_router(
     def target_probe(unity_instance: str):
         raise AssertionError("prepare must not dispatch the target")
 
-    async with run_server_async(server) as url, Client(url, mode=mode, cache=False) as client:
+    async with (
+        loopback_http(server.http_app(path="/mcp")) as url,
+        Client(url, mode=mode, cache=False) as client,
+    ):
 
         async def prepare(outer, inner):
             return (
