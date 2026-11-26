@@ -12,6 +12,19 @@ weights or calling Unity. Preserve `route_surfaces`, host inventory constraints 
 any explicit `unity_instance` across pages. The offline CLI provides the same pages with
 `tool search QUERY --selection agent`, `--family ID`, `--limit` and `--offset`.
 
+MCP returns `next_call` for the next page and `open_family` for the selected
+family ID. Concrete resources have a complete `read_call`. When the tool
+directory is unrestricted, `selectable_catalog` opens the normal selection
+catalog to find tools beyond the current advertisement.
+
+Use `manage_tools(action="prepare", tool=name, arguments=draft, query=original)`
+before submitting uncertain inputs. Check the returned `adjustments` and call
+the exact `prepared_call` if it matches the request. The server validates the
+live input schema and preserves the explicit project. Annotated page sizes
+above the maximum can be reduced. Original text can be filled only from a
+verbatim request supplied by the caller. A successful preparation checks input
+shape. The actual public tool and a Unity readback establish the outcome.
+
 Use `selection="ranked"` for lexical or required evidence search. Only this mode
 accepts `catalog_query`, `intent`, `observation_source` and `required_values`.
 When a request mixes the two modes, MCP returns `incompatible_fields` and

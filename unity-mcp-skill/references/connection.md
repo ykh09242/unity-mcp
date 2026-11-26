@@ -10,6 +10,12 @@ from a shared family. Compare the inputs and effects of each callable binding.
 Resources and templates have their own family IDs. Keep the original, target
 and host scope across pages. An exact family may be reopened without the query.
 
+Use the returned `next_call` to continue on the same connection. For a family
+directory, add the chosen ID as `family` to `open_family.arguments`. A concrete
+resource's `read_call` contains its advertised URI and any project binding.
+Use `resources/list` for installed skill URIs and `resources/templates/list`
+for templates. A local file path cannot identify a server resource.
+
 Use `selection="ranked"` for lexical or evidence searches. `catalog_query`, `intent`, `observation_source` and `required_values` belong to ranked search. Family IDs and pagination belong to agent browsing. On a mode conflict, use the returned `search_retries` entry that preserves the requested evidence, target and host scope. If the action and its verification need different evidence, find each route separately.
 
 Interpret the user's goal in its original language and use the complete built-in catalog to select an operation by meaning. Compare the requested outcome, target type, observation versus mutation, input requirements and effects. Preserve exact tool, API and package identifiers.
@@ -37,6 +43,14 @@ Each action card contains an exact invocation selector, purpose, known required/
 ```
 
 `describe` includes the full schema by default and accepts `include_schema=true` for a single tool. It binds the selected action in a copy of the full live schema and retains its other constraints. For actionless tools such as `capture_prefab`, omit `operation`. Unknown tool/action names fail explicitly. `advertised` reports this MCP context's visibility, and `readiness="unobserved"` requires a project-specific check when relevant. Resolve selection and permissions through the existing workflow below.
+
+For uncertain inputs, call `manage_tools(action="prepare", tool=name,
+arguments=draft, query=original)`. Use the same explicit project and host
+inventory when available. Inspect `adjustments` and invoke the returned
+`prepared_call` through its own public tool if it serves the user's intent.
+Preparation can bind the supplied original text and cap annotated page sizes.
+It checks the input schema only. Permissions, current target IDs, Unity
+availability and the resulting state are checked at invocation and readback.
 
 The offline CLI provides the same catalog through `tool catalog`, `tool catalog --group GROUP` and `tool catalog --tool NAME --limit 20 --offset 0`. It emits complete JSON in every output mode, with offline advertisement and readiness left unobserved. Use `tool describe NAME` for the actual connection's schema.
 
