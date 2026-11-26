@@ -197,7 +197,7 @@ def test_wrapper_preserves_child_command_and_success(
     assert "-vv" in args
     assert "-q" not in args
     assert args[args.index("--basetemp") + 1] == str(tmp_path / "http-tmp")
-    assert f"cache_dir={tmp_path / 'http-cache'}" in args
+    assert ("-p", "no:cacheprovider") in zip(args, args[1:])
     assert args[-2:] == ["--junitxml", str(tmp_path / "outer-http.xml")]
     assert kwargs["cwd"] == Path(wrapper.__file__).resolve().parents[1]
     assert kwargs["env"]["UNITY_MCP_RUN_HTTP_TESTS"] == "1"
