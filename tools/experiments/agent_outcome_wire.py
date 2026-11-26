@@ -243,6 +243,21 @@ def verify_package(package_revision, server_revision):
     return inputs["skill_commit"]
 
 
+def nested_draft_snapshot(directory, transport, revision, tree_sha256):
+    path = directory / f"nested-target-{revision[:9]}" / f"{transport}.json"
+    result = read(path)
+    require(
+        result["source_revision"] == revision
+        and result["source_tree_sha256"] == tree_sha256
+        and result["transport"] == transport
+        and result["protocol"] == PROTOCOL
+        and result["editor_execute_frames"] == 0
+        and result["artifact_kind"] == "ordinary_developmental_case_replay",
+        f"{transport} nested draft source and no Editor dispatch",
+    )
+    return file_sha256(path), index(result["drafts"])
+
+
 def summarize_nested_target(directory, revision, tree_sha256):
     baseline_source = read(directory / "candidate-final" / "source-manifest.json")
     require(baseline_source["base_git_revision"] == NESTED_BASELINE, "nested draft baseline pin")
@@ -250,24 +265,10 @@ def summarize_nested_target(directory, revision, tree_sha256):
     verify_package(NESTED_SOURCE_PACKAGE, NESTED_BASELINE)
     runs = {}
     for transport in TRANSPORTS:
-        snapshots = []
-        for pin, source_hash in (
-            (NESTED_BASELINE, baseline_source["tree_content_sha256"]),
-            (revision, tree_sha256),
-        ):
-            path = directory / f"nested-target-{pin[:9]}" / f"{transport}.json"
-            result = read(path)
-            require(
-                result["source_revision"] == pin
-                and result["source_tree_sha256"] == source_hash
-                and result["transport"] == transport
-                and result["protocol"] == PROTOCOL
-                and result["editor_execute_frames"] == 0
-                and result["artifact_kind"] == "ordinary_developmental_case_replay",
-                f"{transport} nested draft source and no Editor dispatch",
-            )
-            snapshots.append((file_sha256(path), index(result["drafts"])))
-        (before_sha, before), (after_sha, after) = snapshots
+        before_sha, before = nested_draft_snapshot(
+            directory, transport, NESTED_BASELINE, baseline_source["tree_content_sha256"]
+        )
+        after_sha, after = nested_draft_snapshot(directory, transport, revision, tree_sha256)
         require(before.keys() == after.keys() and len(before) == 2, "nested draft archive coverage")
         runs[transport] = {"before_sha256": before_sha, "after_sha256": after_sha, "drafts": []}
         for key, original in before.items():
