@@ -1,0 +1,270 @@
+{
+  "version": 1,
+  "role": "post_measurement_inventory_control",
+  "attempt_limit": 1,
+  "preregistration": {
+    "revision": "e599e7bae0eed7ba7a24b9666a38002d10abd8c6",
+    "original_id": "b34e0d2845159fd9",
+    "attempts": 1,
+    "sealed_sha256": "fcef0436aa76e132e7e5f2aa448abfe7dc557b8f660024701027a43f3f0680d4",
+    "sealed_ns": 1795673872393293800
+  },
+  "observed_ns": 1795673947903586500,
+  "primary_packet_sha256": "346f5f9cd51296cd53c649b4edf8687941ffe79d5c2a6548b262e608c0662cc0",
+  "primary_case_sha256": "9b9e67109764c5a65b24f9bb19435000d19274d799df3e998f481edea7841d43",
+  "expected_names_sha256": "0f0e6e09fe3e4fbd4703c153c86dde92a278fc13edf91f2a765c02a53608b6b6",
+  "runtime_revision": "e221c9366dc87e6053f48d6d36f2239b50f2f452",
+  "skill_revision": "96ec78009148a1f47aca17c0595faa00712db214",
+  "actor": {
+    "model": "gpt-6.2-sol",
+    "reasoning_effort": "medium",
+    "sha256": "3f42b12274b353ecb3ec555e6c8d0a43f6c6cb29c3a546179bc12dee4855deb6",
+    "version": "codex-cli 0.172.0"
+  },
+  "actor_route": "original_ephemeral",
+  "preferences": {
+    "count": 130,
+    "before_sha256": "5ab447bb3881745f00a37d8290018c33a1d238d17391edd6bbcd99c9267b6ffb",
+    "after_sha256": "5ab447bb3881745f00a37d8290018c33a1d238d17391edd6bbcd99c9267b6ffb",
+    "shared_terrain": false
+  },
+  "private_enabled_tools": [
+    "manage_terrain"
+  ],
+  "owned_editor_closed": true,
+  "case": {
+    "id": "b34e0d2845159fd9",
+    "profile": "full",
+    "panel": "existing",
+    "task": "sample_surface_mask",
+    "language": "ur",
+    "delivered": true,
+    "observed": true,
+    "outcome": "pass",
+    "stage": "complete",
+    "reason": "verified_by_review",
+    "native_effect": null,
+    "target_reached": null,
+    "evidence_sha256": "21234743be529b81d2e1a1c4820753185e0a46c247d1a0b6dc81b5046f58c6bd",
+    "answer_sha256": "84facca7767c9b058d34e49cf750b7fbe21250c98714f5da45939c20d9618410",
+    "positive_receipts": [
+      {
+        "index": 4,
+        "sha256": "9cd56b474ceb4d9e7f22b702a590c602d2c2b145cac50eadb571529a2e4311b5"
+      }
+    ],
+    "host_approval_receipts": [],
+    "review_sha256": "5694f59ae0057bfa360270d91975fc45ef0755a22ee951a516f38185100dec59",
+    "prompt_sha256": "e77e937cbde3ba5e7f4e3660f5c4748ebdbdede528f92fcbd71ee6d8fecdc6b4",
+    "seconds": 36.634,
+    "status": "completed",
+    "decision": "The Urdu final correctly identifies the first requested tunnel terrain cell as surface and the second as a hole, confirmed by the bounded native mask read.",
+    "calls": [
+      {
+        "binding": "mcpforunity://instances",
+        "ok": true,
+        "receipt_sha256": "0d42c3482b4eff31a806df6cc2e99960935c0d5a6cb2273a981c3707d7c9f736",
+        "method": "resources/read"
+      },
+      {
+        "binding": "skill://unity-mcp-orchestrator/SKILL.md",
+        "ok": true,
+        "receipt_sha256": "e060125656325ba36ea4ccb9c03aff31c7be38f5c11bc82e134bb7b493776dd8",
+        "method": "resources/read"
+      },
+      {
+        "binding": "find_gameobjects",
+        "ok": true,
+        "receipt_sha256": "17b2054414da67e1ee02d655427886290bec9a2662f47785e2ea7c38604fc196",
+        "method": "tools/call"
+      },
+      {
+        "binding": "manage_tools.describe",
+        "ok": true,
+        "receipt_sha256": "4b5a0c44af7703899711c1441f8c0c9a1a6784436b5001817b3905413c3de85c",
+        "method": "tools/call"
+      },
+      {
+        "binding": "manage_terrain.get_region",
+        "ok": true,
+        "receipt_sha256": "9cd56b474ceb4d9e7f22b702a590c602d2c2b145cac50eadb571529a2e4311b5",
+        "method": "tools/call"
+      }
+    ],
+    "host_failures": [],
+    "diagnostic_observations": [],
+    "changed_native_fields": [],
+    "state_sha256": {
+      "before": "1b61f5f98e6497b5ad0d2ea2b1ff7e1986b338d917a26518d2794c729b486b40",
+      "after": "1b61f5f98e6497b5ad0d2ea2b1ff7e1986b338d917a26518d2794c729b486b40"
+    },
+    "attempts": [
+      {
+        "status": "completed",
+        "delivered": true,
+        "seconds": 36.634
+      }
+    ],
+    "host_stderr": {
+      "captured": true,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error_records": 0,
+      "classes": {}
+    },
+    "host_calls_by_binding": {
+      "unityMCP.read_mcp_resource": 2,
+      "unityMCP.find_gameobjects": 1,
+      "unityMCP.manage_tools": 1,
+      "unityMCP.manage_terrain": 1
+    },
+    "actor_tool_inventories": [
+      {
+        "count": 91,
+        "sha256": "0f0e6e09fe3e4fbd4703c153c86dde92a278fc13edf91f2a765c02a53608b6b6",
+        "more": false
+      }
+    ],
+    "unresolved_host_calls": [],
+    "semantic_review": {
+      "evidence_sha256": "21234743be529b81d2e1a1c4820753185e0a46c247d1a0b6dc81b5046f58c6bd",
+      "answer_correct": true,
+      "evidence_supports": true,
+      "constraints_respected": true,
+      "call_indices": [
+        4
+      ],
+      "reason": "The Urdu final correctly identifies the first requested tunnel terrain cell as surface and the second as a hole, confirmed by the bounded native mask read."
+    },
+    "final_answer_verified": true,
+    "native_assessment": {
+      "rubric_sha256": "341a47d8b3791911cdd3fcba7851f76b06b23f12df15e5942bc382ea6b268843",
+      "result": null,
+      "target_before_sha256": "499805b8ff9ea4ad8fef3d6b9adabf0bb1b06d814f949355d45953c38f2e57b7",
+      "target_after_changes_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    "seed": 119931297,
+    "turn_started": true,
+    "turn_completed": true,
+    "prompt_submissions": 1,
+    "stream_loss": null,
+    "unresolved_calls": 0,
+    "public_errors": 0,
+    "native_terrain": {
+      "samples_before": [
+        {
+          "x": 27,
+          "y": 18,
+          "surface": true
+        },
+        {
+          "x": 28,
+          "y": 18,
+          "surface": false
+        }
+      ],
+      "samples_after": [
+        {
+          "x": 27,
+          "y": 18,
+          "surface": true
+        },
+        {
+          "x": 28,
+          "y": 18,
+          "surface": false
+        }
+      ],
+      "collateral_unchanged": true
+    },
+    "actor_session": {
+      "index": 1,
+      "thread_sha256": "c3afaef4f52378ad4b3fe5d969857be86ffc53a9db8c34b4506f25a382a28fa6",
+      "seconds": 30.96,
+      "turn_start_count": 1,
+      "turn_completion_count": 1,
+      "status": "completed",
+      "turn_started": true,
+      "turn_completed": true,
+      "public_calls": 5,
+      "unsuccessful_public_replies": 0,
+      "public_requests_without_reply": 0,
+      "host_errors": [],
+      "host_items": {
+        "agent_message": 2,
+        "mcp_tool_call": 5
+      },
+      "unresolved_host_calls": 0,
+      "answer_sha256": "84facca7767c9b058d34e49cf750b7fbe21250c98714f5da45939c20d9618410",
+      "usage": {
+        "input_tokens": 206069,
+        "cached_input_tokens": 169088,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 484,
+        "reasoning_output_tokens": 0
+      }
+    },
+    "launch": {
+      "program": "codex.exe",
+      "command": "exec",
+      "ephemeral": true,
+      "prompt_source": "stdin",
+      "model": "gpt-6.2-sol",
+      "reasoning_effort": "medium",
+      "argv_sha256": "5187071e16cfbe21cd73fcaeb9f7941a4e4180e1a0cd73e5b57f52d0932f19b5"
+    },
+    "admission_failures": [],
+    "readiness": {
+      "ready": true,
+      "inventory_count": 91,
+      "inventory_sha256": "0f0e6e09fe3e4fbd4703c153c86dde92a278fc13edf91f2a765c02a53608b6b6",
+      "seconds": 4.449,
+      "profile": "full"
+    }
+  },
+  "catalog_exposure": {
+    "expected_count": 91,
+    "expected_names_sha256": "0f0e6e09fe3e4fbd4703c153c86dde92a278fc13edf91f2a765c02a53608b6b6",
+    "first_listing_counts": {
+      "91": 1
+    },
+    "exact_catalog_outcomes": {
+      "pass": 1
+    },
+    "exceptions": []
+  },
+  "primary_catalog_exposure": {
+    "core": {
+      "expected_count": 32,
+      "expected_names_sha256": "2a324dbe0519e64bf08666829f10eade4576f3d8412794eee90d2d5459c8e1b4",
+      "first_listing_counts": {
+        "32": 71
+      },
+      "exact_catalog_outcomes": {
+        "pass": 71
+      },
+      "exceptions": []
+    },
+    "full": {
+      "expected_count": 91,
+      "expected_names_sha256": "0f0e6e09fe3e4fbd4703c153c86dde92a278fc13edf91f2a765c02a53608b6b6",
+      "first_listing_counts": {
+        "91": 70,
+        "133": 1
+      },
+      "exact_catalog_outcomes": {
+        "pass": 70
+      },
+      "exceptions": [
+        {
+          "id": "b34e0d2845159fd9",
+          "first_listing": {
+            "count": 133,
+            "sha256": "ae541d46e7b244e313da677c435e0ea3faa0178e4b8b5b1417d9682f93552560",
+            "more": false
+          },
+          "outcome": "pass"
+        }
+      ]
+    }
+  }
+}

@@ -51,6 +51,118 @@ def actor_inventories(events):
     return snapshots
 
 
+def catalog_exposure(rows, catalogs):
+    """Count first actor listings and grades for the exact independently observed name set."""
+    result = {}
+    for profile, catalog in catalogs.items():
+        expected = sorted(catalog["tool_names"])
+        digest = report.digest(expected)
+        require(
+            len(set(expected)) == catalog["tools"] == len(expected), "Invalid reference catalog"
+        )
+        counts = Counter()
+        exact = Counter()
+        exceptions = []
+        for row in rows:
+            if row["profile"] != profile:
+                continue
+            entries = row["actor_tool_inventories"]
+            first = entries[0] if entries else None
+            # A page hash alone cannot attest to a complete multi-page inventory.
+            complete = first is not None and first["more"] is False
+            counts[str(first["count"]) if complete else "unobserved_complete_listing"] += 1
+            if complete and first["count"] == len(expected) and first["sha256"] == digest:
+                exact[row["outcome"]] += 1
+            else:
+                exceptions.append(
+                    {"id": row["id"], "first_listing": first, "outcome": row["outcome"]}
+                )
+        result[profile] = {
+            "expected_count": len(expected),
+            "expected_names_sha256": digest,
+            "first_listing_counts": dict(counts),
+            "exact_catalog_outcomes": dict(exact),
+            "exceptions": exceptions,
+        }
+    return result
+
+
+def verify_inventory_control(primary, primary_sha256, control):
+    """Keep a preregistered one-shot control independent of the original outcome tables."""
+    seal = control["preregistration"]
+    row = control["case"]
+    original = next(r for r in primary["cases"] if r["id"] == seal["original_id"])
+    scheduled = next(r for pair in trial.pairs() for r in pair if r["id"] == original["id"])
+    require(
+        control["role"] == "post_measurement_inventory_control" and control["attempt_limit"] == 1,
+        "Unexpected control scope",
+    )
+    require(
+        seal["attempts"] == 1
+        and control["primary_packet_sha256"] == primary_sha256
+        and control["primary_case_sha256"] == report.digest(original),
+        "Control does not match the frozen original evidence",
+    )
+    require(
+        seal["revision"] == primary["candidate_product"]
+        and control["runtime_revision"] == primary["runtime_revision"]
+        and control["skill_revision"] == primary["skill_revision"],
+        "Control product differs",
+    )
+    require(
+        control["actor"] == primary["actor"] and control["actor_route"] == primary["actor_route"],
+        "Control actor differs",
+    )
+    verify_case(row, scheduled)
+    require(
+        row["profile"] == "full"
+        and seal["original_id"] == "b34e0d2845159fd9"
+        and original["actor_tool_inventories"][0]["count"] == 133,
+        "Control original differs",
+    )
+    require(
+        row["native_terrain"]["samples_before"] == original["native_terrain"]["samples_before"],
+        "Control terrain seed state differs",
+    )
+    require(
+        control["primary_catalog_exposure"]
+        == catalog_exposure(primary["cases"], primary["catalogs"]),
+        "Primary catalog exposure differs",
+    )
+    exposure = catalog_exposure([row], {"full": primary["catalogs"]["full"]})["full"]
+    require(
+        control["catalog_exposure"] == exposure
+        and control["expected_names_sha256"] == exposure["expected_names_sha256"]
+        and exposure["expected_count"] == 91,
+        "Control catalog comparison differs",
+    )
+    require(
+        seal["sealed_sha256"] == "fcef0436aa76e132e7e5f2aa448abfe7dc557b8f660024701027a43f3f0680d4"
+        and seal["sealed_ns"] < control["observed_ns"],
+        "Invalid preregistration",
+    )
+    require(
+        control["preferences"] == primary["shared_preferences"]
+        and control["private_enabled_tools"] == ["manage_terrain"]
+        and control["owned_editor_closed"] is True,
+        "Control native settings differ",
+    )
+    if row["prompt_submissions"]:
+        require(
+            row["readiness"]["ready"]
+            and row["readiness"]["inventory_count"] == 91
+            and row["readiness"]["inventory_sha256"] == exposure["expected_names_sha256"],
+            "Wrong control pre-delivery inventory",
+        )
+        require(
+            row["launch"]["ephemeral"]
+            and row["launch"]["model"] == primary["actor"]["model"]
+            and row["launch"]["reasoning_effort"] == primary["actor"]["reasoning_effort"],
+            "Wrong control launch",
+        )
+    return exposure
+
+
 STDERR_CLASSES = {
     "argument_parsing",
     "resource_read",
@@ -534,8 +646,8 @@ def verify_raw_case(published, raw):
         )
 
 
-def verify_private(data, root):
-    for label, revision, rows in (
+def verify_private(data, root, inventory_control=None):
+    cohorts = [
         ("baseline-six", data["baseline"]["source_revision"], data["baseline"]["cases"]),
         ("final", data["candidate_product"], data["cases"]),
         (
@@ -543,7 +655,84 @@ def verify_private(data, root):
             data["candidate_product"],
             data.get("matched_disabled", {}).get("cases", []),
         ),
-    ):
+    ]
+    if inventory_control is not None:
+        control_root = root / "inventory-control" / data["candidate_product"][:9]
+        seal = json.loads((control_root / "preregistered.json").read_bytes())
+        scope_bytes = (control_root / "scope.json").read_bytes()
+        scope = json.loads(scope_bytes)
+        row = inventory_control["case"]
+        require(
+            seal == inventory_control["preregistration"]
+            and hashlib.sha256(scope_bytes).hexdigest() == seal["sealed_sha256"],
+            "Private preregistration differs",
+        )
+        spec = next(r for pair in trial.pairs() for r in pair if r["id"] == row["id"])
+        require(
+            scope["spec"] == spec
+            and scope["attempts"] == 1
+            and scope["redraw"] is False
+            and scope["primary_snapshot_sha256"] == inventory_control["primary_packet_sha256"]
+            and scope["primary_case_sha256"] == inventory_control["primary_case_sha256"],
+            "Private control scope differs",
+        )
+        require(
+            scope["expected_tools"] == sorted(data["catalogs"]["full"]["tool_names"])
+            and scope["expected_sha256"] == inventory_control["expected_names_sha256"]
+            and scope["actor"] == data["actor"]
+            and (scope["revision"], scope["runtime"], scope["skill"])
+            == (data["candidate_product"], data["runtime_revision"], data["skill_revision"]),
+            "Invalid private control pins or expected names",
+        )
+        files = list(control_root.glob("*/receipts-*/*/row.json"))
+        require(
+            len(files) == 1 and files[0].parent.name == row["id"],
+            "Unexpected private supplemental original",
+        )
+        attempt = files[0].parent / "attempt-1"
+        if row["prompt_submissions"]:
+            tracked = json.loads((attempt / "children.json").read_bytes())
+            require(
+                tracked["prompt_sent_ns"] == inventory_control["observed_ns"] > seal["sealed_ns"],
+                "Original prompt preceded preregistration",
+            )
+            readiness = json.loads((attempt / "readiness.json").read_bytes())
+            require(
+                len(readiness["attempts"]) == 1
+                and all(
+                    readiness[k] == row["readiness"][k]
+                    for k in ("ready", "inventory_count", "inventory_sha256")
+                ),
+                "Supplemental preflight differs",
+            )
+        prefs = json.loads((control_root / "preferences-verified.json").read_bytes())
+        native_lane = control_root / "regular/lane-0"
+        store = json.loads((native_lane / "control/tool-preference-evidence.json").read_bytes())
+        source = json.loads((control_root / "regular/tool-preferences.json").read_bytes())
+        require(
+            prefs == inventory_control["preferences"]
+            and store["selected"] == inventory_control["private_enabled_tools"]
+            and len(source["values"])
+            == store["inherited"]
+            == store["initialized"]
+            == prefs["count"]
+            and source["sha256"] == prefs["before_sha256"] == prefs["after_sha256"]
+            and source["values"]["MCPForUnity.ToolEnabled.manage_terrain"] is False,
+            "Private control preferences differ",
+        )
+        closed = json.loads((control_root / "owned-editors-closed.json").read_bytes())
+        launch = json.loads((native_lane / "launch.json").read_bytes())
+        require(
+            closed["revision"] == data["candidate_product"]
+            and closed["recorded_launches"] == len(closed["evidence"]) == 1
+            and closed["evidence"][0]["pid"] == launch["pid"]
+            and closed["evidence"][0]["launch_epoch"] == launch["utc"]
+            and closed["evidence"][0]["lock_absent"] is True
+            and closed["evidence"][0]["owned_process_exited"] is True,
+            "Private supplemental Editor closure is missing",
+        )
+        cohorts.append(("inventory-control", data["candidate_product"], [row]))
+    for label, revision, rows in cohorts:
         group = root / label / revision[:9]
         if len(rows) == (142 if label == "final" else 6):
             scheduled = {r["id"] for r in rows}
@@ -758,9 +947,18 @@ def main():
     args = parser.parse_args()
     data = json.loads(args.result.read_bytes())
     summary = verify(data)
+    exposure = {"original_catalog_exposure": catalog_exposure(data["cases"], data["catalogs"])}
+    supplemental = None
+    if data["candidate_product"] == "e599e7bae0eed7ba7a24b9666a38002d10abd8c6":
+        supplemental = json.loads(
+            args.result.with_name("agent_outcome_inventory_control.json").read_bytes()
+        )
+        exposure["post_measurement_inventory_control"] = verify_inventory_control(
+            data, hashlib.sha256(args.result.read_bytes()).hexdigest(), supplemental
+        )
     if args.private_root:
-        verify_private(data, args.private_root.resolve())
-    print(json.dumps(summary, indent=2))
+        verify_private(data, args.private_root.resolve(), supplemental)
+    print(json.dumps(summary | exposure, indent=2))
     if args.require_perfect:
         try:
             require_perfect(summary)
