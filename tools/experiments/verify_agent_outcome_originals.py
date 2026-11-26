@@ -743,7 +743,7 @@ def main():
         "result",
         nargs="?",
         type=Path,
-        default=Path(__file__).with_name("agent_outcome_original_intermediate.json"),
+        default=Path(__file__).with_name("agent_outcome_original_results.json"),
     )
     parser.add_argument(
         "--private-root",
