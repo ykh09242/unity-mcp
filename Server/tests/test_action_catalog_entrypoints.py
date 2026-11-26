@@ -8,13 +8,13 @@ import pytest
 
 
 @pytest.fixture
-def server(monkeypatch):
+def server(monkeypatch, request):
     from core.config import config
     from services.tools import register_all_tools
 
     monkeypatch.setattr(config, "transport_mode", "stdio")
     monkeypatch.setattr(config, "http_remote_hosted", False)
-    server = FastMCP("action-catalog-tests")
+    server = FastMCP("action-catalog-tests", dereference_schemas=getattr(request, "param", True))
     register_all_tools(server, project_scoped_tools=False)
     return server
 
@@ -225,8 +225,10 @@ async def test_selected_material_fields_explain_nested_patch_and_addressing(serv
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("server", [True, False], indirect=True, ids=["inlined", "references"])
 async def test_local_schema_alternatives_keep_their_nested_inputs_and_required_values(server):
     from fastmcp.tools import Tool
+    from jsonschema import Draft202012Validator
 
     def inspect_port(action: str, probe=None):
         return {"probe": probe}
@@ -253,20 +255,21 @@ async def test_local_schema_alternatives_keep_their_nested_inputs_and_required_v
     }
     server.add_tool(definition)
     async with Client(server, mode="legacy") as client:
+        public = next(t.input_schema for t in await client.list_tools() if t.name == "inspect_port")
         description = await client.call_tool(
             "manage_tools", {"action": "describe", "tool": "inspect_port", "operation": "read"}
         )
         result = description.structured_content
         operation = result["operation"]
         assert operation["required_parameters"] == ["probe"]
-        assert operation["input_fields"]["probe"] == {"$ref": "#/$defs/Probe"}
+        assert result["tool"]["input_schema"]["oneOf"] == public["oneOf"]
+        field = Draft202012Validator(
+            {"$defs": public.get("$defs", {}), **operation["input_fields"]["probe"]}
+        )
+        assert field.is_valid({"channel": 1}) and not field.is_valid({"channel": 0})
         assert operation["input_variants"] == [
             {"schema_path": "#/oneOf/0", "required_parameters": ["probe"], "parameters": ["probe"]}
         ]
-        assert (
-            result["tool"]["input_schema"]["$defs"]["Probe"]["properties"]["channel"]["minimum"]
-            == 1
-        )
         prepare = operation["prepare_call"]
         for channel, ready in ((0, False), (1, True)):
             prepare["arguments"]["arguments"]["probe"] = {"channel": channel}
