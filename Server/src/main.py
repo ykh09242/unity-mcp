@@ -93,6 +93,7 @@ import math
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 import os
 from pathlib import Path
+from string import Template
 import threading
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, TypeVar
@@ -696,10 +697,26 @@ class UnityMCP(ServerRuntimeOwner, FastMCP):
         return app
 
 
-def _server_icon(filename: str, mime_type: str, size: str) -> Icon:
-    data = files("core").joinpath(filename).read_bytes()
+def _inline_icon(
+    data: bytes, mime_type: str, size: str, theme: Literal["light", "dark"] | None = None
+) -> Icon:
     encoded = b64encode(data).decode("ascii")
-    return Icon(src=f"data:{mime_type};base64,{encoded}", mime_type=mime_type, sizes=[size])
+    return Icon(
+        src=f"data:{mime_type};base64,{encoded}", mime_type=mime_type, sizes=[size], theme=theme
+    )
+
+
+def _server_icons() -> list[Icon]:
+    assets = files("core")
+    artwork = Template(assets.joinpath("server-icon.svg").read_text(encoding="utf-8"))
+    icons = [
+        _inline_icon(artwork.substitute(theme=theme).encode("utf-8"), "image/svg+xml", "any", theme)
+        for theme in ("light", "dark")
+    ]
+    icons.append(
+        _inline_icon(assets.joinpath("server-icon.png").read_bytes(), "image/png", "32x32")
+    )
+    return icons
 
 
 def create_mcp_server(
@@ -716,10 +733,7 @@ def create_mcp_server(
     mcp = UnityMCP(
         name="mcp-for-unity-server",
         version=RUNNING_SERVER.version,
-        icons=[
-            _server_icon("server-icon.svg", "image/svg+xml", "any"),
-            _server_icon("server-icon.png", "image/png", "32x32"),
-        ],
+        icons=_server_icons(),
         lifespan=server_lifespan,
         session_state_store=state_store,
         instructions=append_custom_instructions(

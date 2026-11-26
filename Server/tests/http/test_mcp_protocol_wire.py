@@ -5,6 +5,7 @@ import json
 from collections.abc import Iterator, Mapping
 from importlib.resources import files
 from typing import Final
+from xml.etree import ElementTree
 
 import httpx
 import pytest
@@ -89,17 +90,24 @@ def _message(response: httpx.Response) -> Mapping[str, JsonValue]:
 
 
 def _assert_server_icons(info):
-    icons = info["icons"]
-    for icon, filename, mime_type, size in (
-        (icons[0], "server-icon.svg", "image/svg+xml", "any"),
-        (icons[1], "server-icon.png", "image/png", "32x32"),
-    ):
+    expected = [
+        ("light", "image/svg+xml", "any"),
+        ("dark", "image/svg+xml", "any"),
+        (None, "image/png", "32x32"),
+    ]
+    for icon, (theme, mime_type, size) in zip(info["icons"], expected, strict=True):
+        assert icon.get("theme") == theme
         assert icon["mimeType"] == mime_type
         assert icon["sizes"] == [size]
         header, encoded = icon["src"].split(",", 1)
         assert header == f"data:{mime_type};base64"
-        asset = files("core").joinpath(filename).read_bytes()
-        assert base64.b64decode(encoded, validate=True) == asset
+        data = base64.b64decode(encoded, validate=True)
+        if theme is None:
+            assert data == files("core").joinpath("server-icon.png").read_bytes()
+        else:
+            svg = ElementTree.fromstring(data)
+            assert svg.tag == "{http://www.w3.org/2000/svg}svg"
+            assert svg.get("data-theme") == theme
 
 
 @pytest.mark.parametrize("omit_client_info", [False, True])

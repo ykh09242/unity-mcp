@@ -1,6 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" data-theme="${theme}">
   <title>Unity MCP</title>
   <style>
+    :root {
+      --blue: #2862c8;
+      --blue-edge: #19459d;
+      --teal: #0d8981;
+      --teal-edge: #086761;
+      --link: #08758c;
+    }
+    :root[data-theme="dark"] {
+      --blue: #3277d8;
+      --blue-edge: #8fc2ff;
+      --teal: #11978e;
+      --teal-edge: #73e4d4;
+      --link: #69ddeb;
+    }
     @media (prefers-reduced-motion: no-preference) {
       .sheen { animation: sweep 3.2s linear infinite; }
     }
@@ -24,14 +38,14 @@
       <stop offset="1" stop-color="#ddfbff" stop-opacity="0"/>
     </linearGradient>
   </defs>
-  <path d="M12 9h8 M12 16h8 M12 23h8" fill="none" stroke="#22d3ee" stroke-width="2"/>
+  <path d="M12 9h8 M12 16h8 M12 23h8" fill="none" stroke="var(--link)" stroke-width="2"/>
   <g stroke-width="1.5" stroke-linejoin="round">
-    <g stroke="#60a5fa">
-      <use href="#blue-face" fill="#2563eb"/>
+    <g stroke="var(--blue-edge)">
+      <use href="#blue-face" fill="var(--blue)"/>
       <path d="m3.5 8.4 11 6.4" fill="none"/>
     </g>
-    <g stroke="#2dd4bf">
-      <use href="#teal-face" fill="#0d9488"/>
+    <g stroke="var(--teal-edge)">
+      <use href="#teal-face" fill="var(--teal)"/>
       <path d="m28.5 8.4-11 6.4" fill="none"/>
     </g>
   </g>
