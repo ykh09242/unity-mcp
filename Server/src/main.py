@@ -539,8 +539,8 @@ Target and discover
 - Resolve the Editor via mcpforunity://instances. Sessionless: use unity_instance=Name@hash on tools and _meta.unity_instance on resources, or supported set_active_instance.
 - Keep names, paths and text verbatim. Use advertised URIs and observed template values.
 - Discover by meaning: search_unity_tools(selection="agent", query=original, limit=20). Follow next_call (next_offset). Open relevant IDs with open_family. Compare every operation's results, inputs and effects.
-- Missing a capability? manage_tools(action="catalog") lists selectable tools. For uncertain inputs use manage_tools(action="prepare",tool=name,arguments=draft,query=original). Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck scene/mode.
-- Check manage_tools(action="list_groups").discovery, client scope/project binding, Editor toggles and consent. Activate and refresh tools/list. Fixed inventory: restart with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full and reconnect. {custom_tools_note}
+- Before indirect reads, check manage_tools(action="catalog") for a direct tool. Prepare uncertain inputs via manage_tools(action="prepare",tool=name,arguments=draft,query=original). Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck scene/mode.
+- Check manage_tools(action="list_groups").discovery, client scope/project binding, Editor toggles and consent. Activate and refresh tools/list. Fixed inventory: let the user reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
 
 Observe and execute
 - For an indirect measurement, verify target, units and coverage. Label inferences. Respect disabled edits.

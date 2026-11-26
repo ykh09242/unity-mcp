@@ -85,12 +85,26 @@ server, the exposed sync action can then refresh visibility from that Editor:
 {"tool":"manage_tools","params":{"action":"sync"}}
 ```
 
-Refresh the client's inventory after the catalog change. Hosted sync is unavailable: Unity
+After selection, use the returned `refresh_request` to list the tools on the
+same connection and project. Follow the MCP list cursor to the end. The host
+controls which bindings it exposes to its agent. A fixed inventory can require
+the user to reconnect.
+
+Hosted sync is unavailable. Unity
 pushes its enabled catalog through the authenticated plugin session, and session group
 activation cannot grant a tool absent from that catalog. Resolve the Editor toggle/catalog
 or authentication problem instead of repeatedly activating a group.
 
 Project custom tools may appear directly in the host's callable inventory. When the current resource list advertises `mcpforunity://custom-tools`, read it for the scoped names and parameter schemas used by `execute_custom_tool`. Hosted mode exposes the authenticated user's enabled project tools through this scoped catalog and dispatcher. Supply the selected `unity_instance` and preserve its schema, availability and permission checks. Call built-in tools through their advertised bindings. Verify each binding against the host's callable inventory.
+
+## Recover an interrupted call
+
+When `get_execution_receipt` is advertised and its `describe` action reports an
+enabled store, use `prepare` with that store and the exact project hash before
+an edit whose acknowledgement matters. Save the returned `request_meta` and
+`lookup` before the original call. After a lost response, use that read-only
+lookup and verify the requested property or job in Unity. An unknown outcome
+requires further observation before repeating an edit.
 
 ## Check Installed Skill Contents
 
