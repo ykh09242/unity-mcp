@@ -12,8 +12,12 @@ weights or calling Unity. Preserve `route_surfaces`, host inventory constraints 
 any explicit `unity_instance` across pages. The offline CLI provides the same pages with
 `tool search QUERY --selection agent`, `--family ID`, `--limit` and `--offset`.
 
-MCP returns `next_call` for the next page and `open_family` for the selected
-family ID. Concrete resources have a complete `read_call`. When the tool
+MCP returns `next_call` for the next page. Add the chosen ID as `family` in
+`open_family.arguments`. Send the original text as the string value of `query`
+alongside `selection`. When `manage_tools` is available, a tool operation's
+`describe_call` identifies the exact binding and operation. Its response lists
+required and declared optional parameters alongside the typed input schema. Concrete
+resources have a complete `read_call`. When the tool
 directory is unrestricted, `selectable_catalog` opens the normal selection
 catalog to find tools beyond the current advertisement.
 

@@ -32,6 +32,7 @@ Use a known callable binding when its contract fits. For an unclear route, brows
 - Match shader evidence to its source. A saved Shader Graph file and the currently open graph can have different contents. Choose the advertised inspection route for the requested state. For compiler evidence, inspect diagnostics or compile the explicitly selected variant.
 - Prefab images use `capture_prefab`. Serialized edit previews use `prefab_contents(action="modify_contents", preview_only=true)` with an explicit observation scope when needed. UI/button interactions use `manage_input` and the existing UI framework's inspection tools.
 - Before unfamiliar C# calls, inspect project source or `unity_reflect` for fully qualified types, member signatures, static/instance access and parameter types. Recheck the contract after symbol/member errors.
+- Compare edited text with the requested literal, including punctuation. For a saved edit, read the target file or use the tool's verified disk result before reporting a save.
 - A pending compilation keeps its original `compile_id` and follows `get_compile_job`.
 
 1. Use the client's supported inventory to resolve missing capabilities or ambiguous Unity instances; verify the project before mutation.

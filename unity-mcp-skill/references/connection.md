@@ -11,8 +11,11 @@ Resources and templates have their own family IDs. Keep the original, target
 and host scope across pages. An exact family may be reopened without the query.
 
 Use the returned `next_call` to continue on the same connection. For a family
-directory, add the chosen ID as `family` to `open_family.arguments`. A concrete
-resource's `read_call` contains its advertised URI and any project binding.
+directory, add the chosen ID as `family` to `open_family.arguments`. Pass
+`query` as the original text string alongside `selection`. A tool operation's
+`describe_call` supplies the exact `tool` and `operation` when the caller can
+describe it. Read its required inputs, declared optional fields and schema before preparing an
+unfamiliar call. A concrete resource's `read_call` contains its URI and project binding.
 Use `resources/list` for installed skill URIs and `resources/templates/list`
 for templates. A local file path cannot identify a server resource.
 
