@@ -210,6 +210,7 @@ def test_actual_transports_when_owned_peers_complete_cancel_and_reconnect(tmp_pa
             "--work-ms",
             "0",
             "--resource-contract",
+            "--contract-command-budget",
         ],
         (TOOLS.parent,),
     )
@@ -231,6 +232,7 @@ def test_actual_transports_when_owned_peers_complete_cancel_and_reconnect(tmp_pa
         state = result["lifecycle"]["after_reconnect"]
         assert state["registrations"] == 2
         if result["mode"] == "http":
+            assert result["fixture_metadata"]["http_fast_fail_timeout_seconds"] == 5
             assert result["fixture_metadata"]["readiness_probe_workloads"] == ["state"]
             assert state["commands"]["ping"] == 3
             assert (state["pending"], state["retained"]) == (0, 0)

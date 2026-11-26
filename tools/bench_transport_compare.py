@@ -39,6 +39,7 @@ class Profile(FrozenModel):
     concurrency: int
     cohort_gate: bool
     resource_contract: bool = False
+    contract_command_budget: bool = False
 
 
 class Source(FrozenModel):

@@ -55,6 +55,8 @@ Products with bounded delivery may return a retained-result handle when text/str
 
 Natural counts and feature-presence metadata do not prove effective sharing. Verify that behavior with a separate paired capture enabling both `--cohort-gate` and `--resource-contract`; this is not automatically run or mixed into natural latency. The paired report records this proof boundary explicitly. Per-revision public/client RPC counts, partial-transfer cleanup, bounded positive reservations and payload/schema parity continue to be enforced in both capture types.
 
+The hermetic CI test also passes `--contract-command-budget` to give concurrent HTTP fast calls the fixture's five-second command budget. The selected product's fast-call deadline applies by default. Each HTTP capture reports the effective limit in `fixture_metadata.http_fast_fail_timeout_seconds` when the product exposes it. The comparator requires matching budget options, and measured elapsed times include the full wait.
+
 ## Stages and lifecycle
 
 | Field | Observation and limit |

@@ -74,6 +74,7 @@ class Options(BaseModel):
     product_revision: str = "current-checkout"
     cohort_gate: bool = False
     resource_contract: bool = False
+    contract_command_budget: bool = False
     diagnostic: bool = False
 
 
@@ -90,7 +91,7 @@ async def invoke(session: ClientSession, correlation: str) -> CallToolResult:
             raise ValueError(f"Unknown workload {other}")
     result = await session.call_tool(name, arguments, read_timeout_seconds=10)
     if not isinstance(result, CallToolResult) or result.is_error:
-        raise RuntimeError(f"MCP tool failed: {result}")
+        raise RuntimeError(f"MCP tool failed for {correlation}: {result}")
     return result
 
 
@@ -178,6 +179,8 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
         command.append("--cohort-gate")
     if options.resource_contract:
         command.append("--resource-contract")
+    if options.contract_command_budget and mode == "http":
+        command.append("--contract-command-budget")
     if diagnostic is not None:
         require_sdk()
         command.append("--diagnostic")
@@ -487,6 +490,10 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
 
 
 async def run(options: Options) -> dict[str, JsonValue]:
+    if options.contract_command_budget and not (options.cohort_gate and options.resource_contract):
+        raise ValueError(
+            "The fixture command budget requires --cohort-gate and --resource-contract"
+        )
     if options.diagnostic and (options.samples > 30 or options.warmup > 3):
         raise DiagnosticError(
             "Diagnostic captures are bounded to 30 samples and 3 warmups per workload"
@@ -648,6 +655,11 @@ if __name__ == "__main__":
         "--resource-contract",
         action="store_true",
         help="Separate held HTTP ordinary/authoritative resource CI contract",
+    )
+    parser.add_argument(
+        "--contract-command-budget",
+        action="store_true",
+        help="Use the owned fixture's 5s command budget for HTTP fast calls in the gated resource contract",
     )
     parser.add_argument(
         "--diagnostic",

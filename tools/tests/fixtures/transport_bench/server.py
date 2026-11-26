@@ -172,6 +172,14 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
     config.connection_timeout = 3
     config.local_auth_token = os.environ["BENCH_AUTH"]
     config.command_total_timeout = 5
+    if args.transport == "http" and args.contract_command_budget:
+        if not (args.cohort_gate and args.resource_contract):
+            raise ValueError("The fixture command budget requires a gated resource contract")
+        if not hasattr(PluginHub, "FAST_FAIL_TIMEOUT"):
+            raise ValueError("Selected product does not expose the HTTP fast-call deadline")
+        # Concurrent calls share a serial synthetic peer. The CI contract checks
+        # their delivery and accounting under the fixture's bounded command budget.
+        PluginHub.FAST_FAIL_TIMEOUT = config.command_total_timeout
     connection: MeasuredConnection | None = None
     listener: socket.socket | None = None
     endpoint = ""
@@ -408,6 +416,9 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
             )
         return {
             "product_imports": product_imports(),
+            "http_fast_fail_timeout_seconds": getattr(PluginHub, "FAST_FAIL_TIMEOUT", None)
+            if args.transport == "http"
+            else None,
             "accounting_sampled_high_water": accounting.peaks,
             "readiness_strategy": "inflight_shared"
             if hasattr(PluginHub, "_readiness_reads")
@@ -611,6 +622,7 @@ if __name__ == "__main__":
     parser.add_argument("--samples", type=int, required=True)
     parser.add_argument("--cohort-gate", action="store_true")
     parser.add_argument("--resource-contract", action="store_true")
+    parser.add_argument("--contract-command-budget", action="store_true")
     parser.add_argument("--diagnostic", action="store_true")
     args = parser.parse_args()
     anyio.run(main, args)
