@@ -12,7 +12,34 @@ namespace MCPForUnity.Editor.Windows
         private void ShowDiagnostics()
         {
             var owner = new WeakReference<MCPForUnityEditorWindow>(this);
-            McpDiagnosticWindow.Open(categories => owner.TryGetTarget(out var window) && window != null ? window.CaptureDiagnosticInput(categories) : null);
+            McpDiagnosticWindow.Open(
+                categories => owner.TryGetTarget(out var window) && window != null ? window.CaptureDiagnosticInput(categories) : null,
+                action => owner.TryGetTarget(out var window) && window != null && window.guiCreated && window.OpenDiagnosticObservation(action)
+            );
+        }
+
+        private bool OpenDiagnosticObservation(string action)
+        {
+            switch (action)
+            {
+                case McpDiagnosticBundle.RefreshGraphStatus when EditorConfigurationCache.Instance.UseHttpTransport:
+                    SwitchPanel(ActivePanel.ReferenceGraph);
+                    _ = graphSection.Run("overview", new JObject());
+                    break;
+                case McpDiagnosticBundle.SelectActivityJob:
+                    SwitchPanel(ActivePanel.Activity);
+                    break;
+                case McpDiagnosticBundle.OpenTools:
+                    SwitchPanel(ActivePanel.Tools);
+                    break;
+                case McpDiagnosticBundle.OpenResources:
+                    SwitchPanel(ActivePanel.Resources);
+                    break;
+                default:
+                    return false;
+            }
+            Focus();
+            return true;
         }
 
         private JObject CaptureDiagnosticInput(int categories)

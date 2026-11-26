@@ -246,6 +246,75 @@ namespace MCPForUnityTests.EditMode.Windows
         private sealed class Host : EditorWindow { }
 
         [Test]
+        public async Task MissingObservationsOfferScopedActionsWithoutReadingUntilRequested()
+        {
+            int requests = 0;
+            string transport = "http";
+            var host = ScriptableObject.CreateInstance<Host>();
+            EditorWindow window = null;
+            try
+            {
+                using var graph = new McpReferenceGraphSection(
+                    host.rootVisualElement,
+                    (action, _, __) =>
+                    {
+                        Assert.AreEqual("overview", action);
+                        requests++;
+                        return Task.FromResult(new JObject { ["graph_status"] = Sample()["graph"] });
+                    },
+                    () => "fixture-account"
+                );
+                window = Create(_ => new JObject { ["graph"] = graph.CaptureDiagnostics(), ["graph_transport"] = transport });
+                Task refresh = null;
+                Set(
+                    window,
+                    "OpenObservation",
+                    (Func<string, bool>)(
+                        action =>
+                        {
+                            Assert.AreEqual("refresh_reference_graph_status", action);
+                            graph.SetVisible(true);
+                            refresh = graph.Run("overview", new JObject());
+                            return true;
+                        }
+                    )
+                );
+                var root = window.rootVisualElement;
+                const string refreshName = "diagnostics-refresh_reference_graph_status";
+                Click(window, "diagnostics-generate");
+                Assert.Zero(requests);
+                Assert.IsNotNull(root.Q<Button>("diagnostics-select_job_in_activity"));
+                Assert.IsNotNull(root.Q<Button>("diagnostics-open_tools_panel"));
+                Assert.IsNotNull(root.Q<Button>("diagnostics-open_resources_panel"));
+
+                transport = "stdio";
+                Click(window, "diagnostics-generate");
+                Assert.IsNull(root.Q<Button>(refreshName));
+                transport = "http";
+                root.Q<Toggle>("diagnostics-category-8").value = false;
+                Click(window, "diagnostics-generate");
+                Assert.IsNull(root.Q<Button>(refreshName));
+                root.Q<Toggle>("diagnostics-category-8").value = true;
+                Click(window, "diagnostics-generate");
+                Click(window, refreshName);
+                Assert.IsFalse(root.Q<Button>("diagnostics-copy").enabledSelf);
+                await refresh;
+                Click(window, "diagnostics-generate");
+                Assert.AreEqual(1, requests);
+                Assert.IsNull(root.Q<Button>(refreshName));
+                var report = JObject.Parse(root.Q<TextField>("diagnostics-preview").value);
+                Assert.IsTrue(report["graph"].Value<bool>("available"));
+                Assert.AreEqual(8, report["graph"].Value<int>("revision"));
+            }
+            finally
+            {
+                if (window != null)
+                    UnityEngine.Object.DestroyImmediate(window);
+                UnityEngine.Object.DestroyImmediate(host);
+            }
+        }
+
+        [Test]
         public async Task ReferenceDiagnosticsNeverCrossIdentityOrRefreshTheGraph()
         {
             string identity = "fixture-account-a";

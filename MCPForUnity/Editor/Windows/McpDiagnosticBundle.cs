@@ -15,6 +15,11 @@ namespace MCPForUnity.Editor.Windows
             Operation = 16,
             All = 31;
 
+        internal const string RefreshGraphStatus = "refresh_reference_graph_status";
+        internal const string SelectActivityJob = "select_job_in_activity";
+        internal const string OpenTools = "open_tools_panel";
+        internal const string OpenResources = "open_resources_panel";
+
         private static JToken Count(JToken token)
         {
             if (token?.Type != JTokenType.Integer)
@@ -97,13 +102,13 @@ namespace MCPForUnity.Editor.Windows
                     ?? (
                         Allowed(snapshot["graph_transport"], "stdio") == "stdio"
                             ? Missing("graph_panel_requires_http", "inspect_graph_from_mcp_client")
-                            : Missing("no_status_for_current_connection", "refresh_reference_graph_status")
+                            : Missing("no_status_for_current_connection", RefreshGraphStatus)
                     );
             if ((categories & Operation) != 0)
                 result["operation"] = OperationSummary(snapshot["operation"] as JObject)
                     ?? Missing(
                         Boolean(snapshot["operation_selected"]).Value<bool?>() == true ? "selected_operation_no_longer_listed" : "no_operation_selected",
-                        "select_job_in_activity"
+                        SelectActivityJob
                     );
             return result;
         }
@@ -128,7 +133,7 @@ namespace MCPForUnity.Editor.Windows
             if (source == null)
             {
                 result["reason"] = "catalog_not_loaded";
-                result["next_action"] = tools ? "open_tools_panel" : "open_resources_panel";
+                result["next_action"] = tools ? OpenTools : OpenResources;
             }
             if (!tools)
             {

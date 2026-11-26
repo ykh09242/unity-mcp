@@ -14,20 +14,23 @@ namespace MCPForUnity.Editor.Windows
     internal sealed class McpDiagnosticWindow : EditorWindow
     {
         private Func<int, JObject> capture;
+        internal Func<string, bool> OpenObservation;
         private string previewText;
         private readonly Dictionary<int, Toggle> categories = new();
         internal Action<string> CopyText = null;
         internal Func<string> ChooseSavePath = null;
         internal Action<string, string> SaveText = null;
         private TextField preview;
+        private VisualElement nextSteps;
         private Label status;
         private Button copy,
             save;
 
-        internal static void Open(Func<int, JObject> capture)
+        internal static void Open(Func<int, JObject> capture, Func<string, bool> openObservation)
         {
             var window = CreateInstance<McpDiagnosticWindow>();
             window.Configure(capture);
+            window.OpenObservation = openObservation;
             window.titleContent = new GUIContent("Diagnostic bundle");
             window.minSize = new Vector2(360, 320);
             window.Show();
@@ -94,6 +97,10 @@ namespace MCPForUnity.Editor.Windows
                     : "Reopen diagnostics from the main window after script reload or when its owner is available."
             );
             status.name = "diagnostics-status";
+            nextSteps = new VisualElement();
+            nextSteps.style.flexDirection = FlexDirection.Row;
+            nextSteps.style.flexWrap = Wrap.Wrap;
+            content.Add(nextSteps);
             preview = new TextField
             {
                 name = "diagnostics-preview",
@@ -131,6 +138,7 @@ namespace MCPForUnity.Editor.Windows
         {
             previewText = null;
             preview?.SetValueWithoutNotify("");
+            nextSteps?.Clear();
             copy?.SetEnabled(false);
             save?.SetEnabled(false);
             if (status != null)
@@ -154,16 +162,59 @@ namespace MCPForUnity.Editor.Windows
                     status.text = "The owner is unavailable. Reopen diagnostics from the main window.";
                     return;
                 }
-                previewText = McpDiagnosticBundle.Build(input, selected, DateTimeOffset.UtcNow).ToString(Formatting.Indented);
+                var report = McpDiagnosticBundle.Build(input, selected, DateTimeOffset.UtcNow);
+                previewText = report.ToString(Formatting.Indented);
                 preview.SetValueWithoutNotify(previewText);
                 copy.SetEnabled(true);
                 save.SetEnabled(true);
                 status.text = "Preview generated from available observations. Copy and Save export exactly this preview.";
+                OfferObservation(report["graph"]);
+                OfferObservation(report["operation"]);
+                OfferObservation(report["capabilities"]?["tools"]);
+                OfferObservation(report["capabilities"]?["resources"]);
             }
             catch (Exception)
             {
                 status.text = "Could not collect diagnostics. Review the main window and generate the preview again.";
             }
+        }
+
+        private void OfferObservation(JToken section)
+        {
+            string action = section?.Value<string>("next_action");
+            string label = action switch
+            {
+                McpDiagnosticBundle.RefreshGraphStatus => "Refresh graph status",
+                McpDiagnosticBundle.SelectActivityJob => "Select a job in Activity",
+                McpDiagnosticBundle.OpenTools => "Open Tools",
+                McpDiagnosticBundle.OpenResources => "Open Resources",
+                _ => null,
+            };
+            if (label == null || OpenObservation == null)
+                return;
+            Action(nextSteps, label, "diagnostics-" + action, () => OpenNextStep(action));
+        }
+
+        private void OpenNextStep(string action)
+        {
+            bool opened;
+            try
+            {
+                opened = OpenObservation?.Invoke(action) == true;
+            }
+            catch (Exception)
+            {
+                opened = false;
+            }
+            if (status == null)
+                return;
+            if (!opened)
+            {
+                status.text = "This action is unavailable. Reopen diagnostics from the current connection.";
+                return;
+            }
+            InvalidatePreview();
+            status.text = "Generate a new preview after reviewing the observation in the main window.";
         }
 
         private void Copy()
@@ -205,6 +256,7 @@ namespace MCPForUnity.Editor.Windows
         private void OnDisable()
         {
             capture = null;
+            OpenObservation = null;
             previewText = null;
             CopyText = null;
             ChooseSavePath = null;
@@ -212,6 +264,7 @@ namespace MCPForUnity.Editor.Windows
             categories.Clear();
             rootVisualElement.Clear();
             preview = null;
+            nextSteps = null;
             status = null;
             copy = save = null;
         }

@@ -44,6 +44,17 @@ The receipt separates MCP discovery, an actual safe Unity read, target identity 
 Exit codes are `0` verified read and matching comparable source, `1` observed failure, `2` invalid doctor input, `3` incomplete/unknown, and `4` missing local SDK dependency. Read the enumerated `reason` and `next_action`; the command performs no repair. Cold stdio may perform existing metadata discovery handshake/ping probes, but the doctor read creates no new authenticated command generation and dispatches no native command. Unknown observations stay unknown.
 
 The CLI bounds its own SDK work and stream teardown. It awaits the existing auth loader under the same original deadline; a timeout sends no HTTP request and discards a later result. An OS-blocked auth-file read itself may outlive that wait, reported separately as `residual_auth_io: unknown`. Existing server discovery/native work follows its existing cancellation limits and may outlive a caller; `residual_server_work: unknown` does not claim native termination. Diagnostic output omits tokens, paths, raw configurations and native error bodies, including in verbose mode. Share the bounded receipt rather than credentials or full private logs.
+## Missing observations in the Editor diagnostic bundle
+
+**Generate preview** exports the observations held by the Unity MCP window. Each section's `available` field describes the evidence included in that preview. Use the connection doctor above to check whether a client can reach the Editor.
+
+| Preview entry | What it means | How to verify it |
+|---|---|---|
+| `graph.available: false` | The window has no graph status for the current connection. A graph with zero indexed entries can still return a status. | On HTTP, choose **Refresh graph status**, wait for the Reference Graph panel to display the result, then generate another preview. With stdio, call `manage_reference_graph(action="overview")` from the MCP client. |
+| `operation.available: false` | No Activity job is selected, or the selected job has left the list. Ordinary scene reads do not create an Activity job. | For a particular job, choose **Select a job in Activity**, select its row, then generate another preview. |
+| `resources.server_confirmation: "unavailable"` | The Editor enforces the saved resource toggles locally. Its bundle has no acknowledgement of the catalog visible to a particular client. | Run `resources/list` in that client, then read the resource URI you need. |
+| `reason: "catalog_not_loaded"` | The window has not loaded the local tool or resource catalog. | Choose **Open Tools** or **Open Resources**, then generate another preview. |
+
 ## Server still uses the previous build after an update
 
 An externally owned stdio server can stay alive after the Unity package changes.
