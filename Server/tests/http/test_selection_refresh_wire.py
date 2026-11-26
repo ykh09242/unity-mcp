@@ -8,6 +8,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from fastmcp.utilities.tests import run_server_async
+from mcp.shared.exceptions import MCPError
 from mcp.types import PaginatedRequestParams, ToolListChangedNotification
 import pytest
 
@@ -100,7 +101,7 @@ async def test_result_refresh_uses_the_request_editor_and_respects_its_toggles(
     await registry.register("two", "Second", "second", "6001")
     await publish(registry, "one", [])
     await publish(registry, "two", ["effect_probe"])
-    async with Client(server, mode="legacy", cache=False) as client:
+    async with run_server_async(server) as url, Client(url, mode="legacy", cache=False) as client:
         result = (
             await client.call_tool(
                 "manage_tools", {"action": "activate", "group": "vfx", "unity_instance": "seco"}
@@ -117,3 +118,45 @@ async def test_result_refresh_uses_the_request_editor_and_respects_its_toggles(
         refreshed = {tool.name for tool in page.tools}
         assert "effect_probe" in refreshed and "texture_probe" not in refreshed
         assert "effect_probe" not in await names(client)
+        await registry.unregister("two")
+        with pytest.raises(MCPError):
+            await client.session.list_tools(
+                params=PaginatedRequestParams.model_validate(request["params"])
+            )
+        assert "manage_tools" in await names(client)
+
+
+@pytest.mark.asyncio
+async def test_prepare_compares_draft_selectors_on_the_current_request_router(
+    catalog_server, monkeypatch
+):
+    server, registry, _, _ = catalog_server
+    routing = next(item for item in server.middleware if isinstance(item, UnityInstanceMiddleware))
+    monkeypatch.delattr(routing, "_inject_unity_instance")
+    await registry.register("one", "First", "shared-amber", "6000")
+    await registry.register("two", "Second", "shared-blue", "6001")
+
+    @server.tool
+    def target_probe(unity_instance: str):
+        raise AssertionError("prepare must not dispatch the target")
+
+    async with run_server_async(server) as url, Client(url, mode="legacy", cache=False) as client:
+
+        async def prepare(outer, inner):
+            return (
+                await client.call_tool(
+                    "manage_tools",
+                    {
+                        "action": "prepare",
+                        "tool": "target_probe",
+                        "unity_instance": outer,
+                        "arguments": {"unity_instance": inner},
+                    },
+                )
+            ).structured_content
+
+        for outer, inner in (("shared-b", "shared-b"), ("shared-b", "SHARED-BL")):
+            result = await prepare(outer, inner)
+            assert result["prepared_call"]["arguments"] == {"unity_instance": "Second@shared-blue"}
+        for inner in ("shared-a", "missing", "shared", None):
+            assert not (await prepare("Second@shared-blue", inner))["ready"]

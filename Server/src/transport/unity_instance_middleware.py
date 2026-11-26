@@ -158,6 +158,11 @@ def set_unity_instance_middleware(middleware: "UnityInstanceMiddleware") -> None
     _unity_instance_middleware = middleware
 
 
+def _request_target_metadata(ctx) -> dict:
+    meta = getattr(getattr(ctx, "request_context", None), "meta", None)
+    return meta if isinstance(meta, dict) else {}
+
+
 def resolve_discovered_instance(value: str | int, instances: list, transport: str) -> str:
     """Resolve against the caller-visible catalog, retaining stdio port shorthand."""
     if type(value) is int:
@@ -585,13 +590,12 @@ class UnityInstanceMiddleware(Middleware):
                     )
                     logger.debug("Per-call unity_instance resolved to: %s", active_instance)
 
-        if msg_args is None:
-            metadata = getattr(getattr(ctx, "request_context", None), "meta", None)
-            if isinstance(metadata, dict) and "unity_instance" in metadata:
-                raw = metadata["unity_instance"]
-                if not isinstance(raw, str) or not raw.strip():
-                    raise ValueError("Request metadata unity_instance must be a nonempty string")
-                active_instance = await self._resolve_instance_value(raw.strip(), ctx)
+        metadata = _request_target_metadata(ctx) if msg_args is None else {}
+        if "unity_instance" in metadata:
+            raw = metadata["unity_instance"]
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError("Request metadata unity_instance must be a nonempty string")
+            active_instance = await self._resolve_instance_value(raw.strip(), ctx)
 
         if not active_instance:
             if config.require_explicit_target and not config.http_remote_hosted:
@@ -643,7 +647,7 @@ class UnityInstanceMiddleware(Middleware):
                     TimeoutError,
                     NoUnitySessionError,
                 ) as exc:
-                    if require_explicit:
+                    if require_explicit or "unity_instance" in metadata:
                         raise ToolError("explicit_unity_target_unavailable") from exc
                     # If resolution fails, it means the Unity instance is not reachable via HTTP/WS.
                     # If we are in stdio mode, this might still be fine if the user is just setting state?
@@ -657,7 +661,7 @@ class UnityInstanceMiddleware(Middleware):
                         exc_info=True,
                     )
                 except Exception as exc:
-                    if require_explicit:
+                    if require_explicit or "unity_instance" in metadata:
                         raise
                     # Re-raise unexpected system exceptions to avoid swallowing critical failures
                     if isinstance(exc, (SystemExit, KeyboardInterrupt)):
@@ -1183,8 +1187,9 @@ class UnityInstanceMiddleware(Middleware):
             if not is_internal_catalog_list(context):
                 await self._inject_unity_instance(context, allow_reconnect=False)
         except Exception as exc:
-            # Re-raise authentication errors so callers get a proper auth failure
-            if isinstance(exc, RuntimeError) and "authentication" in str(exc).lower():
+            if "unity_instance" in _request_target_metadata(context.fastmcp_context) or (
+                isinstance(exc, RuntimeError) and "authentication" in str(exc).lower()
+            ):
                 raise
             _diag.warning(
                 "on_list_tools: _inject_unity_instance failed (%s: %s), continuing without instance",

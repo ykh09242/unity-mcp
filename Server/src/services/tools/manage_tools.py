@@ -847,6 +847,20 @@ async def _prepare_binding(ctx, name, draft, original, operation):
         for p in inspect.signature(func).parameters.values()
     )
     project = (await _retry_project_binding(ctx)).get("unity_instance")
+    if project is not None and "unity_instance" in draft and draft["unity_instance"] != project:
+        from transport.unity_instance_middleware import UnityInstanceMiddleware
+
+        router = next(
+            (m for m in ctx.fastmcp.middleware if isinstance(m, UnityInstanceMiddleware)), None
+        )
+        if router is not None:
+            try:
+                target = await router._resolve_instance_value(
+                    draft["unity_instance"], ctx, allow_reconnect=False
+                )
+            except ValueError as exc:
+                return not_prepared(str(exc))
+            draft = {**draft, "unity_instance": target}
     return prepare_tool_call(
         name,
         schema,

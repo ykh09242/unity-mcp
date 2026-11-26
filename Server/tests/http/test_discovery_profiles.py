@@ -199,7 +199,8 @@ async def test_unidentified_modern_scope_refuses_and_explains_static_fallback(
         result = (
             await client.call_tool("manage_tools", {"action": "activate", "group": "vfx"})
         ).structured_content
-        assert "UNITY_MCP_TOOL_PROFILE=full" in result["error"]
+        assert "project-bound stdio" in result["error"]
+        assert "UNITY_MCP_TOOL_PROFILE=full" not in result["error"]
         assert "effect_probe" not in await names(client)
         assert store.retained_entries == 0
 
@@ -298,12 +299,12 @@ def test_real_http_without_sdk_identity_uses_static_profile(discovery_server, pr
         assert capability["mode"] == "static_profile"
         assert capability["selection_supported"] is False
         assert capability["reason"] == "verified_sdk_principal_required"
-        assert "UNITY_MCP_TOOL_PROFILE=full" in capability["guidance"]
+        assert "project-bound stdio" in capability["guidance"]
         refused = request(
             "tools/call",
             {"name": "manage_tools", "arguments": {"action": "activate", "group": "vfx"}},
         )
-        assert "UNITY_MCP_TOOL_PROFILE=full" in refused["structuredContent"]["error"]
+        assert refused["structuredContent"]["error"] == capability["guidance"]
         assert request("tools/list")["tools"] == before
         assert ("effect_probe" in {tool["name"] for tool in before}) == (profile == "full")
         assert store.retained_entries == 0

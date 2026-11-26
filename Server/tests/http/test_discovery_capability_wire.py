@@ -40,7 +40,7 @@ def test_modern_http_preflight_exposes_static_selection_and_startup_guidance(pro
     assert capability["reason"] == "verified_sdk_principal_required"
     assert capability["selection_supported"] is False
     assert "no supported stable client scope and resolved project" in capability["guidance"]
-    assert "UNITY_MCP_TOOL_PROFILE=full" in capability["guidance"]
+    assert "project-bound stdio" in capability["guidance"]
 
     resource = {"uri": "mcpforunity://doctor/runtime"}
     response = protocol_http.post(

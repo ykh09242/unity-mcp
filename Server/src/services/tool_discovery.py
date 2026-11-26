@@ -59,7 +59,6 @@ REFRESH_GUIDANCE = (
 UNSCOPED_GUIDANCE = (
     "This sessionless connection has no supported stable client scope and resolved project. "
     "Use a stateful handshake, a project-bound stdio connection, or authenticated SDK scope. "
-    "Alternatively start the server with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full and reconnect. "
     "Editor toggles still control availability. " + CLIENT_INVENTORY_GUIDANCE
 )
 SETUP_GUIDANCE = (
