@@ -4,7 +4,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from unittest.mock import AsyncMock
 
-from fastmcp import Client
+from fastmcp import Client, FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from mcp.shared.exceptions import MCPError
@@ -14,8 +14,64 @@ import pytest
 from tests.http.test_discovery_profiles import discovery_server, names  # noqa: F401
 from tests.http.test_catalog_selection import catalog_server, publish  # noqa: F401
 from tests.http.test_plugin_command_progress import loopback_http
+from tests.test_http_command_outcome import command_hub  # noqa: F401
 from tests.timing import watchdog_timeout
 from transport.unity_instance_middleware import UnityInstanceMiddleware
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_connection_operation_keeps_its_scope_on_a_project_bound_discovery(command_hub, mode):
+    from jsonschema import Draft202012Validator
+    from services.resources.unity_instances import unity_instances
+    from services.tools import register_all_tools
+
+    app = FastMCP("connection operation")
+    app.add_middleware(UnityInstanceMiddleware())
+    app.resource("mcpforunity://instances")(unity_instances)
+    register_all_tools(app)
+    await command_hub.registry.register("second", "Second", "other", "6000.3")
+    selector = {"unity_instance": "Fixture@hash"}
+    target = {"action": "list_instances"}
+    async with Client(app, mode=mode, cache=False) as client:
+        describe = await client.call_tool(
+            "manage_tools",
+            {
+                "action": "describe",
+                "tool": "manage_tools",
+                "operation": "list_instances",
+                **selector,
+            },
+        )
+        card = describe.structured_content["operation"]
+        assert card["invoke"]["arguments"] == target
+        template = card["prepare_call"]
+        assert "unity_instance" not in template["arguments"]
+        page = await client.call_tool(
+            "search_unity_tools",
+            {"selection": "agent", "family": "manage_tools", "limit": 20, **selector},
+        )
+        row = next(
+            row
+            for row in page.structured_content["operations"]
+            if row["action"] == "list_instances"
+        )
+        assert row["invoke"] == card["invoke"]
+        for request in (
+            template["arguments"],
+            {"action": "prepare", "tool": "manage_tools", "arguments": target, **selector},
+        ):
+            prepared = (await client.call_tool("manage_tools", request)).structured_content
+            assert prepared["prepared_call"] == card["invoke"]
+            call = prepared["prepared_call"]
+            result = (await client.call_tool(call["tool"], call["arguments"])).structured_content
+            assert {row["id"] for row in result["instances"]} == {"Fixture@hash", "Second@other"}
+            bad = await client.call_tool(
+                "manage_tools", {**request, "arguments": {**target, **selector}}
+            )
+            assert bad.structured_content["ready"] is False
+        public = next(t.input_schema for t in await client.list_tools() if t.name == "manage_tools")
+        assert not Draft202012Validator(public).is_valid({**target, **selector})
 
 
 @pytest.mark.asyncio
@@ -164,6 +220,18 @@ async def test_prepare_compares_draft_selectors_on_the_current_request_router(
                     },
                 )
             ).structured_content
+
+        described = await client.call_tool(
+            "manage_tools",
+            {"action": "describe", "tool": "target_probe", "unity_instance": "shared-b"},
+        )
+        template = described.structured_content["operation"]["prepare_call"]
+        assert template["arguments"]["unity_instance"] == "Second@shared-blue"
+        prepared = await client.call_tool(template["tool"], template["arguments"])
+        assert prepared.structured_content["prepared_call"] == {
+            "tool": "target_probe",
+            "arguments": {"unity_instance": "Second@shared-blue"},
+        }
 
         for outer, inner in (("shared-b", "shared-b"), ("shared-b", "SHARED-BL")):
             result = await prepare(outer, inner)

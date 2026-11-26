@@ -226,6 +226,22 @@ ACTION_RULES: dict[str, tuple[ActionRule, ...]] = {
 }
 
 
+def forbidden_action_parameters(name, action, schema):
+    rule = next((item for item in ACTION_RULES.get(name, ()) if item.action == action), None)
+    return list(
+        dict.fromkeys(
+            [
+                *(rule.forbidden if rule else ()),
+                *(
+                    key
+                    for key, actions in scoped_parameters(schema).items()
+                    if action is not None and action not in actions
+                ),
+            ]
+        )
+    )
+
+
 def action_input_error(name: str, arguments: dict) -> str | None:
     for rule in ACTION_RULES.get(name, ()):
         if rule.action != arguments.get("action"):

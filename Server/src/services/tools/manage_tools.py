@@ -30,6 +30,7 @@ from services.registry import (
     get_registered_tools,
 )
 from services.registry.action_catalog import ActionIntent, CatalogResource, ObservationSource
+from services.registry.action_contracts import forbidden_action_parameters
 from services.registry.call_preparation import (
     MAX_ORIGINAL_REQUEST_LENGTH,
     ORIGINAL_REQUEST,
@@ -332,6 +333,13 @@ async def search_unity_tools(
                 if binding["action"] is not None:
                     args["operation"] = binding["action"]
                 binding["describe_call"] = {"tool": "manage_tools", "arguments": args}
+            if binding["kind"] == "tool" and project:
+                schema = entries[binding["tool"]].get("input_schema", {})
+                if (
+                    "unity_instance" in schema.get("properties", {})
+                    and "unity_instance" not in binding["forbidden_parameters"]
+                ):
+                    binding["invoke"]["arguments"].update(project)
             if binding["kind"] == "resource":
                 params = {"uri": binding["uri"]}
                 if project:
@@ -440,8 +448,8 @@ async def manage_tools(
     ctx: Context,
     action: Annotated[
         Literal[
-            "list_instances",
             "list_groups",
+            "list_instances",
             "activate",
             "deactivate",
             "sync",
@@ -685,9 +693,10 @@ async def manage_tools(
     if action == "describe":
         if group is not None or not tool:
             return {"success": False, "error": "describe requires a tool name and no group."}
-        entries, visible = await _catalog_inventory(ctx, entries, discovery)
+        visible = await _selection_inventory(ctx)
+        entries = _catalog_entries(entries, discovery, visible or {})
         name = tool.strip()
-        definition = visible.get(name)
+        definition = visible.get(name) if visible is not None else None
         if definition is None and discovery is not None:
             definition = discovery.definitions.get(name)
         if definition is None or name not in entries:
@@ -695,7 +704,31 @@ async def manage_tools(
                 "success": False,
                 "error": "Unknown tool in this catalog and the current advertised inventory. Browse catalog or refresh the client tool list.",
             }
-        return _describe_binding(entries[name], definition, operation, visible)
+        result = _describe_binding(entries[name], definition, operation, visible)
+        card = result.get("operation")
+        if card is not None and visible and name in visible and "manage_tools" in visible:
+            project = (
+                {}
+                if "unity_instance" in card["forbidden_parameters"]
+                else await _retry_project_binding(ctx)
+            )
+            if "unity_instance" in definition.parameters.get("properties", {}):
+                card["invoke"]["arguments"].update(project)
+            card["prepare_call"] = {
+                "tool": "manage_tools",
+                "arguments": {
+                    "action": "prepare",
+                    "tool": name,
+                    **({"operation": operation} if operation is not None else {}),
+                    "arguments": {"action": operation} if operation is not None else {},
+                    **project,
+                },
+            }
+            card["input_contract"] += (
+                " Fill the target arguments inside prepare_call.arguments.arguments with the "
+                "required and intended optional inputs. Use the returned prepared_call after ready=true."
+            )
+        return result
     if action == "list_instances":
         from services.resource_inventory import read_inventory
 
@@ -865,7 +898,7 @@ def _describe_binding(entry, definition, operation, visible):
             {**entry, "input_schema": definition.parameters},
             definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
             operation,
-            visible_names=set(visible),
+            visible_names=set(visible) if visible is not None else None,
         )
     except ValueError as error:
         return {"success": False, "error": str(error)}
@@ -894,7 +927,12 @@ async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=
         for p in inspect.signature(func).parameters.values()
     )
     project = (await _retry_project_binding(ctx)).get("unity_instance")
-    if "unity_instance" in draft and (project is None or draft["unity_instance"] != project):
+    selector = operation if operation is not None else draft.get("action")
+    if "unity_instance" in forbidden_action_parameters(name, selector, schema):
+        if draft.get("unity_instance") is not None:
+            return not_prepared("This operation does not accept a target unity_instance.")
+        project = None
+    elif "unity_instance" in draft and (project is None or draft["unity_instance"] != project):
         from transport.unity_instance_middleware import UnityInstanceMiddleware
 
         router = next(
@@ -998,8 +1036,12 @@ async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
 
 
 async def _catalog_inventory(ctx, declarations, discovery):
-    """Retain selectable built-ins and add wire descriptors visible to this request only."""
     visible = {item.name: item for item in await _visible_tools(ctx)}
+    return _catalog_entries(declarations, discovery, visible), visible
+
+
+def _catalog_entries(declarations, discovery, visible):
+    """Retain selectable built-ins and add wire descriptors visible to this request only."""
     registered = discovery.definitions if discovery is not None else visible
     entries = {entry["name"]: entry for entry in declarations if entry["name"] in registered}
     for name, item in visible.items():
@@ -1013,7 +1055,7 @@ async def _catalog_inventory(ctx, declarations, discovery):
                 "kwargs": {"annotations": item.annotations},
                 "input_schema": item.parameters,
             }
-    return entries, visible
+    return entries
 
 
 async def _visible_tools(ctx: Context):

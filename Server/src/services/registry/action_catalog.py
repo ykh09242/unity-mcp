@@ -5,13 +5,15 @@ remain authoritative and never consult these hints for admission or retries.
 """
 
 import inspect
+import json
 import re
 from collections.abc import Callable, Collection, Mapping
 from copy import deepcopy
 from dataclasses import replace
 from functools import lru_cache
-from types import MappingProxyType
-from typing import Final, Literal, NotRequired, TypedDict, get_args, get_origin
+from types import MappingProxyType, UnionType
+from typing import Annotated, Final, Literal, NotRequired, TypedDict, Union, get_args, get_origin
+from urllib.parse import quote
 
 from mcp.types import ToolAnnotations
 from pydantic import (
@@ -32,7 +34,7 @@ from services.registry.action_contracts import (
     ACTION_RULES,
     declared_optional_parameters,
     required_action_parameters,
-    scoped_parameters,
+    forbidden_action_parameters,
 )
 from services.registry.action_guidance_types import (
     ActionGuidance,
@@ -942,18 +944,34 @@ def _selector_values(field, definitions, seen=frozenset()) -> list[str] | None:
     return None
 
 
+def _wire_variants(schema):
+    """Read direct alternatives and local definition references without external resolution."""
+    definitions = schema.get("$defs", {})
+    key = "oneOf" if schema.get("oneOf") else "anyOf"
+    for index, variant in enumerate(schema.get(key, ())):
+        path = f"#/{key}/{index}"
+        seen = set()
+        while isinstance(variant, dict) and set(variant) == {"$ref"}:
+            ref = variant["$ref"]
+            if not ref.startswith("#/$defs/") or ref in seen:
+                break
+            seen.add(ref)
+            name = ref.removeprefix("#/$defs/").replace("~1", "/").replace("~0", "~")
+            variant = definitions.get(name, {})
+        if variant is False:
+            continue
+        body = variant if isinstance(variant, dict) else {}
+        selectors = _selector_values(body.get("properties", {}).get("action"), definitions)
+        yield path, body, selectors
+
+
 def declared_actions(entry: CatalogEntry) -> list[str]:
     """Prefer bounded wire selectors, then registered capabilities and Python literals."""
     schema = entry.get("input_schema", {})
     definitions = schema.get("$defs", {})
     direct = _selector_values(schema.get("properties", {}).get("action"), definitions)
-    branches = schema.get("oneOf") or schema.get("anyOf") or ()
-    variants = [
-        _selector_values(branch.get("properties", {}).get("action"), definitions)
-        for branch in branches
-        if isinstance(branch, dict)
-    ]
-    if variants and all(group is not None for group in variants) and len(variants) == len(branches):
+    variants = [selectors for _, _, selectors in _wire_variants(schema)]
+    if variants and all(group is not None for group in variants):
         selectors = list(dict.fromkeys(value for group in variants for value in group))
         return [value for value in selectors if direct is None or value in direct]
     if direct is not None:
@@ -1047,16 +1065,11 @@ def action_guidance(
     source = TOOL_GUIDANCE.get(owner) if inherit and owner != entry["name"] else None
     shared = source.actions.get(action) if source else None
     schema = entry.get("input_schema", {})
-    variants = []
-    for variant in schema.get("oneOf") or schema.get("anyOf", ()):
-        if variant is True:
-            variants.append({})
-        elif isinstance(variant, dict):
-            values = _selector_values(
-                variant.get("properties", {}).get("action"), schema.get("$defs", {})
-            )
-            if values is None or action in values:
-                variants.append(variant)
+    variants = [
+        variant
+        for _, variant, values in _wire_variants(schema)
+        if values is None or action in values
+    ]
     # Registered forwarders run the same operation, with a subset of its inputs.
     # Explicit wire alternatives take precedence over inherited requirements.
     purpose = documented_actions(tool_description(entry)).get(
@@ -1162,7 +1175,7 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
     )
     if graph_options and (graph_options.required or graph_options.exactly_one):
         required.append("options")
-    return {
+    card = {
         "tool": entry["name"],
         "action": action,
         "intent": action_intent(guidance, tool),
@@ -1194,19 +1207,8 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
                 ]
             )
         ),
-        "forbidden_parameters": list(
-            dict.fromkeys(
-                [
-                    *(rules.forbidden if rules else ()),
-                    *(
-                        name
-                        for name, actions in scoped_parameters(
-                            entry.get("input_schema", {})
-                        ).items()
-                        if action is not None and action not in actions
-                    ),
-                ]
-            )
+        "forbidden_parameters": forbidden_action_parameters(
+            entry["name"], action, entry.get("input_schema", {})
         ),
         **({"alias_of": contract.alias_of} if contract and contract.alias_of else {}),
         **(
@@ -1231,6 +1233,15 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
         "maturity": tool["action_maturity"].get(action, tool["maturity"]),
         "invoke": {"tool": entry["name"], "arguments": {"action": action} if action else {}},
     }
+    if action is not None:
+        optional = [
+            name
+            for name in declared_optional_parameters(entry.get("input_schema", {}), action)
+            if name not in card["required_parameters"]
+        ]
+        if optional:
+            card["optional_parameters"] = optional
+    return card
 
 
 class CatalogRequest(BaseModel):
@@ -1489,6 +1500,81 @@ def browse_catalog(
     return response
 
 
+def _parameter_description(annotation):
+    """Recover published Annotated prose the SDK can omit beside other field metadata."""
+    if get_origin(annotation) in (Union, UnionType):
+        members = [member for member in get_args(annotation) if member is not type(None)]
+        if len(members) == 1:
+            return _parameter_description(members[0])
+    if get_origin(annotation) is Annotated:
+        return next((meta for meta in get_args(annotation)[1:] if isinstance(meta, str)), None)
+    return None
+
+
+def _describe_inputs(card, schema, function):
+    """Highlight declared inputs; leave their full schema and cross-field conditions intact."""
+    properties = schema.get("properties", {})
+    action = card["action"]
+    selected = set(card["required_parameters"]) | set(card.get("optional_parameters", ()))
+    variants = [
+        (path, variant)
+        for path, variant, selectors in _wire_variants(schema)
+        if action is None or selectors is None or action in selectors
+    ]
+    if variants:
+        card["input_variants"] = [
+            {
+                "schema_path": path,
+                "required_parameters": [
+                    name for name in variant.get("required", ()) if name != "action"
+                ],
+                "parameters": [name for name in variant.get("properties", {}) if name != "action"],
+            }
+            for path, variant in variants
+        ]
+        for _, variant in variants:
+            selected.update(variant.get("required", ()))
+            selected.update(variant.get("properties", {}))
+        common = {
+            name: field
+            for name, field in variants[0][1].get("properties", {}).items()
+            if all(v.get("properties", {}).get(name) == field for _, v in variants[1:])
+        }
+        properties = {**common, **properties}
+    if action is None:
+        selected.update(properties)
+    else:
+        selected.discard("action")
+    selected.difference_update(card["forbidden_parameters"])
+    fields = {name: field for name, field in properties.items() if name in selected}
+    # Large custom fields are already present in the full descriptor. Keep the
+    # selected view small and preserve every constraint at its exact location.
+    for name, field in fields.items():
+        if (
+            name in schema.get("properties", {})
+            and len(json.dumps(field, ensure_ascii=False)) > 2048
+        ):
+            pointer = name.replace("~", "~0").replace("/", "~1")
+            fields[name] = {"$ref": f"#/properties/{quote(pointer, safe='')}"}
+    if function is not None:
+        for name, param in inspect.signature(function, eval_str=True).parameters.items():
+            field = fields.get(name)
+            if isinstance(field, dict) and "description" not in field:
+                if description := _parameter_description(param.annotation):
+                    fields[name] = {**field, "description": description}
+    card["input_fields"] = fields
+    excluded = {"action", "unity_instance", *card["forbidden_parameters"], *selected}
+    other = [name for name in properties if name not in excluded]
+    if other:
+        card["other_tool_parameters"] = other
+    card["input_contract"] = (
+        "input_fields shows the declared argument shapes. Read nested keys and descriptions under "
+        "their owning field. Resolve references and input_variants against the full tool input schema, "
+        "which also contains conditional requirements. Other tool parameters have no confirmed role "
+        "on this operation."
+    )
+
+
 def describe_action(
     entry: CatalogEntry,
     descriptor: dict,
@@ -1497,14 +1583,22 @@ def describe_action(
     visible_names: set[str] | None = None,
 ) -> dict:
     """Bind a selected action while preserving the actual SDK schema and constraints."""
+    entry = {**entry, "input_schema": descriptor.get("inputSchema", descriptor.get("input_schema"))}
     descriptor = deepcopy(descriptor)
+    schema = descriptor.get("inputSchema", descriptor.get("input_schema"))
     card = None
     if operation is not None:
         card = action_card(entry, operation)
-        schema = descriptor.get("inputSchema", descriptor.get("input_schema"))
-        action_schema = schema.setdefault("properties", {}).setdefault("action", {})
-        action_schema["const"] = operation
+        properties = schema.setdefault("properties", {})
+        action_schema = properties.get("action", {})
+        # A union may put its selector constraints entirely in the alternatives.
+        action_schema = (
+            {**action_schema, "const": operation}
+            if isinstance(action_schema, dict)
+            else {"allOf": [action_schema], "const": operation}
+        )
         action_schema.pop("default", None)
+        properties["action"] = action_schema
         schema["required"] = list(
             dict.fromkeys([*schema.get("required", ()), "action", *card["required_parameters"]])
         )
@@ -1516,15 +1610,15 @@ def describe_action(
                 if "options" not in schema["required"]:
                     schema["required"].append("options")
                 options.pop("default", None)
-        if optional := declared_optional_parameters(schema, operation):
-            card["optional_parameters"] = optional
     elif not declared_actions(entry):
         card = action_card(entry, None)
+    if card is not None:
+        _describe_inputs(card, schema, entry.get("func"))
     catalog = tool_capability(entry, visible_names=visible_names)
     return {
+        "operation": card,
         "tool": descriptor,
         "catalog": catalog,
-        "operation": card,
         "maturity": catalog["maturity"],
         "action_maturity": catalog["action_maturity"],
         "note": "Optional parameters list inputs declared for this operation. The full schema retains common inputs and conditional requirements. Effects are hints. Selection, readiness and permissions are evaluated independently.",
