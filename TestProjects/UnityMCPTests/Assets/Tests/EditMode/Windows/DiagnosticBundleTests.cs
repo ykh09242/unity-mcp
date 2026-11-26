@@ -1,10 +1,12 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Windows;
+using MCPForUnity.Editor.Windows.Components.Activity;
 using MCPForUnity.Editor.Windows.Components.ReferenceGraph;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -48,6 +50,7 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.AreEqual(1, all["graph"].Value<int>("provider_count"));
             Assert.AreEqual("applied", all["capabilities"]["tools"]["application"].Value<string>("stage"));
             Assert.AreEqual("unavailable", all["capabilities"]["resources"].Value<string>("server_confirmation"));
+            Assert.AreEqual("editor_access_enforced_locally", all["capabilities"]["resources"].Value<string>("server_confirmation_reason"));
             Assert.AreEqual("build", all["operation"].Value<string>("owner"));
             var versionOnly = Build(Sample(), 1);
             Assert.IsNotNull(versionOnly["versions"]);
@@ -76,7 +79,24 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.AreEqual("unknown", result["operation"].Value<string>("owner"));
             var unavailable = Build(new JObject(), 31);
             Assert.IsFalse(unavailable["graph"].Value<bool>("available"));
+            Assert.AreEqual("no_status_for_current_connection", unavailable["graph"].Value<string>("reason"));
             Assert.IsFalse(unavailable["operation"].Value<bool>("available"));
+            Assert.AreEqual("no_operation_selected", unavailable["operation"].Value<string>("reason"));
+            Assert.AreEqual("catalog_not_loaded", unavailable["capabilities"]["tools"].Value<string>("reason"));
+            Assert.AreEqual("catalog_not_loaded", unavailable["capabilities"]["resources"].Value<string>("reason"));
+            var missing = Build(new JObject { ["graph_transport"] = "stdio", ["operation_selected"] = true }, 24);
+            Assert.AreEqual("graph_panel_requires_http", missing["graph"].Value<string>("reason"));
+            Assert.AreEqual("selected_operation_no_longer_listed", missing["operation"].Value<string>("reason"));
+            Assert.IsNull(missing["connection"]);
+            var emptyGraph = Build(
+                new JObject
+                {
+                    ["graph"] = new JObject { ["revision"] = 0, ["ready"] = 0 },
+                },
+                8
+            );
+            Assert.IsTrue(emptyGraph["graph"].Value<bool>("available"));
+            Assert.AreEqual(0, emptyGraph["graph"].Value<int>("ready"));
         }
 
         [Test]
@@ -260,6 +280,60 @@ namespace MCPForUnityTests.EditMode.Windows
             {
                 UnityEngine.Object.DestroyImmediate(host);
             }
+        }
+
+        [Test]
+        public void HiddenActivityReportsTheCurrentStateOfOnlyTheSelectedJob()
+        {
+            var rows = new List<OperationActivityRow>();
+            long revision = 0;
+            int reads = 0;
+            using var activity = new McpActivitySection(
+                new VisualElement(),
+                () =>
+                {
+                    reads++;
+                    return new List<OperationActivityRow>(rows);
+                },
+                () => revision
+            );
+            Assert.IsFalse(activity.HasDiagnosticSelection);
+            Assert.IsNull(activity.CaptureDiagnosticSelection());
+            Assert.AreEqual(0, reads);
+
+            string id = Guid.NewGuid().ToString("N");
+            rows.Add(
+                new OperationActivityRow
+                {
+                    Owner = "test",
+                    Id = id,
+                    State = "running",
+                    Active = true,
+                }
+            );
+            activity.SetVisible(true);
+            typeof(McpActivitySection).GetMethod("Select", Instance).Invoke(activity, new object[] { rows[0] });
+            activity.SetVisible(false);
+            Assert.AreEqual("running", activity.CaptureDiagnosticSelection().Value<string>("state"));
+            Assert.AreEqual(1, reads);
+
+            rows[0] = new OperationActivityRow
+            {
+                Owner = "test",
+                Id = id,
+                State = "succeeded",
+            };
+            revision++;
+            Assert.AreEqual("succeeded", activity.CaptureDiagnosticSelection().Value<string>("state"));
+            rows[0] = new OperationActivityRow
+            {
+                Owner = "build",
+                Id = id,
+                State = "running",
+            };
+            revision++;
+            Assert.IsTrue(activity.HasDiagnosticSelection);
+            Assert.IsNull(activity.CaptureDiagnosticSelection());
         }
 
         [Test]

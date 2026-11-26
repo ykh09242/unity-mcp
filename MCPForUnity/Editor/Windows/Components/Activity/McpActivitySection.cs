@@ -48,7 +48,16 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
         internal int CaptureCount { get; private set; }
         internal event Action DiagnosticsRequested;
 
-        internal Newtonsoft.Json.Linq.JObject CaptureDiagnosticSelection() => McpDiagnosticBundle.OperationSummary(Selected());
+        internal bool HasDiagnosticSelection => !disposed && selectedId != null;
+
+        internal Newtonsoft.Json.Linq.JObject CaptureDiagnosticSelection()
+        {
+            if (!HasDiagnosticSelection)
+                return null;
+            // Hidden panels stop ticking; the job may have finished or left retention.
+            var rows = observed == revision() ? snapshot : capture();
+            return McpDiagnosticBundle.OperationSummary(rows?.FirstOrDefault(row => row.Owner == selectedOwner && row.Id == selectedId));
+        }
 
         internal McpActivitySection(
             VisualElement root,

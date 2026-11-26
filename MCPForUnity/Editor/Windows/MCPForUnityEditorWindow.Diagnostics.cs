@@ -42,9 +42,15 @@ namespace MCPForUnity.Editor.Windows
                     ["resources"] = resourcesLoaded ? resourcesSection?.CaptureDiagnosticState() : null,
                 };
             if ((categories & McpDiagnosticBundle.Graph) != 0)
+            {
                 input["graph"] = graphSection?.CaptureDiagnostics();
+                input["graph_transport"] = EditorConfigurationCache.Instance.UseHttpTransport ? "http" : "stdio";
+            }
             if ((categories & McpDiagnosticBundle.Operation) != 0)
+            {
                 input["operation"] = activitySection?.CaptureDiagnosticSelection();
+                input["operation_selected"] = activitySection?.HasDiagnosticSelection == true;
+            }
             return input;
         }
     }

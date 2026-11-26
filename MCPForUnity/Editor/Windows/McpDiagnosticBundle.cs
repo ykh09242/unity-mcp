@@ -93,11 +93,28 @@ namespace MCPForUnity.Editor.Windows
                 };
             }
             if ((categories & Graph) != 0)
-                result["graph"] = GraphSummary(snapshot["graph"] as JObject) ?? new JObject { ["available"] = false };
+                result["graph"] = GraphSummary(snapshot["graph"] as JObject)
+                    ?? (
+                        Allowed(snapshot["graph_transport"], "stdio") == "stdio"
+                            ? Missing("graph_panel_requires_http", "inspect_graph_from_mcp_client")
+                            : Missing("no_status_for_current_connection", "refresh_reference_graph_status")
+                    );
             if ((categories & Operation) != 0)
-                result["operation"] = OperationSummary(snapshot["operation"] as JObject) ?? new JObject { ["available"] = false };
+                result["operation"] = OperationSummary(snapshot["operation"] as JObject)
+                    ?? Missing(
+                        Boolean(snapshot["operation_selected"]).Value<bool?>() == true ? "selected_operation_no_longer_listed" : "no_operation_selected",
+                        "select_job_in_activity"
+                    );
             return result;
         }
+
+        private static JObject Missing(string reason, string nextAction) =>
+            new()
+            {
+                ["available"] = false,
+                ["reason"] = reason,
+                ["next_action"] = nextAction,
+            };
 
         private static JObject Catalog(JObject source, bool tools)
         {
@@ -108,9 +125,15 @@ namespace MCPForUnity.Editor.Windows
                 ["enabled"] = Count(source?["enabled"]),
                 ["selection"] = "saved_local",
             };
+            if (source == null)
+            {
+                result["reason"] = "catalog_not_loaded";
+                result["next_action"] = tools ? "open_tools_panel" : "open_resources_panel";
+            }
             if (!tools)
             {
                 result["server_confirmation"] = "unavailable";
+                result["server_confirmation_reason"] = "editor_access_enforced_locally";
                 return result;
             }
             var application = source?["application"] as JObject;
@@ -133,6 +156,8 @@ namespace MCPForUnity.Editor.Windows
                 ["desired_revision"] = Count(application?["desired_revision"]),
                 ["confirmed_revision"] = Count(application?["confirmed_revision"]),
             };
+            if (source != null && application == null)
+                result["application"]["reason"] = "no_tool_catalog_receipt";
             return result;
         }
 
@@ -143,6 +168,7 @@ namespace MCPForUnity.Editor.Windows
             var result = new JObject
             {
                 ["available"] = true,
+                ["observation"] = "last_graph_status_for_connection",
                 ["revision"] = Count(graph["revision"]),
                 ["ready"] = Count(graph["ready"]),
                 ["pending"] = Count(graph["pending"]),
@@ -188,6 +214,7 @@ namespace MCPForUnity.Editor.Windows
             return new JObject
             {
                 ["available"] = true,
+                ["observation"] = "selected_activity_row",
                 ["owner"] = Allowed(row["owner"], "test", "build", "batch", "scenario", "package", "generation"),
                 ["job_id"] = Guid.TryParse(rawId, out var id) ? id.ToString("N") : null,
                 ["state"] = Allowed(
