@@ -3,6 +3,7 @@
 from tests.timing import await_signal, watchdog_timeout
 
 import asyncio
+import json
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,6 +69,128 @@ def gated_discovery(monkeypatch, target):
     monkeypatch.setattr(PortDiscovery, "discover_unity_instance", scan)
     monkeypatch.setattr(PortDiscovery, "discover_all_unity_instances", lambda: [scan()])
     return started, completed, release, threads
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["recover", "offline", "different_launch", "reload_only"])
+async def test_known_exact_selector_rechecks_empty_inventory_without_sending_commands(
+    local_discovery, tmp_path, monkeypatch, outcome
+):
+    pool, target, middleware, ctx = local_discovery
+    monkeypatch.setenv("UNITY_MCP_STATUS_DIR", str(tmp_path))
+    generation = "a" * 32
+    received = []
+    probes = 0
+    peers = set()
+    status = tmp_path / "unity-mcp-status-deadbeef.json"
+
+    async def greet(reader, writer):
+        nonlocal probes
+        peers.add(asyncio.current_task())
+        probes += 1
+        try:
+            if probes == 3 and outcome == "reload_only":
+                heartbeat = json.loads(status.read_text(encoding="utf-8"))
+                heartbeat["reloading"] = True
+                status.write_text(json.dumps(heartbeat), encoding="utf-8")
+            if probes == 1 or (probes == 4 and outcome in {"recover", "different_launch"}):
+                launch = "b" * 32 if probes == 4 and outcome == "different_launch" else generation
+                writer.write(
+                    f"WELCOME UNITY-MCP 2 FRAMING=1 AUTH=HMAC-SHA256 SERVER={launch} "
+                    f"CHALLENGE={'c' * 64}\n".encode("ascii")
+                )
+                await writer.drain()
+                received.append(await reader.read())
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(greet, "127.0.0.1", 0)
+    async with server:
+        status.write_text(
+            json.dumps(
+                {
+                    "project_path": target.path,
+                    "unity_port": server.sockets[0].getsockname()[1],
+                    "listener_generation": generation,
+                }
+            ),
+            encoding="utf-8",
+        )
+        # The implicit inventory and a later explicit selector see the same Editor.
+        assert [row.id for row in await uc.run_discovery(pool.discover_all_instances)] == [
+            target.id
+        ]
+        if outcome == "recover":
+            assert await middleware._resolve_instance_value(target.id, ctx) == target.id
+            assert pool._known_instances[target.id].listener_generation == generation
+        else:
+            with pytest.raises(ValueError, match="Available: none"):
+                await middleware._resolve_instance_value(target.id, ctx)
+            assert target.id not in pool._known_instances
+        await asyncio.wait_for(asyncio.gather(*peers), watchdog_timeout())
+    assert probes == 4
+    assert received and all(payload == b"" for payload in received)
+    assert pool._connections == {} and ctx.state == {}
+
+
+@pytest.mark.asyncio
+async def test_known_exact_selector_stays_missing_when_inventory_has_another_editor(
+    local_discovery, monkeypatch
+):
+    pool, target, middleware, ctx = local_discovery
+    target.status, target.listener_generation = "running", "a" * 32
+    other = SimpleNamespace(id="Other@cafebabe", port=6401)
+    observed = iter([target, None])
+    monkeypatch.setattr(PortDiscovery, "discover_unity_instance", lambda _: next(observed))
+    monkeypatch.setattr(PortDiscovery, "discover_all_unity_instances", lambda: [other])
+    assert await middleware._resolve_instance_value(target.id, ctx) == target.id
+    with pytest.raises(ValueError, match="Available: Other@cafebabe"):
+        await middleware._resolve_instance_value(target.id, ctx)
+    assert set(pool._known_instances) == {other.id}
+    assert pool._connections == {} and ctx.state == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop", ["cancel", "deadline"])
+async def test_empty_recheck_keeps_selection_owner_cancellation_and_deadline(
+    local_discovery, monkeypatch, stop
+):
+    from transport.command_timeout import stdio_request_deadline
+
+    pool, target, middleware, ctx = local_discovery
+    target.status, target.listener_generation = "running", "a" * 32
+    rechecking = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    lookups = []
+
+    def lookup(identifier):
+        lookups.append(identifier)
+        if len(lookups) == 2:
+            return None
+        if len(lookups) == 3:
+            loop.call_soon_threadsafe(rechecking.set)
+            assert uc._connection_selection.get().cancelled.wait(watchdog_timeout())
+        return target
+
+    monkeypatch.setattr(PortDiscovery, "discover_unity_instance", lookup)
+    monkeypatch.setattr(PortDiscovery, "discover_all_unity_instances", lambda: [])
+    assert await middleware._resolve_instance_value(target.id, ctx) == target.id
+    token = stdio_request_deadline.set(loop.time() + watchdog_timeout(1))
+    try:
+        request = asyncio.create_task(middleware._resolve_instance_value(target.id, ctx))
+    finally:
+        stdio_request_deadline.reset(token)
+    try:
+        await await_signal(rechecking, "fresh target recheck", producers=[request])
+        if stop == "cancel":
+            request.cancel()
+        with pytest.raises(asyncio.CancelledError if stop == "cancel" else TimeoutError):
+            await request
+    finally:
+        await asyncio.gather(*pool._resync_workers, return_exceptions=True)
+    assert lookups == [target.id] * 3
+    assert not pool._known_instances and not ctx.state
 
 
 @pytest.mark.asyncio

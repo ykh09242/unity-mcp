@@ -1552,14 +1552,39 @@ class UnityConnectionPool:
         """Share one fresh metadata observation among overlapping explicit selectors."""
         return await _shared_selection(
             self,
-            partial(self._discover_instance_candidates, force_refresh=True),
+            self._observe_exact_instance,
             identifier,
             _discovery_deadline(),
             metadata=True,
         )
 
+    def _observe_exact_instance(self, identifier: str) -> list[UnityInstanceInfo]:
+        previous = self._known_instances.get(identifier)
+        instances = self._discover_instance_candidates(identifier, force_refresh=True)
+        if (
+            instances
+            or previous is None
+            or previous.status != "running"
+            or not previous.listener_generation
+        ):
+            return instances
+
+        # The target and full scan can both fall inside the same discovery gap.
+        # Only a previously observed v2 launch gets one more metadata observation.
+        # Release all pool/scan locks during the normal selection polling interval.
+        selection = _connection_selection.get() or _ConnectionSelection(None)
+        selection.cancelled.wait(selection.wait_timeout())
+        selection.check()
+        return self._discover_instance_candidates(
+            identifier, force_refresh=True, live_target_only=True
+        )
+
     def _discover_instance_candidates(
-        self, instance_identifier: str | None, force_refresh: bool
+        self,
+        instance_identifier: str | None,
+        force_refresh: bool,
+        *,
+        live_target_only: bool = False,
     ) -> list[UnityInstanceInfo]:
         if config.http_remote_hosted:
             raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
@@ -1583,6 +1608,10 @@ class UnityConnectionPool:
                     return [self._known_instances[identifier]]
                 target = PortDiscovery.discover_unity_instance(identifier)
                 selection.check()
+                if live_target_only and (
+                    target is None or target.status != "running" or not target.listener_generation
+                ):
+                    return []
                 if target is not None:
                     with selection.lock(self._pool_lock):
                         # A refreshed port owner displaces stale metadata, while
