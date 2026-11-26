@@ -39,10 +39,20 @@ def _project(path, dependency):
     return path
 
 
-def _scanner(module, *, scan_interval_ms=0):
+def _scanner(module, *, scan_interval_ms=0, **limits):
     # pytest updates this variable again after fixture setup; activate only our scanner calls.
     os.environ.pop("PYTEST_CURRENT_TEST", None)
-    return module.ExternalChangesScanner(scan_interval_ms=scan_interval_ms)
+    return module.ExternalChangesScanner(scan_interval_ms=scan_interval_ms, **limits)
+
+
+def _completed_scan(scanner):
+    # Dirty state is published when this pass finishes, possibly across several slices.
+    for _ in range(32):
+        state = scanner.update_and_get("one")
+        if not state["external_changes_scan_in_progress"]:
+            assert state["external_changes_scan_complete"], state
+            return state
+    pytest.fail("The small project fixture did not finish scanning")
 
 
 @pytest.mark.parametrize("form", ["uri", "native", "relative"])
@@ -63,11 +73,11 @@ def test_local_package_path_forms_detect_changes(tmp_path, scanner_module, form)
     else:
         dependency = "file:../../" + package.name
     project = _project(tmp_path / "Project", dependency)
-    scanner = _scanner(scanner_module)
+    scanner = _scanner(scanner_module, max_entries=1)
     scanner.set_project_root("one", str(project))
-    assert scanner.update_and_get("one")["external_changes_dirty"] is False
+    assert _completed_scan(scanner)["external_changes_dirty"] is False
     os.utime(target, ns=(3_000_000_000, 3_000_000_000))
-    assert scanner.update_and_get("one")["external_changes_dirty"] is True
+    assert _completed_scan(scanner)["external_changes_dirty"] is True
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Absolute single-slash native paths use POSIX syntax")
@@ -78,9 +88,9 @@ def test_posix_native_package_path_preserves_literal_percent_escape(tmp_path, sc
     project = _project(tmp_path / "Project", "file:" + str(package))
     scanner = _scanner(scanner_module)
     scanner.set_project_root("one", str(project))
-    assert scanner.update_and_get("one")["external_changes_dirty"] is False
+    assert _completed_scan(scanner)["external_changes_dirty"] is False
     os.utime(target, ns=(3_000_000_000, 3_000_000_000))
-    assert scanner.update_and_get("one")["external_changes_dirty"] is True
+    assert _completed_scan(scanner)["external_changes_dirty"] is True
 
 
 def test_empty_file_dependency_does_not_add_manifest_directory(tmp_path, scanner_module):
@@ -101,11 +111,11 @@ def test_changed_project_replaces_cache_and_mtime_baseline(tmp_path, scanner_mod
     new_project = _project(tmp_path / "New", "file:../../NewPackage")
     scanner = _scanner(scanner_module)
     scanner.set_project_root("one", str(old_project))
-    scanner.update_and_get("one")
+    _completed_scan(scanner)
     scanner.set_project_root("one", str(new_project))
-    assert scanner.update_and_get("one")["external_changes_dirty"] is False
+    assert _completed_scan(scanner)["external_changes_dirty"] is False
     os.utime(target, ns=(3_000_000_000, 3_000_000_000))
-    assert scanner.update_and_get("one")["external_changes_dirty"] is True
+    assert _completed_scan(scanner)["external_changes_dirty"] is True
     assert [Path(p) for p in scanner._get_state("one").extra_roots] == [new_package.resolve()]
 
 
@@ -118,15 +128,15 @@ def test_changed_root_resets_dirty_timestamps_and_throttle(tmp_path, scanner_mod
     monkeypatch.setattr(scanner_module, "_now_unix_ms", lambda: now[0])
     scanner = _scanner(scanner_module, scan_interval_ms=1500)
     scanner.set_project_root("one", str(old_project))
-    scanner.update_and_get("one")
+    _completed_scan(scanner)
     scanner.clear_dirty("one")
     now[0] = 2500
-    scanner.update_and_get("one")
+    _completed_scan(scanner)
     now[0] = 4000
     os.utime(target, ns=(3_000_000_000, 3_000_000_000))
-    assert scanner.update_and_get("one")["external_changes_dirty"] is True
+    assert _completed_scan(scanner)["external_changes_dirty"] is True
     scanner.set_project_root("one", str(new_project))
-    observed = scanner.update_and_get("one")
+    observed = _completed_scan(scanner)
     expected = {
         "external_changes_dirty": False,
         "external_changes_last_seen_unix_ms": None,
@@ -156,10 +166,10 @@ def test_same_root_and_missing_root_preserve_dirty_state_and_throttle(
     monkeypatch.setattr(scanner_module, "_now_unix_ms", lambda: now[0])
     scanner = _scanner(scanner_module, scan_interval_ms=1500)
     scanner.set_project_root("one", str(project))
-    scanner.update_and_get("one")
+    _completed_scan(scanner)
     now[0] = 2500
     os.utime(target, ns=(3_000_000_000, 3_000_000_000))
-    assert scanner.update_and_get("one")["external_changes_dirty"] is True
+    assert _completed_scan(scanner)["external_changes_dirty"] is True
     before = vars(scanner._get_state("one")).copy()
     before.pop("project_root")
     for root in (str(project), str(project) + os.sep, None, ""):
