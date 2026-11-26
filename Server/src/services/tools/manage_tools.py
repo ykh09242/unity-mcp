@@ -165,6 +165,11 @@ async def _retry_project_binding(ctx: Context) -> dict[str, str]:
     return {"unity_instance": target} if isinstance(target, str) else {}
 
 
+def _resource_read_call(uri: str, project: dict[str, str]) -> dict:
+    params = {"uri": uri, **({"_meta": project} if project else {})}
+    return {"method": "resources/read", "params": params}
+
+
 @mcp_for_unity_tool(
     unity_target=None,
     group=None,
@@ -354,10 +359,7 @@ async def search_unity_tools(
                 ):
                     binding["invoke"]["arguments"].update(project)
             if binding["kind"] == "resource":
-                params = {"uri": binding["uri"]}
-                if project:
-                    params["_meta"] = project
-                binding["read_call"] = {"method": "resources/read", "params": params}
+                binding["read_call"] = _resource_read_call(binding["uri"], project)
         return outcome
     if (
         outcome["matching"] == "observation"
@@ -477,8 +479,8 @@ async def manage_tools(
     ],
     group: Annotated[
         str | None,
-        "Group name for activate/deactivate/catalog. Catalog also supports resources for fixed URIs "
-        "and resource_templates for parameterized Unity observations. "
+        "Group name for activate/deactivate/catalog. Catalog also supports resources for fixed Unity URIs, "
+        "resource_templates for parameterized observations and skills for published skill files. "
         "Valid groups: " + ", ".join(sorted(TOOL_GROUPS.keys())),
     ] = None,
     tool: Annotated[
@@ -667,11 +669,21 @@ async def manage_tools(
             request = CatalogRequest(
                 group=group, tool=tool, offset=offset, limit=limit, intent=intent
             )
+            if request.group == "skills":
+                resources = await _catalog_resources(ctx, concrete_scheme="skill")
+                page = browse_catalog(request, [], visible_names=set(), resources=resources)
+                project = await _retry_project_binding(ctx)
+                for item in page["skills"]:
+                    item["read_call"] = _resource_read_call(item["uri"], project)
+                return page
             entries, visible = await _catalog_inventory(ctx, entries, discovery)
             resources = await _catalog_resources(ctx) if request.includes_resources else []
-            return browse_catalog(
+            page = browse_catalog(
                 request, list(entries.values()), visible_names=set(visible), resources=resources
             )
+            if request.group is None and request.tool is None and "skills" in page:
+                page["skills"]["browse"].update(await _retry_project_binding(ctx))
+            return page
         except ValueError as error:
             return {"success": False, "error": str(error)}
     if action == "search":
@@ -1018,7 +1030,9 @@ async def _selection_inventory(ctx: Context):
     return {item.name: item for item in dedupe_with_versions(tools, lambda item: item.name)}
 
 
-async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
+async def _catalog_resources(
+    ctx: Context, *, concrete_scheme: str | None = None
+) -> list[CatalogResource]:
     from fastmcp.exceptions import AuthorizationError
     from fastmcp.utilities.versions import dedupe_with_versions
     from services.operation_permissions import authorize_remote_resource
@@ -1026,10 +1040,12 @@ async def _catalog_resources(ctx: Context) -> list[CatalogResource]:
     await authorize_remote_resource()
     with internal_resource_catalog(ctx.fastmcp):
         listed = await ctx.fastmcp.list_resources()
-        templates = await ctx.fastmcp.list_resource_templates()
+        templates = [] if concrete_scheme else await ctx.fastmcp.list_resource_templates()
     resources: list[CatalogResource] = []
     for item in dedupe_with_versions(listed, lambda item: str(item.uri)):
         uri = str(item.uri)
+        if concrete_scheme and not uri.startswith(f"{concrete_scheme}://"):
+            continue
         try:
             # A listed descriptor can still have a separate resource read policy.
             await ctx.fastmcp._check_resource_access(uri)

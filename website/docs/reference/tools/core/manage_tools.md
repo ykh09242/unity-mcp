@@ -21,7 +21,7 @@ Find Unity tools, actions and readable resources for a task; inspect schemas or 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `action` | `Literal['list_groups', 'list_instances', 'activate', 'deactivate', 'sync', 'reset', 'describe', 'search', 'catalog', 'inspect_inventory', 'prepare']` | yes | Action to perform. |
-| `group` | `str \| None` | — | Group name for activate/deactivate/catalog. Catalog also supports resources for fixed URIs and resource_templates for parameterized Unity observations. Valid groups: animation, asset_gen, assets, camera, core, docs, graphics, legacy, physics, prefabs, probuilder, profiling, scene, scripting_ext, testing, ui, vfx |
+| `group` | `str \| None` | — | Group name for activate/deactivate/catalog. Catalog also supports resources for fixed Unity URIs, resource_templates for parameterized observations and skills for published skill files. Valid groups: animation, asset_gen, assets, camera, core, docs, graphics, legacy, physics, prefabs, probuilder, profiling, scene, scripting_ext, testing, ui, vfx |
 | `tool` | `str \| None` | — | Single exact tool name for activate/deactivate/describe/prepare/catalog/inspect_inventory. |
 | `query` | `str \| None` | — | Original user request. Keep its language, names, paths and text verbatim. Required for the agent directory. Optional for an exact agent family or ranked evidence search. |
 | `limit` | `int` | — | Maximum search or catalog page entries (1..20). |
@@ -38,7 +38,7 @@ Find Unity tools, actions and readable resources for a task; inspect schemas or 
 | `selection` | `Literal['ranked', 'agent']` | — | Choose agent for exhaustive browsing or ranked for lexical and required evidence search. |
 | `family` | `str \| None` | — | Agent browse only. Provide an exact family ID. query is optional. |
 | `arguments` | `dict[str, Any] \| None` | — | Prepare only: proposed input object for the exact tool. Pass the original user text in query when needed. |
-| `exact_text` | `list[ExactTextAssertion] \| None` | — | Prepare only: for user-specified exact text, check literals selected independently from the unchanged query against argument values. Requires query. |
+| `exact_text` | `list[ExactTextAssertion] \| None` | — | For user-specified exact text, add exact_text and the unchanged original query alongside arguments on prepare. Use an array of {path, expected} objects. Each path is an array of exact keys or zero-based array indices within arguments. Copy expected verbatim from query. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

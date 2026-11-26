@@ -122,6 +122,34 @@ def bare_skills_server(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_catalog_skill_read_matches_packaged_document(skills_server):
+    async with skills_http(skills_server) as client:
+        response = await skill_request(
+            client,
+            "tools/call",
+            {
+                "name": "manage_tools",
+                "arguments": {"action": "catalog", "group": "skills", "limit": 20},
+            },
+        )
+        result = _message(response)["result"]
+        assert not result.get("isError", False)
+        page = result["structuredContent"]
+        document = next(row for row in page["skills"] if row["uri"] == SKILL_URI)
+        call = document["read_call"]
+        contents = complete_result(await skill_request(client, call["method"], call["params"]))[
+            "contents"
+        ]
+        assert contents[0]["uri"] == SKILL_URI
+        expected = next(
+            item for item in packaged_record()["payload"]["files"] if item["path"] == "SKILL.md"
+        )
+        assert contents[0]["text"].encode("utf-8") == base64.b64decode(
+            expected["data"], validate=True
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("declared", [False, True], ids=["published-shape", "declared-client"])
 async def test_packaged_skill_is_discovered_then_read_on_demand(skills_server, declared):
     # Given: the production authenticated server, without a running Unity instance.

@@ -1263,11 +1263,7 @@ class CatalogRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_scope(self):
-        if (
-            self.intent
-            and not self.tool
-            and (self.group is None or self.group in {"resources", "resource_templates"})
-        ):
+        if self.intent and self.includes_resources:
             raise ValueError("Select a tool or tool group to browse actions by intent.")
         if self.group is not None and self.tool is not None:
             raise ValueError("Select one catalog group or tool.")
@@ -1277,16 +1273,23 @@ class CatalogRequest(BaseModel):
 
     @property
     def includes_resources(self) -> bool:
-        return self.tool is None and self.group in (None, "resources", "resource_templates")
+        return self.tool is None and self.group in (
+            None,
+            "resources",
+            "resource_templates",
+            "skills",
+        )
 
 
-def concrete_resources(resources: list[CatalogResource]) -> list[CatalogResource]:
-    """Only fixed Unity resource URIs can be read directly."""
+def concrete_resources(
+    resources: list[CatalogResource], *, scheme: str = "mcpforunity"
+) -> list[CatalogResource]:
+    """Return fixed resource URIs from the requested namespace."""
     return sorted(
         (
             item
             for item in resources
-            if item["uri"].startswith("mcpforunity://") and "{" not in item["uri"]
+            if item["uri"].startswith(f"{scheme}://") and "{" not in item["uri"]
         ),
         key=lambda item: item["uri"],
     )
@@ -1434,6 +1437,20 @@ def browse_catalog(
             for item in available[request.offset : request.offset + request.limit]
         ]
         key = "resources"
+    elif request.group == "skills":
+        available = concrete_resources(resources or [], scheme="skill")
+        response.update(view="skills", group="skills")
+        total = len(available)
+        rows = [
+            {
+                "name": item["name"],
+                "uri": item["uri"],
+                "description": item["description"],
+                "advertised": True if visible_names is not None else None,
+            }
+            for item in available[request.offset : request.offset + request.limit]
+        ]
+        key = "skills"
     elif request.group == "resource_templates":
         templates = resource_templates(resources or [])
         response.update(view="resource_templates", group="resource_templates")
@@ -1476,6 +1493,12 @@ def browse_catalog(
         key = "tools"
     else:
         response["view"] = "groups"
+        if skills := concrete_resources(resources or [], scheme="skill"):
+            response["skills"] = {
+                "purpose": "Read skill files published by this connection.",
+                "total": len(skills),
+                "browse": {"action": "catalog", "group": "skills"},
+            }
         response["resources"] = _resource_branch(len(concrete_resources(resources or [])))
         response["resource_templates"] = _resource_template_branch(
             len(resource_templates(resources or []))
