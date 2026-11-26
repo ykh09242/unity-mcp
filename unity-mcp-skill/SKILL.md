@@ -17,7 +17,7 @@ Operate the user's selected Unity project through the capabilities actually expo
 - Tests that must preserve an already-running game: [current Play state](references/workflows.md#tests-in-the-current-play-state).
 - Editable mesh topology with installed ProBuilder: [probuilder-guide.md](references/probuilder-guide.md).
 
-Load only the reference needed for the request. The live tool schema wins over a sample; examples use logical tool names, not client-specific prefixes or executable Python SDK calls.
+Load the reference needed for the request. For an MCP-published skill file, follow its read call from `manage_tools(action="catalog", group="skills")`. For a host-installed copy, use the host's skill loader. Examples use logical tool names. Check the live schema for the selected binding.
 
 ## Keep Context Bounded
 
@@ -32,7 +32,7 @@ Use a known callable binding when its contract fits. For an unclear route, brows
 - Match shader evidence to its source. A saved Shader Graph file and the currently open graph can have different contents. Choose the advertised inspection route for the requested state. For compiler evidence, inspect diagnostics or compile the explicitly selected variant.
 - Prefab images use `capture_prefab`. Serialized edit previews use `prefab_contents(action="modify_contents", preview_only=true)` with an explicit observation scope when needed. UI/button interactions use `manage_input` and the existing UI framework's inspection tools.
 - Before unfamiliar C# calls, inspect project source or `unity_reflect` for fully qualified types, member signatures, static/instance access and parameter types. Recheck the contract after symbol/member errors.
-- For verbatim edits, select the literal in the user's request before drafting. Use `exact_text` on the prepare call to check the target field. Compare the saved value to that original literal, including punctuation and whitespace.
+- For verbatim edits, locate the value in the original request before drafting. Check which punctuation belongs inside the value. Use the selected operation's `prepare_exact_text` example to bind that span to the draft field. Compare the preview and saved value with the same span.
 - A pending compilation keeps its original `compile_id` and follows `get_compile_job`.
 
 1. Resolve the target through the Unity MCP connection. If the host's resource list is empty, call `manage_tools(action="list_instances")`, select the matching Editor and verify its state before editing.

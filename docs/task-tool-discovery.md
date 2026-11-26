@@ -44,13 +44,24 @@ above the maximum can be reduced. Original text can be filled only from a
 verbatim request supplied by the caller. A successful preparation checks input
 shape. The actual public tool and a Unity readback establish the outcome.
 
-For a value the user supplied verbatim, select the intended literal before drafting.
-Pass the unchanged original in `query` and add `exact_text` to the prepare arguments.
+For a value the user supplied verbatim, select its boundaries in the original
+request before drafting. Keep punctuation and spaces inside the value. Use the
+surrounding sentence and any delimiters to decide whether adjacent punctuation
+belongs to the instruction. Clarify an unresolved boundary before saving.
+The selected operation supplies a `prepare_exact_text.example` with the outer
+fields. Pass the unchanged original in `query` and add `exact_text` alongside
+the target `arguments` on the prepare call.
 For example, `[{"path":["edits",0,"newText"],"expected":"Confirm!"}]` checks
 one field of a text edit. The expected string must occur in the original and
 match the value at that exact draft path. A mismatch gives `ready=false` and an
-indexed reason. After the edit, compare the stored value to the original literal.
+indexed reason. Compare the preview and independently read stored value with
+that original span. The server checks the caller's selection against the input.
 Use this option for copied values. Translated or newly written text has a different contract.
+
+Use `manage_tools(action="catalog", group="skills")` for skill documents published
+on the current MCP connection. Each row provides a `resources/read` call with the
+exact URI. Follow `next_offset` for later pages. Open host-installed skills through
+the host's skill loader.
 
 Use `selection="ranked"` for lexical or required evidence search. Only this mode
 accepts `catalog_query`, `intent`, `observation_source` and `required_values`.

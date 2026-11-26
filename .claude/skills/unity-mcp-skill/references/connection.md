@@ -19,8 +19,10 @@ its `tool` with its `arguments` unchanged. Read `operation.input_fields` for the
 selected action's input shapes and `input_variants` when present. Fields in
 `other_tool_parameters` have no confirmed membership in this action.
 A concrete resource's `read_call` contains its URI and project binding.
-Use `resources/list` for installed skill URIs and `resources/templates/list`
-for templates. A local file path cannot identify a server resource.
+Use `manage_tools(action="catalog", group="skills")` or `resources/list` for
+skill files published on this connection. Follow the returned `read_call`
+or copy the listed URI exactly. Open a host-installed skill through the host's
+own skill loader. Use `resources/templates/list` for parameterized resources.
 
 Use `selection="ranked"` for lexical or evidence searches. `catalog_query`, `intent`, `observation_source` and `required_values` belong to ranked search. Family IDs and pagination belong to agent browsing. On a mode conflict, use the returned `search_retries` entry that preserves the requested evidence, target and host scope. If the action and its verification need different evidence, find each route separately.
 
@@ -54,11 +56,16 @@ For uncertain inputs, fill the inner `arguments` of the returned
 `operation.prepare_call` using the selected fields. Submit the draft on the
 same connection and project. Inspect `adjustments` and invoke the returned
 `prepared_call` through its own tool when `ready=true` and it fits the request.
-For verbatim edits, select the exact text from the request before drafting.
-Set `query` to the original and pass `exact_text` on the outer prepare call,
+For verbatim edits, locate the intended value in the original request before drafting.
+Use delimiters, sentence structure and any protected neighboring text to determine
+where the value ends. Keep punctuation and whitespace inside the value. If two
+readings remain plausible and would save different values, clarify before writing.
+See `operation.prepare_exact_text.example` for the outer prepare fields. Set
+`query` to the unchanged original and pass `exact_text` alongside `arguments`,
 for example `[{"path":["edits",0,"newText"],"expected":"Confirm!"}]` for a text edit.
-Use object keys and zero-based array indices relative to the draft. After the
-write, read the saved value and compare it with the same source literal.
+Use object keys and zero-based array indices relative to the draft. Compare the
+preview and an independent saved readback with that source span. The check can
+verify the span selected by the caller; either punctuation boundary may be a substring.
 Preparation can bind the supplied original text and cap annotated page sizes.
 It checks the input schema only. Permissions, current target IDs, Unity
 availability and the resulting state are checked at invocation and readback.

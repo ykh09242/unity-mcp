@@ -537,14 +537,14 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 
 Target and discover
 - Find Editors via mcpforunity://instances or manage_tools(action="list_instances"). Sessionless tools use unity_instance=Name@hash, resources use _meta.unity_instance.
-- Keep names and paths verbatim. Use advertised URIs and observed template values.
+- Keep names/paths verbatim. Read listed URIs or expand observed templates.
 - Search by meaning with search_unity_tools({{"selection":"agent","query":"<original text>"}}). Follow next_call (next_offset), set open_family.arguments.family and compare operations. Inspect manage_tools(action="describe",tool=name,operation=action).
-- Check manage_tools(action="catalog") for direct reads. Fill operation.prepare_call from input_fields. Invoke prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
+- Use manage_tools(action="catalog") for reads. Fill operation.prepare_call from input_fields. Invoke prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
 - Check manage_tools(action="list_groups").discovery, client/project scope, Editor toggles and consent. Activate and refresh tools/list. Fixed hosts may need a user reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
 
 Observe and execute
 - Verify indirect measurements' target, units and coverage. Label inferences. Respect disabled edits.
-- Read mcpforunity://editor/state or inspect_editor_state. Check ready_for_tools, compiler outcome and source confirmation independently. Keep compile_id and follow get_compile_job's next_call. Use evidence_diagnostics on invalid responses.
+- Read mcpforunity://editor/state or inspect_editor_state. Check ready_for_tools, compile outcome and source separately. Keep compile_id, follow get_compile_job's next_call and inspect evidence_diagnostics on invalid responses.
 - Retain job IDs across reconnects. Check targets and receipts before retrying edits. Follow recovery_required, order dependent calls and inspect each batch result.
 - Preserve Play sessions, scenes and runtime objects. Exercise input/UI through interaction tools. For authorized runtime work use exposed, enabled and consented execute_code with safety_checks=true when needed. Verify target and Play state, return bounded before/after values and observe async effects without blocking. Limit persistent/external writes to the request.
 - Track temporary owners, use exception-safe cleanup and preserve unrelated state. Read data.verification status, complete, scope and findings.
@@ -552,8 +552,8 @@ Observe and execute
 Edit and verify
 - For unfamiliar C# calls check source or unity_reflect for qualified types, member signatures, static/instance access and parameter types. Recheck after symbol errors.
 - Report checks, setup, scope and gaps. Use runner results for native test counts. Name isolated probes, substituted dependencies and user interactions. Verify cleanup after async effects settle.
-- For verbatim edits select the literal before drafting. Pass query and exact_text on prepare. Compare the saved value to that literal, including punctuation and spacing. Save only the target. Preserve forward-slash paths and line endings. Applying script_apply_edits(options.preview=true) requires same-host/workspace provenance, complete candidate, fresh original hash and exact UTF-8 bytes. Verify raw bytes/get_sha, diffs and file events before refresh. See skill://unity-mcp-orchestrator/references/scripts.md.
-- Use advertised skill://unity-mcp-orchestrator/SKILL.md. Keep IDs/cursors for detail pages.
+- For verbatim edits distinguish the value's punctuation from the surrounding sentence. Use query and exact_text on prepare. Compare preview and saved text to the original span. Save only the target. Preserve forward-slash paths and line endings. Applying script_apply_edits(options.preview=true) requires same-host/workspace provenance, complete candidate, fresh original hash and exact UTF-8 bytes. Verify raw bytes/get_sha, diffs and file events before refresh.
+- Browse manage_tools(action="catalog",group="skills") for published read_call URIs. Open host-local skills through the host. Keep IDs/cursors for details.
 """
 
 
