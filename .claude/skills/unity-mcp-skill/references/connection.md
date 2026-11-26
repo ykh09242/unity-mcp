@@ -58,7 +58,7 @@ For a known identifier or a lexical shortcut, `manage_tools(action="search", que
 
 Use the client's tools/resources/template inventory; do not invent prefixed names such as a particular client's `mcp__...` binding. The names below identify server capabilities, not names to assume are already callable.
 
-The default `core` catalog exposes focused tools such as `scene_inspect`, `scene_lifecycle`, `gameobject_create`, `gameobject_edit` and `asset_inspect`. Combined tools such as `manage_scene`, `manage_gameobject`, `manage_asset`, `manage_prefabs`, `manage_camera`, `manage_graphics`, `manage_physics` and `manage_ui` belong to the optional `legacy` compatibility group. Prefer the focused schema; activate `legacy` explicitly only when an existing integration needs its combined actions. Other optional groups are named in [tools-reference.md](tools-reference.md).
+The default local `core` profile starts with the core group and the groups containing registered focused capabilities. Use the public bindings already present in the first listing for edits and readbacks. An explicitly configured `--tool-groups core` starts with just the core group and always-visible controls. Combined tools such as `manage_scene`, `manage_gameobject`, `manage_asset`, `manage_prefabs`, `manage_camera`, `manage_graphics`, `manage_physics` and `manage_ui` belong to the optional `legacy` compatibility group. Prefer the focused schema; activate `legacy` explicitly only when an existing integration needs its combined actions. Other optional groups are named in [tools-reference.md](tools-reference.md).
 
 If a tool is absent, check its group and the selected Editor's enabled tools. When advertised:
 

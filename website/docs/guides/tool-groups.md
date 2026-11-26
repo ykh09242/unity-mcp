@@ -17,7 +17,7 @@ Choose **Tools > Advanced connection options > Startup tools** in the Editor, or
 | Profile | Initial built-in selection | Suitable clients |
 |---|---|---|
 | `minimal` | Always-visible server helpers only | Clients that can select tools and refresh their inventory |
-| `core` | Essential tools and server helpers | Default for local HTTP and stdio |
+| `core` | Server helpers, the core group and groups containing registered focused capabilities | Default for local HTTP and stdio, including clients that bind tools once |
 | `full` | Every registered group, including compatibility | Fixed-inventory clients and broad workflows; default for hosted HTTP |
 
 For a fixed inventory containing only specific groups, choose **Selected groups** and check the groups you need. For example, **Essentials (core)** and **VFX & Shaders (vfx)** correspond to `mcp-for-unity --tool-groups core,vfx`. Always-visible server helpers remain available. The client sees the selected groups intersected with the current Editor's allowed tools. A disabled native tool still refuses calls.
@@ -34,7 +34,7 @@ A controlled Windows probe at the dependency-upgrade baseline, before common rou
 
 ## Start with the needed feature
 
-Local HTTP and stdio default to essential `core` tools unless a startup profile overrides them. Ask for `manage_tools(action="list_groups")` to discover all registered names and the `enabled_tools` actually visible in each group. Consult the generated [tool catalog](../reference/tools/index.md) for action and parameter schemas.
+In the default local profile, focused families and their companion tools appear together in the first tool list. To request only the essentials and server helpers, set `--tool-groups core`. Use `manage_tools(action="list_groups")` to inspect registered names and the `enabled_tools` visible in each group. [Tool catalog](../reference/tools/index.md)
 
 The larger combined tools are split by function. Each feature exposes only its supported actions and inputs while retaining the same validation, execution, response processing and project permissions.
 
@@ -49,7 +49,7 @@ The larger combined tools are split by function. Each feature exposes only its s
 | Assets | `asset_inspect`, `asset_edit`, `asset_reference_diagnostics`, `asset_labels`, `asset_bundles` |
 | UI Toolkit | `ui_source`, `ui_document`, `ui_inspect`, `ui_element`, `ui_capture` |
 
-Essentials include `gameobject_create`, `gameobject_edit`, `prefab_inspect`, `scene_lifecycle`, `scene_inspect` and `asset_inspect`. More specialized features live in the optional `scene`, `assets`, `prefabs`, `camera`, `graphics`, `physics` or `ui` groups. Other groups such as `animation`, `testing` and `profiling` remain available.
+The current focused declarations span the core, scene, assets, prefabs, camera, graphics, physics and UI groups. For other groups such as `animation`, `testing` and `profiling`, check the current selection and the Editor's enabled tools.
 
 With a stateful handshake or a supported project-bound modern scope, enable just one tool when that is sufficient:
 
@@ -95,7 +95,7 @@ The server keeps standard `tools/list` responses and full schemas for visible to
 
 The [MCP client best practices](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/docs/2026-07-28/develop/clients/client-best-practices.mdx) recommend progressive tool discovery in the client: inspect the catalog, select relevant tools and refresh it when tool-list notifications arrive. Server visibility settings complement that behavior; they do not implement host-side tool search or guarantee the same token savings in every client.
 
-Both local transports default to essential tools. Editor synchronization updates availability without changing the client selection. Enabling one optional tool in Unity does not select its group or reveal unavailable peers. Select the desired group or individual tool separately, or use the explicit `full` startup profile; both HTTP and stdio apply the current project catalog after selection. An explicitly empty catalog hides native tools, while an unknown or disconnected local catalog preserves offline discovery. Native execution still requires the selected Editor and its permissions.
+Both local transports apply the current project's tool catalog to the startup selection. Editor synchronization updates availability. A tool enabled in Unity becomes visible when its group or binding is selected by the server and admitted by the host. An explicitly empty project catalog hides native tools, while an unknown or disconnected local catalog preserves offline discovery. Native execution requires the selected Editor and its permissions.
 
 ## Related capabilities
 

@@ -96,7 +96,7 @@ Use the discovered renderer target and intended slot:
 
 A shared-material change affects other users of that asset. Choose instance/property-block behavior only when appropriate to the requested scope. Preserve occupied destination assets and GUIDs; do not overwrite an unrelated asset as error recovery. Inspect shader properties before assigning textures/integer values.
 
-Headless prefab editing and scene-instance editing are different. Inspect prefab assets with core `prefab_inspect`. Asset edits can use the optional `prefabs` group's `prefab_contents` or `prefab_stage`. Instantiate via core `gameobject_create`. For texture/VFX/lighting edits, validate action-specific payloads and bounded sizes before applying them rather than copying another pipeline's settings.
+Headless prefab editing and scene-instance editing are different. Inspect prefab assets with core `prefab_inspect`. For asset edits, use an advertised `prefab_contents` or `prefab_stage` operation. Instantiate via core `gameobject_create`. For texture/VFX/lighting edits, validate action-specific payloads and bounded sizes before applying them rather than copying another pipeline's settings.
 
 For scene-instance overrides, call `list_overrides` with the resolved instance target. Select the returned `overrideId` values for `revert_overrides` or `apply_overrides`; apply also requires the listed `prefab_path`. Scope follows the nearest nested instance root. Re-list after structural edits because IDs are editor-session identifiers. Do not infer apply-all from an empty selection; inspect rejected compound properties and structural dependencies before retrying.
 
@@ -108,7 +108,7 @@ Respect the project's existing UI framework. Read `mcpforunity://project/info` w
 
 UI Toolkit asset creation:
 
-Discover/activate the optional `ui` group before these examples. `ui_source`, `ui_document`, `ui_inspect`, `ui_element` and `ui_capture` split source, document, inspection, element and rendering operations.
+Check which `ui` tools the selected Editor advertises. `ui_source`, `ui_document`, `ui_inspect`, `ui_element` and `ui_capture` split source, document, inspection, element and rendering operations.
 
 <!-- optional-group:ui:start -->
 ```json
@@ -157,7 +157,7 @@ For an unfamiliar API, use `unity_reflect(action="search", query=...)` to resolv
 
 ## Temporary Rendering Resources
 
-Prefer `capture_camera` (optional camera group) capture or the UI rendering tool for supported screenshots. A warning such as `Releasing render texture that is set as Camera.targetTexture!` with `MCPDynamicCode.Execute` identifies cleanup in the submitted code; a successful tool response does not make that cleanup valid. Inspect available execution history and Console evidence without assuming the original snippet is retained.
+Use `capture_camera` or the UI rendering tool for supported screenshots. A warning such as `Releasing render texture that is set as Camera.targetTexture!` with `MCPDynamicCode.Execute` identifies cleanup in the submitted code; a successful tool response does not make that cleanup valid. Inspect available execution history and Console evidence without assuming the original snippet is retained.
 
 When custom rendering is required, inspect the actual camera and render pipeline first. Save the camera's existing target and `RenderTexture.active`, then restore both in `finally` **before** releasing the texture. This synchronous ownership pattern is a cleanup template, not a complete capture implementation:
 
@@ -217,7 +217,7 @@ Build/package/asset-generation jobs likewise require their own returned ID/statu
 
 ## Verification And Recovery
 
-For script changes, follow [scripts.md](scripts.md). For visual changes, capture the relevant view with `capture_camera` (optional camera group) or `ui_capture` (optional ui group) rather than running every screenshot mode.
+For script changes, follow [scripts.md](scripts.md). For visual changes, capture the relevant view with `capture_camera` or `ui_capture` when available.
 
 ```json
 {"tool":"read_console","params":{"action":"get","types":["error","warning"],"count":10,"include_stacktrace":true}}

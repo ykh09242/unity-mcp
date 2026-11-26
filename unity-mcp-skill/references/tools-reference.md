@@ -9,21 +9,21 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Discover a task's tools | `search_unity_tools`, `manage_tools` | Browse relevant families, or search by the required observation and result. The catalog and operation-specific description show input contracts. Check actual host bindings separately |
 | Scene state/save/load | `scene_inspect`, `scene_lifecycle` | Core; preserve unsaved/additive scenes; replacement is not a neutral setup action |
 | Find/create/edit objects | `find_gameobjects`, `gameobject_create`, `gameobject_edit` | Core; search returns IDs; reuse an ID with `search_method="by_id"` |
-| Duplicate/position/place objects | `gameobject_duplicate`, `gameobject_positioning`, `gameobject_placement` | Optional scene group; inspect action-specific references and preview contracts |
+| Duplicate/position/place objects | `gameobject_duplicate`, `gameobject_positioning`, `gameobject_placement` | Inspect action-specific references and preview contracts |
 | Components | `manage_components` | Required type/target; explicit null differs from omitted value |
 | Scripts | `create_script`, `get_sha`, `apply_text_edits`, `script_apply_edits`, `validate_script`, `delete_script` | Read [scripts.md](scripts.md) for preview, concurrency and native-file checks |
 | Inspect assets | `asset_inspect` | Core; find paths and metadata before changes |
-| Asset changes/bundles | `asset_edit`, `asset_labels`, `asset_bundles`, `asset_reference_diagnostics` | Optional assets group; bounded AssetDatabase assignments and reference pages |
-| Prefabs | `prefab_inspect`, `prefab_create`, `prefab_contents`, `prefab_stage`, `prefab_overrides` | Core inspection and optional prefabs group; inspect asset contents and select explicit scene-instance override IDs |
+| Asset changes/bundles | `asset_edit`, `asset_labels`, `asset_bundles`, `asset_reference_diagnostics` | Bounded AssetDatabase assignments and reference pages |
+| Prefabs | `prefab_inspect`, `prefab_create`, `prefab_contents`, `prefab_stage`, `prefab_overrides` | Inspect asset contents and select explicit scene-instance override IDs |
 | Materials/shaders/textures | `manage_material`, `manage_shader`, `manage_texture` | `inspect_graph` reads the saved file. `inspect_open_graph` observes a matching open graph window; match the installed render pipeline and shader-declared property types for edits |
-| Cameras/capture | `manage_cameras`, `manage_cinemachine`, `capture_camera` | Optional camera group; inspect Cinemachine and capture support |
+| Cameras/capture | `manage_cameras`, `manage_cinemachine`, `capture_camera` | Inspect Cinemachine and capture support |
 | Prefab image | `capture_prefab` | Use the inspected prefab asset path and review the returned image |
 | Prefab edit preview | `prefab_contents` | Use `modify_contents` with `preview_only=true`. `preview_scope="components"` observes components named by `component_properties` on one target. Inspect scope, completeness and limits |
 | Shader compiler evidence | `manage_shader` | Use `diagnostics` for cached messages and `compile_variant` for one selected stage, platform, target, pass and keyword set |
-| Graphics/lighting | `manage_render_pipeline`, `manage_render_volumes`, `manage_light_baking`, `manage_components` | Optional graphics group except core components; inspect URP/HDRP capabilities |
-| Animation/physics/VFX | `manage_animation`, `query_physics`, `manage_rigidbody`, `manage_physics_joints`, `manage_vfx` | Optional animation, physics or vfx group; query identity/state before native mutations |
+| Graphics/lighting | `manage_render_pipeline`, `manage_render_volumes`, `manage_light_baking`, `manage_components` | Inspect URP/HDRP capabilities |
+| Animation/physics/VFX | `manage_animation`, `query_physics`, `manage_rigidbody`, `manage_physics_joints`, `manage_vfx` | The default profile includes physics. Check the animation or vfx group for other work |
 | 2D sprite animation | `manage_sprite` | Inspect sheet dimensions and slices before reslicing; see the staged workflow below |
-| UI | `ui_source`, `ui_document`, `ui_inspect`, `ui_element`, `ui_capture`, `manage_ugui` | Optional ui group; uGUI can also use core GameObject/component tools |
+| UI | `ui_source`, `ui_document`, `ui_inspect`, `ui_element`, `ui_capture`, `manage_ugui` | uGUI can also use GameObject and component tools |
 | Current uGUI hit order | `inspect_ugui_hit_order` | Reads a scene RectTransform at current bottom-left screen coordinates. Compatible official uGUI APIs, initialized registries and safe components are required. Check `status` and `policy.native_query_attempted`. |
 | Tests/input | `run_tests`, `get_test_job`, `manage_input` | Input simulation belongs to `testing`; direct uGUI event dispatch does not test raycast occlusion |
 | Tests in the current Play state | `manage_input`, `manage_components`, `execute_code` | Prefer a suitable dedicated tool; proactively use exposed, enabled and consented code execution for game-specific runtime work while preserving the session. See [current-state workflow](workflows.md#tests-in-the-current-play-state) |
@@ -37,7 +37,7 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | Asset generation/import | `generate_image`, `generate_model`, `generate_audio`, `import_model`, `import_model_file`, `blender_bridge` | Confirm provider/model capabilities and consent; poll returned jobs and preserve source/destination assets |
 | Profiling/data assets | `manage_profiler`, `manage_scriptable_object` | Inspect optional dependencies and serialized fields; collect only requested data |
 
-The default startup profile selects the `core` group and always-visible controls. A different profile, Editor availability and client bindings can change what you can call. Optional groups include `testing` for tests/input, `animation` for sprites, `docs` for API inspection, `scripting_ext` for data assets, `probuilder`, `profiling`, `asset_gen` or the selected tool's listed group. See [connection.md](connection.md) for selection support, Editor availability and the optional `legacy` combined schemas. A table entry does not establish that a tool is already callable.
+The default local profile includes server helpers, the `core` group and groups with registered focused capabilities. A different profile, Editor availability and client bindings can change what you can call. Optional groups include `testing` for tests/input, `animation` for sprites, `docs` for API inspection, `scripting_ext` for data assets, `probuilder`, `profiling`, `asset_gen` or the selected tool's listed group. See [connection.md](connection.md) for selection support, Editor availability and the optional `legacy` combined schemas. A table entry does not establish that a tool is already callable.
 
 ## Sprite Sheets
 
@@ -49,7 +49,7 @@ Use `setup_clips` then `setup_controller` for staged control, or `full_setup` on
 
 ## Common Shapes
 
-For assigned bundle metadata, discover optional `assets` tool `asset_bundles` with actions `list_asset_bundles`,
+For assigned bundle metadata, use the advertised `asset_bundles` tool with actions `list_asset_bundles`,
 `get_bundle_assets`, and `get_bundle_dependencies`. These inspect AssetDatabase
 assignments; they do not load or extract external bundle files. Use the exact returned
 bundle name and paginate results.
@@ -84,7 +84,7 @@ The nested `manage_gameobject` identifiers above are native batch handler IDs, n
 
 ## Capture And Playback
 
-Discover the optional `camera` group's `capture_camera` before capturing visual changes:
+When `capture_camera` is visible, request the view needed to verify the change.
 
 <!-- optional-group:camera:start -->
 ```json
