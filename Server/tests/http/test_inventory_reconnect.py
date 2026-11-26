@@ -72,11 +72,22 @@ async def test_versioned_inventory_uses_the_callback_selected_by_the_sdk(command
     async def identify_version() -> str:
         return "2.0"
 
+    await command_hub.registry.register("second", "Second", "other", "6000.3")
     async with Client(app, mode=mode, cache=False) as client:
         inventory = await client.call_tool(
             "manage_tools", {"action": "list_instances"}, version="1.0"
         )
-        assert [row["id"] for row in inventory.structured_content["instances"]] == ["Fixture@hash"]
+        assert {row["id"] for row in inventory.structured_content["instances"]} == {
+            "Fixture@hash",
+            "Second@other",
+        }
+        restricted = await client.call_tool(
+            "manage_tools",
+            {"action": "list_instances", "unity_instance": "Fixture@hash"},
+            version="1.0",
+            raise_on_error=False,
+        )
+        assert restricted.is_error and "Second@other" not in str(restricted.content)
         unknown = await client.call_tool(
             "manage_tools", {"action": "list_instances"}, version="3.0", raise_on_error=False
         )

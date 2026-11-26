@@ -17,6 +17,7 @@ import anyio
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.exceptions import AuthorizationError, ToolError, ValidationError
 from fastmcp.tools.base import ToolResult
+from fastmcp.utilities.versions import VersionSpec
 from pydantic import TypeAdapter
 
 from core.config import config
@@ -724,7 +725,7 @@ class UnityInstanceMiddleware(Middleware):
         if server is not None and hasattr(type(server), "get_tool") and isinstance(name, str):
             version = component_version(ctx)
             resolved_tool = (
-                await server.get_tool(name, version=version)
+                await server.get_tool(name, version=VersionSpec(eq=version))
                 if version is not None
                 else await server.get_tool(name)
             )
