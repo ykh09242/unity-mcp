@@ -25,8 +25,13 @@ def test_modern_http_preflight_exposes_static_selection_and_startup_guidance(pro
             "/mcp", headers=_headers("server/discover"), json=_body("server/discover")
         )
     )["result"]
-    assert 'manage_tools(action="list_groups").discovery' in discovered["instructions"]
-    assert "client scope/project binding" in discovered["instructions"]
+    scope_rule = next(
+        line
+        for line in discovered["instructions"].splitlines()
+        if 'manage_tools(action="list_groups").discovery' in line
+    )
+    assert all(term in scope_rule for term in ("client", "scope", "project", "consent"))
+    assert "unity_instance=Name@hash" in discovered["instructions"]
     assert "UNITY_MCP_TOOL_PROFILE=full" in discovered["instructions"]
     params = {"name": "manage_tools", "arguments": {"action": "list_groups"}}
     response = protocol_http.post(
