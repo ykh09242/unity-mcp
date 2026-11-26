@@ -660,6 +660,9 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Could not find material at path: {materialPath}");
             }
 
+            string materialName = mat.name;
+            using var inspection = new MaterialInspectionCopy(mat);
+            mat = inspection.Value;
             Shader shader = mat.shader;
             var properties = new List<object>();
 
@@ -797,10 +800,10 @@ namespace MCPForUnity.Editor.Tools
 #endif
 
             return new SuccessResponse(
-                $"Retrieved material info for {mat.name}",
+                $"Retrieved material info for {materialName}",
                 new
                 {
-                    material = mat.name,
+                    material = materialName,
                     shader = shader.name,
                     properties = properties,
                 }

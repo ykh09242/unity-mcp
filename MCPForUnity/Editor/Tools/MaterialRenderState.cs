@@ -11,6 +11,19 @@ using UnityEngine.Rendering;
 
 namespace MCPForUnity.Editor.Tools
 {
+    // Property getters can invoke the shader GUI validator and mutate a loaded material.
+    internal readonly struct MaterialInspectionCopy : IDisposable
+    {
+        internal Material Value { get; }
+
+        internal MaterialInspectionCopy(Material source)
+        {
+            Value = new Material(source);
+        }
+
+        public void Dispose() => UnityEngine.Object.DestroyImmediate(Value);
+    }
+
     internal static class MaterialRenderState
     {
         private const int Limit = 128;
@@ -251,8 +264,10 @@ namespace MCPForUnity.Editor.Tools
             return operations;
         }
 
-        private static JObject Snapshot(Material material, Renderer renderer, int slot, string mode)
+        private static JObject Snapshot(Material source, Renderer renderer, int slot, string mode)
         {
+            using var inspection = new MaterialInspectionCopy(source);
+            var material = inspection.Value;
             var shader = material.shader;
             var keywords = new JArray();
             var declared = shader.keywordSpace.keywords;
@@ -309,13 +324,13 @@ namespace MCPForUnity.Editor.Tools
             }
             return new JObject
             {
-                ["material"] = Identity(material),
+                ["material"] = Identity(source),
                 ["renderer"] = renderer != null ? (JToken)Identity(renderer) : JValue.CreateNull(),
                 ["slot"] = renderer != null ? (JToken)slot : JValue.CreateNull(),
                 ["mode"] = mode,
                 ["shader"] = shader.name,
                 ["pipeline"] = RenderPipelineUtility.GetActivePipeline().ToString(),
-                ["render_queue"] = material.renderQueue,
+                ["render_queue"] = source.renderQueue,
                 ["shader_render_queue"] = shader.renderQueue,
                 ["keywords"] = keywords,
                 ["keyword_count"] = declared.Length,

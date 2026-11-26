@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.IO;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.Helpers;
@@ -6,6 +7,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -362,6 +364,105 @@ namespace MCPForUnityTests.Editor.Tools
                     }
                 )
             );
+
+        [Test]
+        public void GetRenderState_ReportsAuthoredTransientValuesAndPreservesTheSharedSlot()
+        {
+            _material.shader = Shader.Find("Standard");
+            _material.SetFloat("_Mode", 0);
+            _material.SetFloat("_ZWrite", 0);
+            _material.SetOverrideTag("RenderType", "AuthoredTag");
+            _material.EnableKeyword("_ALPHATEST_ON");
+            _material.SetTextureOffset("_MainTex", new Vector2(0.25f, 0.5f));
+            _material.renderQueue = 2457;
+            string serialized = EditorJsonUtility.ToJson(_material);
+            var result = ToJObject(ManageMaterial.HandleCommand(Request()));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var state = result["data"];
+            var coupling = state["render_mode_coupling"];
+            Assert.AreEqual(_material.GetInstanceIDCompat(), state["material"]["instance_id"].Value<int>());
+            Assert.AreEqual(2457, state["render_queue"].Value<int>());
+            Assert.AreEqual(0, coupling["properties"]["_ZWrite"].Value<float>());
+            Assert.AreEqual("AuthoredTag", coupling["render_type"].Value<string>());
+            Assert.IsTrue(coupling["alpha_keywords"]["_ALPHATEST_ON"].Value<bool>());
+            Assert.AreEqual(0.25f, state["texture_transforms"]["_MainTex"]["offset"][0].Value<float>());
+            Assert.AreSame(_material, _renderer.sharedMaterials[1]);
+            Assert.AreEqual(serialized, EditorJsonUtility.ToJson(_material));
+        }
+
+        [Test]
+        public void GetMaterialInfo_ObservesSavedPropertiesWithoutValidatingTheAuthoredMaterial()
+        {
+            string path = "Assets/RenderStateFixture_" + Guid.NewGuid().ToString("N") + ".mat";
+            var asset = new Material(Shader.Find("Standard")) { renderQueue = 2011 };
+            AssetDatabase.CreateAsset(asset, path);
+            try
+            {
+                asset.SetFloat("_Glossiness", 0.375f);
+                asset.renderQueue = 2457;
+                EditorUtility.SetDirty(asset);
+                AssetDatabase.SaveAssetIfDirty(asset);
+                var bytes = File.ReadAllBytes(path);
+                var result = ToJObject(ManageMaterial.HandleCommand(new JObject { ["action"] = "get_material_info", ["materialPath"] = path }));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                var value = result["data"]["properties"].SelectToken("$[?(@.name == '_Glossiness')].value");
+                Assert.AreEqual(0.375f, value.Value<float>());
+                Assert.AreEqual(asset.name, result["data"]["material"].Value<string>());
+                Assert.AreEqual(2457, asset.renderQueue);
+                Assert.IsFalse(EditorUtility.IsDirty(asset));
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator SetRenderState_RawQueueSurvivesInspectionAndEditorUpdates()
+        {
+            string path = "Assets/RenderStateFixture_" + Guid.NewGuid().ToString("N") + ".mat";
+            var asset = new Material(Shader.Find("Standard")) { renderQueue = 2011 };
+            AssetDatabase.CreateAsset(asset, path);
+            try
+            {
+                var request = new JObject { ["action"] = "get_render_state", ["materialPath"] = path };
+                Assert.IsTrue(ToJObject(ManageMaterial.HandleCommand(request)).Value<bool>("success"));
+                yield return null;
+                request["action"] = "set_render_state";
+                request["mode"] = "shared";
+                request["renderState"] = new JObject { ["render_queue"] = 2457 };
+                var edited = ToJObject(ManageMaterial.HandleCommand(request));
+                Assert.IsTrue(edited.Value<bool>("success"), edited.ToString());
+                Assert.IsTrue(edited["data"]["disk_verified"].Value<bool>());
+                Assert.AreEqual(2457, edited["data"]["render_queue"].Value<int>());
+                yield return null;
+                int loadedCount = UnityEngine.Resources.FindObjectsOfTypeAll<Material>().Length;
+                foreach (string action in new[] { "get_material_info", "get_render_state" })
+                {
+                    var read = ToJObject(ManageMaterial.HandleCommand(new JObject { ["action"] = action, ["materialPath"] = path }));
+                    Assert.IsTrue(read.Value<bool>("success"), read.ToString());
+                    if (action == "get_render_state")
+                    {
+                        Assert.AreEqual(asset.GetInstanceIDCompat(), read["data"]["material"]["instance_id"].Value<int>());
+                        Assert.AreEqual(2457, read["data"]["render_queue"].Value<int>());
+                    }
+                }
+                Assert.AreEqual(loadedCount, UnityEngine.Resources.FindObjectsOfTypeAll<Material>().Length);
+                yield return null;
+                var loaded = AssetDatabase.LoadAssetAtPath<Material>(path);
+                Assert.AreEqual(asset.GetInstanceIDCompat(), loaded.GetInstanceIDCompat());
+                Assert.AreEqual(2457, loaded.renderQueue);
+                Assert.IsFalse(EditorUtility.IsDirty(loaded));
+                Undo.PerformUndo();
+                Assert.AreEqual(2011, loaded.renderQueue);
+            }
+            finally
+            {
+                Undo.ClearAll();
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
 
         [Test]
         public void SetRenderState_DirtyAssetPreservesLoadedEditsDiskAndUndo()
