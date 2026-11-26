@@ -121,8 +121,9 @@ _INTENT_DESCRIPTION = (
     "interact for operating the Editor or running game, edit for changing project content."
 )
 _SEARCH_DESCRIPTION = (
-    "Choose one search mode. For exhaustive browsing, use selection=agent with the verbatim query, "
-    "then open returned family IDs and follow next_offset. For lexical or required evidence searches, "
+    'For exhaustive browsing, pass sibling arguments "selection": "agent" and "query": the original '
+    'text string. To open a family, set "family" to its returned ID in open_family.arguments. '
+    "Follow next_offset. For lexical or required evidence searches, "
     "use selection=ranked. catalog_query, intent, observation_source and required_values are ranked only."
 )
 _Selection = Annotated[
@@ -298,6 +299,7 @@ async def search_unity_tools(
             outcome["open_family"] = {
                 "tool": "search_unity_tools",
                 "arguments": {k: v for k, v in page.items() if k != "offset"},
+                "set_argument": "family",
             }
             if (
                 request.route_surfaces != "resources"
@@ -314,7 +316,20 @@ async def search_unity_tools(
                 "tool": "search_unity_tools",
                 "arguments": {**page, "offset": offset_next},
             }
+        can_describe = (
+            "manage_tools" in visible
+            and (request.host_tool_names is None or "manage_tools" in request.host_tool_names)
+            and (
+                request.host_tool_evidence is None
+                or request.host_tool_evidence.received("manage_tools") is True
+            )
+        )
         for binding in outcome.get("operations", []):
+            if binding["kind"] == "tool" and can_describe:
+                args = {"action": "describe", "tool": binding["tool"], **project}
+                if binding["action"] is not None:
+                    args["operation"] = binding["action"]
+                binding["describe_call"] = {"tool": "manage_tools", "arguments": args}
             if binding["kind"] == "resource":
                 params = {"uri": binding["uri"]}
                 if project:
@@ -388,9 +403,9 @@ async def search_unity_tools(
         "Actions: list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
-        "reset (restore configured profile), describe (full schema for one tool, optionally bind operation), "
+        "reset (restore configured profile), describe (supply tool and optionally operation for its inputs), "
         "prepare (check a draft against a visible tool's input schema and return call arguments without execution), "
-        "catalog (choose a domain by purpose, then browse tools, actions or readable resources), "
+        "catalog (browse by group or tool), "
         "search (discover routes for a task in any language), "
         "inspect_inventory (compare server advertisement with this host's exact-name evidence). "
         + _SEARCH_DESCRIPTION

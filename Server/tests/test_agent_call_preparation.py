@@ -193,3 +193,96 @@ async def test_agent_directory_provides_followups_for_the_same_scope(server):
             "tool": "manage_tools",
             "arguments": {"action": "catalog"},
         }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_family_operations_offer_callable_input_contracts(server, mode):
+    from jsonschema import Draft202012Validator
+
+    async with Client(server, mode=mode) as client:
+        for search, entry in (("search_unity_tools", {}), ("manage_tools", {"action": "search"})):
+            page = (
+                await client.call_tool(
+                    search, {**entry, "selection": "agent", "family": "manage_ugui", "limit": 20}
+                )
+            ).structured_content
+            row = next(item for item in page["operations"] if item["action"] == "get_hierarchy")
+            describe = row["describe_call"]
+            result = (
+                await client.call_tool(describe["tool"], describe["arguments"])
+            ).structured_content
+            assert result["operation"]["action"] == "get_hierarchy"
+            assert "target" in result["operation"]["required_parameters"]
+            assert set(result["operation"]["optional_parameters"]) == {
+                "include_inactive",
+                "max_nodes",
+            }
+            schema = result["tool"]["input_schema"]
+            assert Draft202012Validator(schema).is_valid(
+                {"action": "get_hierarchy", "target": 17, "strict_read": False}
+            )
+
+        advertised = {t.name: t.input_schema for t in await client.list_tools()}
+        hierarchy = {"action": "get_hierarchy", "target": 17}
+        for draft in (
+            {"action": "get_hierarchy"},
+            {**hierarchy, "strict_read": True},
+            {**hierarchy, "max_depth": 8},
+        ):
+            assert not Draft202012Validator(advertised["manage_ugui"]).is_valid(draft)
+            prepared = await client.call_tool(
+                "manage_tools",
+                {"action": "prepare", "tool": "manage_ugui", "arguments": draft},
+                raise_on_error=False,
+            )
+            assert prepared.structured_content["ready"] is False
+        filtered = await client.call_tool(
+            "search_unity_tools",
+            {"selection": "agent", "family": "manage_ugui", "host_tool_names": ["manage_ugui"]},
+        )
+        assert all("describe_call" not in row for row in filtered.structured_content["operations"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "operation", "required", "optional", "bad_draft"),
+    [
+        (
+            "manage_ugui",
+            "create_control",
+            {"parent", "name", "element_type"},
+            {"properties", "include_inactive"},
+            {},
+        ),
+        (
+            "manage_audio",
+            "read_import_settings",
+            {"target"},
+            {"platform"},
+            {"target": "Assets/Test.wav", "settings": {"preload_audio_data": False}},
+        ),
+        (
+            "manage_material",
+            "set_render_state",
+            {"mode", "render_state"},
+            {"material_path", "target", "slot", "search_method"},
+            {"material_path": "Assets/Test.mat"},
+        ),
+    ],
+)
+async def test_describe_and_prepare_share_the_selected_operations_inputs(
+    server, tool, operation, required, optional, bad_draft
+):
+    async with Client(server, mode="legacy") as client:
+        selector = {"tool": tool, "operation": operation}
+        description = await client.call_tool("manage_tools", {"action": "describe", **selector})
+        card = description.structured_content["operation"]
+        assert required <= set(card["required_parameters"])
+        assert set(card["optional_parameters"]) == optional
+        prepared = await client.call_tool(
+            "manage_tools",
+            {"action": "prepare", **selector, "arguments": bad_draft},
+            raise_on_error=False,
+        )
+        assert prepared.structured_content["ready"] is False

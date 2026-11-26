@@ -538,21 +538,21 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 Target and discover
 - Resolve the Editor via mcpforunity://instances. Sessionless: use unity_instance=Name@hash on tools and _meta.unity_instance on resources, or supported set_active_instance.
 - Keep names, paths and text verbatim. Use advertised URIs and observed template values.
-- Discover by meaning: search_unity_tools(selection="agent", query=original, limit=20). Follow next_call (next_offset). Open relevant IDs with open_family. Compare every operation's results, inputs and effects.
+- Discover by meaning with search_unity_tools({{"selection":"agent","query":"<original text>"}}). Follow next_call (next_offset). Set family in open_family.arguments. Compare operations and use describe_call for inputs.
 - Before indirect reads, check manage_tools(action="catalog") for a direct tool. Prepare uncertain inputs via manage_tools(action="prepare",tool=name,arguments=draft,query=original). Delegate with set_active_instance(include_context=true, evidence_needed=[...]). Recheck scene/mode.
 - Check manage_tools(action="list_groups").discovery, client scope/project binding, Editor toggles and consent. Activate and refresh tools/list. Fixed inventory: let the user reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
 
 Observe and execute
-- For an indirect measurement, verify target, units and coverage. Label inferences. Respect disabled edits.
+- Verify indirect measurements' target, units and coverage. Label inferences. Respect disabled edits.
 - Use mcpforunity://editor/state for lifecycle. Check ready_for_tools, compiler outcome and source confirmation independently. Keep compile_id and follow get_compile_job's next_call. Use evidence_diagnostics on invalid responses.
 - Keep job IDs across reconnects. Check targets and receipts before retrying uncertain edits. Follow recovery_required, order dependent calls and inspect each batch result.
 - Preserve existing Play sessions, scenes and runtime objects. Use interaction tools for input/UI paths. For authorized runtime work, proactively use exposed, enabled and consented execute_code with safety_checks=true when needed. Verify target and Play state, return bounded before/after values and observe async effects without blocking. Keep persistent/external writes within scope.
-- Track temporary owners/lifetimes. Use exception-safe cleanup after last use. Preserve unrelated state. Read the original job's data.verification status, complete, scope and findings.
+- Track temporary owners and use exception-safe cleanup. Preserve unrelated state. Read the job's data.verification status, complete, scope and findings.
 
 Edit and verify
 - Before unfamiliar C# calls, inspect project source or unity_reflect for fully qualified types, member signatures, static/instance access and parameter types. Recheck the contract after symbol/member errors.
 - Report checks, setup, scope and gaps. Attribute native test counts to runner results. Name isolated probes, substituted dependencies and user interactions. Verify cleanup after async effects settle.
-- Use exact targets, forward-slash paths and scoped saves. Preserve spacing, edit boundaries, line endings and strings. Native application of script_apply_edits(options.preview=true) requires same-host/workspace provenance, a complete candidate, fresh original hash and exact UTF-8 bytes. Verify raw bytes/get_sha, complete diffs and file events before refresh. Follow skill://unity-mcp-orchestrator/references/scripts.md.
+- Scope saves to the target. Check file-backed values and exact requested punctuation. Preserve spacing, forward-slash paths and line endings. Applying script_apply_edits(options.preview=true) requires same-host/workspace provenance, complete candidate, fresh original hash and exact UTF-8 bytes. Verify raw bytes/get_sha, diffs and file events before refresh. See skill://unity-mcp-orchestrator/references/scripts.md.
 - Use advertised skill://unity-mcp-orchestrator/SKILL.md. Keep IDs/cursors for detail pages.
 """
 

@@ -30,6 +30,7 @@ from models.ugui_projection_diagnostics import validate_ugui_projection_diagnost
 from models.ugui_tmp_layout_diagnostics import validate_ugui_tmp_layout_diagnostics
 from models.ugui_raycast_diagnostics import validate_ugui_raycast_response
 from services.registry import mcp_for_unity_tool
+from services.registry.action_contracts import input_actions, required_for_actions, used_by_actions
 from services.registry.action_catalog import ACTION_OBSERVATIONS_META, action_observations
 from services.registry.action_catalog import UGUI_RAYCAST_LIMIT, UGUI_RAYCAST_PURPOSE
 from services.tools import get_unity_instance_from_context
@@ -60,6 +61,13 @@ ElementType = Literal[
     "canvas", "panel", "image", "button", "text", "scroll_view", "toggle", "slider", "tmp_input"
 ]
 _ACTIONS: Final = get_args(UGUIAction)
+_SETTERS: Final = tuple(action for action in _ACTIONS if action.startswith("set_"))
+_BUDGETED_DIAGNOSTICS: Final = (
+    "diagnose_projection",
+    "diagnose_text",
+    "diagnose_raycast",
+    "diagnose_device_profiles",
+)
 _MUTATIONS: Final = frozenset(
     {"create", "create_control", "set_rect", "set_layout", "set_text", "set_canvas", "set_image"}
 )
@@ -882,19 +890,30 @@ async def manage_ugui(
     action: Annotated[UGUIAction, "Action to perform."],
     target: Annotated[
         str | StrictInt | None,
+        required_for_actions("get_hierarchy", *_SETTERS, "diagnose", *_BUDGETED_DIAGNOSTICS),
         "GameObject name, hierarchy path, or instance ID. Required for get_hierarchy, setters and diagnose. For diagnose_raycast select a scene UI GameObject with a RectTransform.",
     ] = None,
     parent: Annotated[
         str | StrictInt | None,
+        used_by_actions("create", "create_control"),
+        required_for_actions("create_control"),
         "Parent GameObject for create, resolved by name, hierarchy path, or instance ID.",
     ] = None,
-    name: Annotated[str | None, "Name of the created GameObject."] = None,
+    name: Annotated[
+        str | None,
+        used_by_actions("create", "create_control"),
+        required_for_actions("create_control"),
+        "Name of the created GameObject.",
+    ] = None,
     element_type: Annotated[
         ElementType | None,
+        required_for_actions("create", "create_control"),
         "Element to create: canvas, panel, image, button, or text.",
     ] = None,
     properties: Annotated[
         dict[str, JsonValue] | str | None,
+        used_by_actions("create", "create_control", *_SETTERS),
+        required_for_actions(*_SETTERS),
         "Action-specific camelCase properties, as a dict or JSON object string. Rect: anchorMin, anchorMax, "
         "pivot, anchoredPosition, sizeDelta, offsetMin, offsetMax, localScale, localEulerAngles. "
         "Create: all elements accept Rect properties; panel/image/button also accept color; text also accepts "
@@ -908,6 +927,16 @@ async def manage_ugui(
     ] = None,
     include_inactive: Annotated[
         bool,
+        used_by_actions(
+            "get_hierarchy",
+            "create",
+            "create_control",
+            *_SETTERS,
+            "diagnose",
+            "diagnose_projection",
+            "diagnose_text",
+            "diagnose_device_profiles",
+        ),
         Field(
             strict=True,
             description="Include inactive GameObjects in hierarchy and diagnostics.",
@@ -915,6 +944,7 @@ async def manage_ugui(
     ] = False,
     max_nodes: Annotated[
         int,
+        used_by_actions("get_hierarchy", "diagnose", *_BUDGETED_DIAGNOSTICS),
         Field(
             strict=True,
             ge=1,
@@ -924,12 +954,14 @@ async def manage_ugui(
     ] = 200,
     camera: Annotated[
         str | StrictInt | None,
+        input_actions("diagnose_projection", "diagnose_device_profiles"),
         Field(
             description="For diagnose_projection: explicit view camera required for World Space; Screen Camera uses only its assigned camera. Current scene GameObject name/path/Int32 ID; no camera fallback."
         ),
     ] = None,
     max_depth: Annotated[
         int | None,
+        input_actions(*_BUDGETED_DIAGNOSTICS),
         Field(
             strict=True,
             ge=0,
@@ -939,6 +971,7 @@ async def manage_ugui(
     ] = None,
     max_evaluations: Annotated[
         int | None,
+        input_actions(*_BUDGETED_DIAGNOSTICS),
         Field(
             strict=True,
             ge=1,
@@ -948,6 +981,7 @@ async def manage_ugui(
     ] = None,
     max_characters: Annotated[
         int | None,
+        input_actions(*_BUDGETED_DIAGNOSTICS),
         Field(
             strict=True,
             ge=1,
@@ -957,15 +991,19 @@ async def manage_ugui(
     ] = None,
     resolutions: Annotated[
         list[dict[str, ResolutionDimension]] | str | None,
+        used_by_actions("diagnose"),
         "For diagnose: 1 to 8 {width,height} objects, or a JSON array string. Integer dimensions 64 to 8192. "
         "Omit to use Editor diagnostic defaults.",
     ] = None,
     device_profiles: Annotated[
         DeviceProfiles | None,
+        input_actions("diagnose_device_profiles"),
+        required_for_actions("diagnose_device_profiles"),
         "For diagnose_device_profiles: 1..8 closed records. Virtual requires source,width,height,dpi,safe_area=[x,y,width,height] in bottom-left pixels and concrete orientation; observed accepts source only.",
     ] = None,
     minimum_touch_target_mm: Annotated[
         float | None,
+        input_actions("diagnose_device_profiles"),
         Field(
             strict=True,
             gt=0,
@@ -975,10 +1013,13 @@ async def manage_ugui(
     ] = None,
     screen_position: Annotated[
         ScreenPosition | None,
+        input_actions("diagnose_raycast"),
+        required_for_actions("diagnose_raycast"),
         "For diagnose_raycast: required [x,y] in current-screen pixels from the bottom-left; no camera/resolution edit.",
     ] = None,
     allow_custom_filters: Annotated[
         bool,
+        input_actions("diagnose_raycast", inactive_value=False),
         Field(
             strict=True,
             description="For diagnose_raycast only: explicitly permit native ICanvasRaycastFilter user code. Default false refuses before applicable custom callbacks; opt-in is not transactional or interruptible.",
@@ -986,6 +1027,7 @@ async def manage_ugui(
     ] = False,
     strict_read: Annotated[
         bool,
+        input_actions("diagnose_raycast", inactive_value=False),
         Field(strict=True),
         "For diagnose_raycast, require native read-only preflight and a matching policy receipt.",
     ] = False,
