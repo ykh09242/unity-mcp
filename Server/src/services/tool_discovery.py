@@ -14,7 +14,7 @@ from mcp.types import ResourceLink, ToolListChangedNotification
 from mcp_types.version import is_version_at_least
 
 from core.sdk_compatibility import is_reviewed_sdk
-from services.registry import DEFAULT_ENABLED_GROUPS, TOOL_GROUPS
+from services.registry import DEFAULT_ENABLED_GROUPS, TOOL_GROUPS, capability_catalog
 from transport.protocol import is_sessionless
 
 
@@ -112,6 +112,14 @@ class ToolDiscovery(Transform):
             if self.profile not in profiles:
                 raise ValueError("UNITY_MCP_TOOL_PROFILE must be minimal, core or full")
             self.default_groups = set(profiles[self.profile])
+            if self.profile == "core":
+                # A host can bind tools only once. Include each registered focused
+                # family and its companions together in that first tools/list.
+                self.default_groups.update(
+                    capability.group
+                    for capability in capability_catalog.CAPABILITIES
+                    if groups.get(capability.name) == capability.group
+                )
         self.definitions = definitions
         self.groups = groups
         self.store = getattr(server, "_unity_session_state_store", None)

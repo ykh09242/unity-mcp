@@ -162,9 +162,9 @@ def test_group_status_honors_remote_tenants_project_selection_and_empty_catalogs
     """)
 
 
-def test_specialized_groups_start_hidden_and_reveal_complete_unchanged_schemas():
+def test_explicit_core_group_reveals_optional_schemas_on_selection():
     run_sdk_regression("""
-        import asyncio, json, sys
+        import asyncio, os, sys
         sys.path.insert(0, "src")
         from fastmcp import Client, FastMCP
         from core.config import config
@@ -183,6 +183,7 @@ def test_specialized_groups_start_hidden_and_reveal_complete_unchanged_schemas()
             assert optional.keys() <= schemas.keys(), "Explicit complete catalog"
 
             config.transport_mode = "http"
+            os.environ["UNITY_MCP_TOOL_GROUPS"] = "core"
             server = FastMCP("lean")
             register_all_tools(server, project_scoped_tools=False)
             for mode in ("legacy", "2026-07-28"):

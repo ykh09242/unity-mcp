@@ -16,6 +16,7 @@ def test_distributed_core_examples_validate_against_real_default_catalog(mode):
         from jsonschema import Draft202012Validator
         from core.config import config
         from services.registry import get_registered_tools
+        from services.registry.capability_catalog import CAPABILITIES
         from services.tools import register_all_tools
         from transport.unity_instance_middleware import UnityInstanceMiddleware
 
@@ -28,6 +29,7 @@ def test_distributed_core_examples_validate_against_real_default_catalog(mode):
             register_all_tools(server, project_scoped_tools=False)
             async with Client(server, mode=MODE, cache=False) as client:
                 tools = {tool.name: tool for tool in await client.list_tools()}
+                assert {capability.name for capability in CAPABILITIES} <= tools.keys()
                 request = {"action": "describe", "tool": "scene_inspect", "operation": "get_hierarchy"}
                 implicit = (await client.call_tool("manage_tools", request)).structured_content
                 explicit = (await client.call_tool("manage_tools", {**request, "include_schema": True})).structured_content
@@ -54,28 +56,25 @@ def test_distributed_core_examples_validate_against_real_default_catalog(mode):
                 assert {group for group, _ in optional} == {"ui", "camera"}
                 groups = {item["name"]: item["group"] for item in get_registered_tools()}
                 for group, example in optional:
-                    # Explicit optional exemptions must name the actual group, and
-                    # their examples must match the real exposed schema after enabling it.
+                    # Group-scoped examples must also work on the first default listing.
                     name = example["tool"]
-                    assert name not in tools, example
                     assert groups[name] == group, (group, example)
-                    server.enable(tags={f"group:{group}"}, components={"tool"})
-                    expanded = {tool.name: tool for tool in await client.list_tools()}
-                    Draft202012Validator(expanded[name].input_schema).validate(example["params"])
+                    Draft202012Validator(tools[name].input_schema).validate(example["params"])
         asyncio.run(scenario())
         """.replace("MODE", repr(mode))
     )
 
 
-def test_capabilities_have_narrow_schemas_and_individual_session_visibility():
+def test_explicit_group_selection_preserves_narrow_schemas_and_session_isolation():
     run_sdk_regression("""
-        import asyncio, sys
+        import asyncio, os, sys
         sys.path.insert(0, "src")
         from fastmcp import Client, FastMCP
         from core.config import config
         from services.tools import register_all_tools
 
         async def scenario():
+            os.environ["UNITY_MCP_TOOL_GROUPS"] = "core"
             for transport in ("http", "stdio"):
                 config.transport_mode = transport
                 config.http_remote_hosted = False

@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import replace
 
 from fastmcp import Client, Context, FastMCP
 from fastmcp.server.middleware import Middleware
@@ -74,6 +75,53 @@ def discovery_server(monkeypatch):
 
 async def names(client):
     return {tool.name for tool in await client.list_tools()}
+
+
+@pytest.mark.asyncio
+async def test_focused_family_is_callable_from_the_first_list(discovery_server, monkeypatch):
+    from services.registry import capability_catalog, tool_registry
+
+    build, _ = discovery_server
+    family = replace(capability_catalog.CAPABILITIES[0], name="effect_probe", group="vfx")
+    monkeypatch.setattr(capability_catalog, "CAPABILITIES", (family,))
+    entries = tool_registry.get_registered_tools()
+    reader = next(entry for entry in entries if entry["name"] == "inspect_probe")
+    companion = {
+        **reader,
+        "name": "readback_probe",
+        "group": "vfx",
+        "kwargs": {"tags": {"group:vfx"}},
+    }
+    monkeypatch.setattr(tool_registry, "_tool_registry", [*entries, companion])
+    full, _ = build("full")
+    async with Client(full) as client:
+        expected = {tool.name: tool for tool in await client.list_tools()}
+    core, _ = build("core")
+    async with Client(core, mode="legacy") as client:
+        initial = {tool.name: tool for tool in await client.list_tools()}
+        assert initial == expected
+        result = await client.call_tool("effect_probe", {"strength": 2.5, "enabled": False})
+        assert result.structured_content == {"strength": 2.5, "enabled": False}
+        assert (await client.call_tool("readback_probe", {"count": 3})).structured_content == {
+            "count": 3
+        }
+        status = (
+            await client.call_tool("manage_tools", {"action": "list_groups"})
+        ).structured_content
+        assert next(group for group in status["groups"] if group["name"] == "vfx")[
+            "default_enabled"
+        ]
+        await client.call_tool("manage_tools", {"action": "deactivate", "group": "vfx"})
+        assert {"effect_probe", "readback_probe"}.isdisjoint(await names(client))
+        await client.call_tool("manage_tools", {"action": "reset"})
+        assert await names(client) == set(initial)
+    minimal, _ = build("minimal")
+    async with Client(minimal) as client:
+        assert await names(client) == {"manage_tools"}
+    monkeypatch.setenv("UNITY_MCP_TOOL_GROUPS", "core")
+    narrow, _ = build("core")
+    async with Client(narrow) as client:
+        assert await names(client) == {"manage_tools", "inspect_probe"}
 
 
 @pytest.mark.asyncio

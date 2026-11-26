@@ -37,8 +37,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
     Any .py file in this directory or subdirectories with @mcp_for_unity_tool decorated
     functions will be automatically registered.
 
-    On local servers, non-default tool groups are disabled at the server level
-    so that new sessions only see the *core* tools (plus always-visible meta-tools).
+    The local core profile starts with the core group, groups containing registered
+    focused capabilities, and always-visible meta-tools. Explicit groups stay exact.
     Legacy clients and trusted project-bound modern scopes can adjust selection
     via ``manage_tools``. UNITY_MCP_TOOL_PROFILE selects minimal/core/full defaults.
     Hosted remote servers use each authenticated user's Unity catalog instead;

@@ -17,6 +17,14 @@ family ID. Concrete resources have a complete `read_call`. When the tool
 directory is unrestricted, `selectable_catalog` opens the normal selection
 catalog to find tools beyond the current advertisement.
 
+The default local `core` profile selects the core group and each group containing
+a registered focused capability. Its companion tools appear in the first
+`tools/list`, so a host that binds tools once can read, edit and verify with
+the ordinary public names. The selected Editor and the caller's permissions
+determine which operations are available. To start with only the core group
+and server helpers, use `--tool-groups core`. `manage_tools(action="list_groups")`
+reports the startup selection and currently visible names for each group.
+
 Use `manage_tools(action="prepare", tool=name, arguments=draft, query=original)`
 before submitting uncertain inputs. Check the returned `adjustments` and call
 the exact `prepared_call` if it matches the request. The server validates the
