@@ -1,0 +1,3028 @@
+{
+  "schema": 1,
+  "candidate_product": "658e6070b8f1dabfd2a4ee8ad16cc14f003f7031",
+  "product_pins": {
+    "package": "658e6070b8f1dabfd2a4ee8ad16cc14f003f7031",
+    "runtime": "7e5e1a89739b6859ef789b71e0ca61a080ce8cda",
+    "skill": "96ec78009148a1f47aca17c0595faa00712db214"
+  },
+  "primary_seal": {
+    "schema": 1,
+    "freeze_reference": "4f454080c0b95ae27b8510f74610200da81833cc",
+    "actor": {
+      "model": "gpt-6.2-sol",
+      "reasoning": "medium",
+      "limit_seconds": 360,
+      "profiles": [
+        "core",
+        "full"
+      ],
+      "input": "Exact UTF-8 query as the sole user message",
+      "repeats_per_original_profile_and_revision": 1
+    },
+    "rubric": {
+      "read": "Correct and complete final answer, actual successful public supporting evidence, target and collateral unchanged",
+      "edit": "Exact scoped native transition, accurate final answer, actual public supporting evidence, collateral unchanged",
+      "scope": "One disposable real editor. Guard original constraints against complete receipts and compare independent pre/post native snapshots. Accept alternative public tool routes with positive evidence. Catalog listings and search results alone cannot ground an answer.",
+      "protected": "Project manifest and settings, active scene, loaded scenes, editor stage, selected object and play state, full scene and native components outside the specified edit, persisted asset contents and metadata outside the specified edit, scene and asset decoys. For optional save of the only open uGUI target scene, check its persisted result and establish only the allowed value changed.",
+      "forbidden": "Changing non-target state, source asset edits for scene changes, adding/removing/replacing target assets or components, creating unrelated files, play mode transitions, changing selection or active scene, installing packages, changing tool preferences, and externally writing. A forbidden mutation followed by restoration is still disqualifying. Review all raw tool and host errors, keep all scheduled attempts, and separate infrastructure failures from model outcomes.",
+      "review": "Before/after on each attempt and successful call indices support a fingerprinted semantic adjudication. Keep veracity, evidence, collateral, public calls, errors, approvals and wall time separate.",
+      "confirmation": "The reserve cohort is untouched and separate. Use it once only if a subsequently frozen generic fix needs untouched confirmation. Do not promote reserve cases into the primary cohort or combine their counts."
+    },
+    "cases": [
+      {
+        "task": "h01",
+        "panel": "primary",
+        "language": "fr",
+        "family": "manage_asset.labels",
+        "effect": "read",
+        "seed": 7283141,
+        "query": "Avant de préparer la revue, peux-tu me donner la liste complète des étiquettes Unity actuellement posées sur Assets/TrialData/ReviewCard.txt ? Laisse la carte et le projet tels quels.",
+        "target": "Assets/TrialData/ReviewCard.txt",
+        "before": {
+          "labels": [
+            "Needs-Legal",
+            "QA-Candidate",
+            "Sable-47"
+          ]
+        },
+        "after": {
+          "labels": [
+            "Needs-Legal",
+            "QA-Candidate",
+            "Sable-47"
+          ]
+        },
+        "allow": []
+      },
+      {
+        "task": "h02",
+        "panel": "primary",
+        "language": "de",
+        "family": "manage_asset.labels",
+        "effect": "edit",
+        "seed": 1886342,
+        "query": "Markiere Assets/TrialData/ShipmentCard.txt im Unity-Projekt zusätzlich mit dem Asset-Label Ready-Dispatch. Die bisherigen Labels sollen erhalten bleiben. Lass den Inhalt der Datei und alle anderen Assets unverändert.",
+        "target": "Assets/TrialData/ShipmentCard.txt",
+        "before": {
+          "labels": [
+            "Fragile",
+            "Night-Shift"
+          ]
+        },
+        "after": {
+          "labels": [
+            "Fragile",
+            "Night-Shift",
+            "Ready-Dispatch"
+          ]
+        },
+        "allow": [
+          "target asset label set only"
+        ]
+      },
+      {
+        "task": "h03",
+        "panel": "primary",
+        "language": "vi",
+        "family": "manage_prefabs",
+        "effect": "read",
+        "seed": 5931703,
+        "query": "Trong prefab Assets/TrialData/SortingRack.prefab, hãy cho tôi biết các đối tượng con trực tiếp dưới gốc theo thứ tự trong Hierarchy, kể cả đối tượng đang tắt. Chỉ kiểm tra, đừng sửa prefab hay scene.",
+        "target": "Assets/TrialData/SortingRack.prefab",
+        "before": {
+          "children": [
+            "Intake",
+            "Holding",
+            "Release"
+          ],
+          "active": [
+            true,
+            false,
+            true
+          ]
+        },
+        "after": {
+          "children": [
+            "Intake",
+            "Holding",
+            "Release"
+          ],
+          "active": [
+            true,
+            false,
+            true
+          ]
+        },
+        "allow": []
+      },
+      {
+        "task": "h04",
+        "panel": "primary",
+        "language": "ru",
+        "family": "manage_prefabs",
+        "effect": "edit",
+        "seed": 8231704,
+        "query": "В самом файле префаба Assets/TrialData/ServiceBooth.prefab выключи дочерний объект WarningPlacard, чтобы у него был снят флажок активности. Остальные объекты префаба и открытую сцену оставь как есть.",
+        "target": "Assets/TrialData/ServiceBooth.prefab",
+        "before": {
+          "child": "WarningPlacard",
+          "active": true
+        },
+        "after": {
+          "child": "WarningPlacard",
+          "active": false
+        },
+        "allow": [
+          "saved native target prefab child activeSelf only"
+        ]
+      },
+      {
+        "task": "h05",
+        "panel": "primary",
+        "language": "de",
+        "family": "manage_ui",
+        "effect": "read",
+        "seed": 9371805,
+        "query": "Welche Texte stehen in der gespeicherten Oberfläche Assets/TrialData/ArchivePanel.uxml beim Element count-note als Beschriftung und als Tooltip? Bitte gib beide Werte wörtlich wieder und ändere nichts.",
+        "target": "Assets/TrialData/ArchivePanel.uxml",
+        "before": {
+          "element": "count-note",
+          "text": "Six ledgers",
+          "tooltip": "Count excludes transfers"
+        },
+        "after": {
+          "element": "count-note",
+          "text": "Six ledgers",
+          "tooltip": "Count excludes transfers"
+        },
+        "allow": []
+      },
+      {
+        "task": "h06",
+        "panel": "primary",
+        "language": "vi",
+        "family": "manage_ui",
+        "effect": "edit",
+        "seed": 5823606,
+        "query": "Trong tệp Assets/TrialData/IntakePanel.uxml, hãy đổi chữ hiển thị của phần tử tên submit-caption thành Send to review. Lưu vào chính tệp này và giữ nguyên tooltip, các phần tử khác và scene đang mở.",
+        "target": "Assets/TrialData/IntakePanel.uxml",
+        "before": {
+          "element": "submit-caption",
+          "text": "Send now",
+          "tooltip": "Review before dispatch"
+        },
+        "after": {
+          "element": "submit-caption",
+          "text": "Send to review",
+          "tooltip": "Review before dispatch"
+        },
+        "allow": [
+          "source bytes for the existing text value only, Unity reimport of the same file"
+        ]
+      },
+      {
+        "task": "h07",
+        "panel": "primary",
+        "language": "ru",
+        "family": "manage_ugui",
+        "effect": "read",
+        "seed": 1065207,
+        "query": "Для объекта Ticket Canvas в открытой сцене назови режим отрисовки Canvas и его порядок сортировки. Мне нужны текущие значения, сцену не меняй.",
+        "target": "Ticket Canvas",
+        "before": {
+          "renderMode": "ScreenSpaceOverlay",
+          "sortingOrder": 37
+        },
+        "after": {
+          "renderMode": "ScreenSpaceOverlay",
+          "sortingOrder": 37
+        },
+        "allow": []
+      },
+      {
+        "task": "h08",
+        "panel": "primary",
+        "language": "fr",
+        "family": "manage_ugui",
+        "effect": "edit",
+        "seed": 2824608,
+        "query": "Sur l’objet Status Canvas de la scène ouverte, règle l’ordre de tri du Canvas à 18. Conserve son mode de rendu, sa hiérarchie et le réglage des autres Canvas.",
+        "target": "Status Canvas",
+        "before": {
+          "renderMode": "ScreenSpaceOverlay",
+          "sortingOrder": 6
+        },
+        "after": {
+          "renderMode": "ScreenSpaceOverlay",
+          "sortingOrder": 18
+        },
+        "allow": [
+          "existing Canvas sortingOrder only, save of the already open target scene while preserving other serialized values"
+        ]
+      }
+    ]
+  },
+  "whole_preseal_sha256": "e9cce7494467d219f8bb36042547a18d336ded8b9e2cb436c9da3496a0fb454d",
+  "primary_preseal_sha256": "5cefaebed0cfc665a64a0bb928cbdc31fb695d6f903f828436c9b6554e8f46c9",
+  "reserve_disclosed": false,
+  "actor": {
+    "version": "codex-cli 0.172.0",
+    "sha256": "3f42b12274b353ecb3ec555e6c8d0a43f6c6cb29c3a546179bc12dee4855deb6",
+    "model": "gpt-6.2-sol",
+    "reasoning_effort": "medium",
+    "host": "ordinary-codex-exec"
+  },
+  "native_observer_sha256": "9cc9e993d5c032ef253f121b114150f38dcc4963fb8daf28c3178a486ebf516d",
+  "unity_editor": "6000.0.69f1",
+  "counting_rules": {
+    "public_calls": "MCP tools/call and resources/read requests from the actor.",
+    "error_layers": "Domain and MCP markers may appear together on one unsuccessful reply.",
+    "host_errors": "Error records from host events and stderr. A host record can describe an unsuccessful public reply.",
+    "host_final": "A reviewed answer must satisfy the requested result. An accurate refusal is incomplete when the original asks for a value or edit."
+  },
+  "shared_preferences": {
+    "before_sha256": "5ab447bb3881745f00a37d8290018c33a1d238d17391edd6bbcd99c9267b6ffb",
+    "after_sha256": "5ab447bb3881745f00a37d8290018c33a1d238d17391edd6bbcd99c9267b6ffb",
+    "count": 130,
+    "private_opt_in_count": 1,
+    "private_scope_sha256": "a8fe8d640c6aa8ffedb64d571d4d5eaeca91f46b48ca26512eaedfdf12527855"
+  },
+  "catalogs": {
+    "core": {
+      "counts": {
+        "tools": 31,
+        "resources": 35,
+        "templates": 13
+      },
+      "sha256": "aef2605be50800b182b26d39f95547a1584d9e79ed95c17d40d171e3999abd30",
+      "tools_sha256": "1a404b0dab051f8a2340028c3f77fa965468bbeb5e7ccc437837940819817de3"
+    },
+    "full": {
+      "counts": {
+        "tools": 91,
+        "resources": 35,
+        "templates": 13
+      },
+      "sha256": "74c37a1e16c475830c53ef5ea49d5fa6aad0745661e4dd8e0b2989f3f6820e60",
+      "tools_sha256": "3c98818be19bb9f5cd9e20e9f651830a7a5d913ce34ace751f4cf8083eba883d"
+    }
+  },
+  "summary": {
+    "core": {
+      "scheduled": 8,
+      "prompt_reached_model": 8,
+      "model_turns_started": 8,
+      "model_turns_completed": 8,
+      "completed": 3,
+      "read_completed": 2,
+      "edit_completed": 1,
+      "native_state_observed": 8,
+      "native_edit_targets_reached": 1,
+      "absent_host_final": 0,
+      "incorrect_or_incomplete_host_final": 5,
+      "absent_or_incorrect_host_final": 5,
+      "zero_calls_after_initial_inventory": 1,
+      "public_calls": 102,
+      "domain_errors": 4,
+      "mcp_errors": 12,
+      "unsuccessful_public_replies": 12,
+      "missing_public_replies": 0,
+      "unsuccessful_tool_replies": 11,
+      "unsuccessful_resource_replies": 1,
+      "unreturned_tool_requests": 0,
+      "unreturned_resource_requests": 0,
+      "host_errors": 13,
+      "host_stderr_error_records": 1,
+      "host_router_errors_without_public_request": 0,
+      "approval_errors": 0,
+      "pre_delivery_not_ready": 0,
+      "verdicts": {
+        "incomplete_answer": 2,
+        "incomplete_native_target": 3,
+        "completed": 3
+      }
+    },
+    "full": {
+      "scheduled": 8,
+      "prompt_reached_model": 8,
+      "model_turns_started": 8,
+      "model_turns_completed": 8,
+      "completed": 8,
+      "read_completed": 4,
+      "edit_completed": 4,
+      "native_state_observed": 8,
+      "native_edit_targets_reached": 4,
+      "absent_host_final": 0,
+      "incorrect_or_incomplete_host_final": 0,
+      "absent_or_incorrect_host_final": 0,
+      "zero_calls_after_initial_inventory": 0,
+      "public_calls": 58,
+      "domain_errors": 3,
+      "mcp_errors": 2,
+      "unsuccessful_public_replies": 5,
+      "missing_public_replies": 0,
+      "unsuccessful_tool_replies": 1,
+      "unsuccessful_resource_replies": 4,
+      "unreturned_tool_requests": 0,
+      "unreturned_resource_requests": 0,
+      "host_errors": 7,
+      "host_stderr_error_records": 5,
+      "host_router_errors_without_public_request": 4,
+      "approval_errors": 0,
+      "pre_delivery_not_ready": 0,
+      "verdicts": {
+        "completed": 8
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "fc095b92e693cbdc",
+      "profile": "core",
+      "task": "h01",
+      "effect": "read",
+      "original_sha256": "4cc1c0e3c0b3ea4e85b9b6a12c69dad797d86acd0947b3411c93cae2d2e6cc63",
+      "verdict": "incomplete_answer",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": false,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "4cc1c0e3c0b3ea4e85b9b6a12c69dad797d86acd0947b3411c93cae2d2e6cc63",
+      "answer_sha256": "711444caf3389e035d702374b7a109c3d75e53729dde26441fb003e5f754dcfe",
+      "delivery_status": "completed",
+      "seconds": 88.915,
+      "receipt_sha256": "57da71b9fc783ed2d0a9e8fa75b15ab0a74427c751aa81f20d44245172edd3e3",
+      "fingerprint": "d469050dc69d2c90e1c8777286af3a83e90797f67dd23eae6957a0e556be0850",
+      "before_facts": {
+        "labels": [
+          "Needs-Legal",
+          "QA-Candidate",
+          "Sable-47"
+        ]
+      },
+      "after_facts": {
+        "labels": [
+          "Needs-Legal",
+          "QA-Candidate",
+          "Sable-47"
+        ]
+      },
+      "before_sha256": "130fbb2a374c6a66ea535cc287f7baf4ba7041761ef0e6350519627a262b3e86",
+      "after_sha256": "130fbb2a374c6a66ea535cc287f7baf4ba7041761ef0e6350519627a262b3e86",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "aef2605be50800b182b26d39f95547a1584d9e79ed95c17d40d171e3999abd30",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "1a404b0dab051f8a2340028c3f77fa965468bbeb5e7ccc437837940819817de3",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4435c35b035d4c0b6c4ac8a16fd34fe30ceccd9e22ac379916df6a1b4dc5c419"
+        },
+        {
+          "index": 1,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "545ae32a4920faf1ad281c3bbba21c089ae87efb452d3b8b4b74fa1c967d46cc"
+        },
+        {
+          "index": 2,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "1f68d939bb4c19c93b111b4652c61159e13ca90a5e7b25b81c8e8533c59cce2e"
+        },
+        {
+          "index": 3,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "eaa89b731fbf72aef7c1108ccae2f7dfb672925ef9fe6701809b4ae1b34b110a"
+        },
+        {
+          "index": 4,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "5b3f1209789fad27bf748f3ed5db587f48412fd121f8b055d2e33015641c3935"
+        },
+        {
+          "index": 5,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "f3a5fce5749f3fea2020208493200a1fbf3640364804d2dfad7f868e91ff1b1d"
+        },
+        {
+          "index": 6,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "7361d900a94c96e242b5902746bc0c366ca4f1600f957d6180fd67e67f8785e5"
+        },
+        {
+          "index": 7,
+          "binding": "mcpforunity://editor/state",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "645575dbfbc7882a1f73248db83d18bee198fe6724506f6bdf18c13a96b3fc86"
+        },
+        {
+          "index": 8,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "14073413dc6fbe76230152eb5cee241b4c2753233aaa2046fa972367ae25b54e"
+        },
+        {
+          "index": 9,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": true,
+          "mcp_error": true,
+          "sha256": "cf032c29ac6db85eabcb578129d15c5f2f97a7d5b6b3c4348cfb34526280a529"
+        },
+        {
+          "index": 10,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "871ed7192eaf0483a8a2aa58a7b78da5b3200ac971698eb4a012dd0bb9c2297e"
+        },
+        {
+          "index": 11,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "c367e56af4e35a7e27fbee7c398ab9ce6751f18d61f4945a403bf6cb84395a02"
+        },
+        {
+          "index": 12,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "287a55ebd1af3d710e7a475b952637835b87c0dd83ee068dd3f0734c899d7e60"
+        },
+        {
+          "index": 13,
+          "binding": "mcpforunity://editor/selection",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "1d5a6dfd862e30fa22036a73c7454a034958d58a9159ddad03207a16b92cc572"
+        },
+        {
+          "index": 14,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "2b55e7ad2118ab8cabd3d74ce955b882669977c2c620f8d020459a022479223a"
+        },
+        {
+          "index": 15,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "1b20e15b36f52e4ec0a165cf82bb595578e8e9489a9b7f8d63956ffcd5bdb11e"
+        },
+        {
+          "index": 16,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "67256fd5a129aa31c8454d51b624dfb9ae4433d1c67a7642d50051d23b3b0932"
+        },
+        {
+          "index": 17,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": false,
+          "mcp_error": true,
+          "sha256": "f686459aca58b3a2b7a4bd1f312966234274c0fc31c13dac172e7c450ec7c68c"
+        },
+        {
+          "index": 18,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "76d55c603b9c3696542aaea91b4a13bae334e458aa3619a386a4f79cfaf7d777"
+        },
+        {
+          "index": 19,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": true,
+          "mcp_error": true,
+          "sha256": "dd2369d8299f5bc6f3fdba9361a45e369896290138fbab4c1965bc0230f94240"
+        },
+        {
+          "index": 20,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "76f6b28a35e4b582046853f4da136472e56aac9af2964f0b60a75bc04138808c"
+        },
+        {
+          "index": 21,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": false,
+          "mcp_error": true,
+          "sha256": "77541ade43da90ca19599a2ebdec03d6b444739208e4dc672a2f97b83f12ee88"
+        },
+        {
+          "index": 22,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "8080ae803f04d3ab67bcca07447257e2acd8d3c451e8dd943c0c5a52a6b1fe57"
+        },
+        {
+          "index": 23,
+          "binding": "mcpforunity://editor/state",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "aad49f194d81ab5c4d1f87265e9002afd32dd50e0df5d148e711294a8ce44a1e"
+        },
+        {
+          "index": 24,
+          "binding": "asset_inspect",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "72766dfd87fe6e4b061cd6206d4735eb030bda39a9fd1cf8a7cb89c4b6b47425"
+        },
+        {
+          "index": 25,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": false,
+          "mcp_error": true,
+          "sha256": "104a7ab933547df467883f77ecaaa221c8e78a503338e4bd9e0410de1ed6e83f"
+        },
+        {
+          "index": 26,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "7439adeb9c20d4536dce0e6c50a889825f6f4436fadfaf29d88fe30c0e4dcd3e"
+        }
+      ],
+      "host_errors": [
+        {
+          "index": 27,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "8d283cde091f5935f85dfc9a817dcba03d66e56c73d046c5b6959c6554a02390"
+        },
+        {
+          "index": 43,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "bd3ed43088ebcd80edfad09bcc237dee8ac3d82121553958b961358406e9c3cf"
+        },
+        {
+          "index": 47,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "77981021dce300d89a0093a095f9f07596ab62705e0211fec501320552711ff3"
+        },
+        {
+          "index": 51,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "0ad4578e9e6596f9925e7a6156025fde959936d41f002b8a281c40e59e179d09"
+        },
+        {
+          "index": 59,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "f2cbc6a32c58a1650f3bb89872506208b72620dc67c060fc7978619ae0755efc"
+        }
+      ],
+      "private_artifact_sha256": [
+        "04fff8e8cf88622d4a85be71acdd1f94efbda81190e40af35d0967403128ead6",
+        "b5f05d98eda076932042676793a69df002576f55e0da13f7568bf661ac9d57f3",
+        "d61fa13fbe40e74aac41bca4cea9bb9dcfb93150ba619f14280e3b4455e2553b",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "d469050dc69d2c90e1c8777286af3a83e90797f67dd23eae6957a0e556be0850",
+        "answer_accurate": false,
+        "constraints_respected": true,
+        "evidence": [],
+        "reason": "The answer states the requested label list was unavailable and gives no labels. The raw trace confirms a server-selected, host-filtered route and no target mutation."
+      }
+    },
+    {
+      "id": "c0abf657cf83aba7",
+      "profile": "full",
+      "task": "h01",
+      "effect": "read",
+      "original_sha256": "4cc1c0e3c0b3ea4e85b9b6a12c69dad797d86acd0947b3411c93cae2d2e6cc63",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "4cc1c0e3c0b3ea4e85b9b6a12c69dad797d86acd0947b3411c93cae2d2e6cc63",
+      "answer_sha256": "78f0fe2458603d43fed28f46e1dce7abd9fde680f65adb61d02f9750a1fe8aa0",
+      "delivery_status": "completed",
+      "seconds": 31.929,
+      "receipt_sha256": "965ac3afe1716ed5f2a749d3542dc05c4241dd464934f97c24bb9736d1e762f9",
+      "fingerprint": "deadeb483eefb1f898c2ea3f433bc7a214343246b63fc781338188bcb58dcc1f",
+      "before_facts": {
+        "labels": [
+          "Needs-Legal",
+          "QA-Candidate",
+          "Sable-47"
+        ]
+      },
+      "after_facts": {
+        "labels": [
+          "Needs-Legal",
+          "QA-Candidate",
+          "Sable-47"
+        ]
+      },
+      "before_sha256": "98ccf5be847f699ca7b0e2856cd51a16884e3cca3d1a06fe5bce04f3ab16675e",
+      "after_sha256": "98ccf5be847f699ca7b0e2856cd51a16884e3cca3d1a06fe5bce04f3ab16675e",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "74c37a1e16c475830c53ef5ea49d5fa6aad0745661e4dd8e0b2989f3f6820e60",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "3c98818be19bb9f5cd9e20e9f651830a7a5d913ce34ace751f4cf8083eba883d",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4d679cf7ed180870a5c7ade82dae9d2bfd64b34164be9fa6a9655f6e8ecabfea"
+        },
+        {
+          "index": 1,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "e1a84a9582ceb8e8517f9e2157817ed5196218933ec7ac8a7fde41ea97cd6b2a"
+        },
+        {
+          "index": 2,
+          "binding": "asset_labels",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "c4f8fc9199c6f794f53062513519872d8a329405adb72efd8a7de76bfa622c5a"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "d8306600dbcf2bfe0bbe12424c31e578a2d18e3e23f6f50e7bed268f92a7438a",
+        "e21a2c5378e1637e45738af92e69fe6be426dc7d4cc0eaed1214b7d9fc720cff",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "f159f2c8e8539cea032de72ce0ba6a879671e9190aa89ddde43c37f5a04b19c8"
+      ],
+      "review": {
+        "fingerprint": "deadeb483eefb1f898c2ea3f433bc7a214343246b63fc781338188bcb58dcc1f",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 2,
+            "sha256": "c4f8fc9199c6f794f53062513519872d8a329405adb72efd8a7de76bfa622c5a"
+          }
+        ],
+        "reason": "The successful public read returned all three exact labels, and the final answer matched them. Independent pre/post facts and protected state matched."
+      }
+    },
+    {
+      "id": "b55506375784bcad",
+      "profile": "full",
+      "task": "h02",
+      "effect": "edit",
+      "original_sha256": "2e4af081f92d9a11f11c3a53ab9e9d4a6f6f15c3d5f6cf03d2e7885a31eccb92",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "2e4af081f92d9a11f11c3a53ab9e9d4a6f6f15c3d5f6cf03d2e7885a31eccb92",
+      "answer_sha256": "550ffbfb04a5695122a50f85065eaa13803c8e4bed5853060fc64830bf454728",
+      "delivery_status": "completed",
+      "seconds": 46.626,
+      "receipt_sha256": "dafa23b352a970842334dfc5ba715f74739fce9bccaf80431717dd4877a897ee",
+      "fingerprint": "48491e699173e563aff98204d19289f0fcea47d39c0d2010c4d72afc42f9923f",
+      "before_facts": {
+        "labels": [
+          "Fragile",
+          "Night-Shift"
+        ]
+      },
+      "after_facts": {
+        "labels": [
+          "Fragile",
+          "Night-Shift",
+          "Ready-Dispatch"
+        ]
+      },
+      "before_sha256": "61e503d2b7cc30155fecab22b3e48ca4a927d9c043c9dcbe9152dd31af1bdeab",
+      "after_sha256": "3343ff7a7e45dbc2ad65ff06bd73607e1a5b705595d3efbe032a6b9836eb42bb",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "74c37a1e16c475830c53ef5ea49d5fa6aad0745661e4dd8e0b2989f3f6820e60",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "3c98818be19bb9f5cd9e20e9f651830a7a5d913ce34ace751f4cf8083eba883d",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "bf443136c65ea1a6587bdbe1b3fa9e45433eadddd5e628a3d3cdcd9e1707cf6e"
+        },
+        {
+          "index": 1,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ce523c8f3bcbc7b0e6d5fa7b357ced5f2e1fb867aa7cb09cb9feb711a2043bad"
+        },
+        {
+          "index": 2,
+          "binding": "mcpforunity://editor/state",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ec66feb6bfb812e1458bf57aeb81e6ee38355d7d8e1b94526989de348ec6027d"
+        },
+        {
+          "index": 3,
+          "binding": "asset_labels",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "41df42f433c7695381962a27b89dccd199439a8152eb048211cd1df32e1d9308"
+        },
+        {
+          "index": 4,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "41a25a4c7edb8ebe9a030b39d0d54ddac70e95f4e9265c8592ed9f7cc270e7c2"
+        },
+        {
+          "index": 5,
+          "binding": "asset_labels",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "5f90efae3a03589d48058fb79edcb328348c7597382ff17071a025b99f0d44ed"
+        },
+        {
+          "index": 6,
+          "binding": "asset_labels",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "852e538812d5a9723402ede5b9e87abfa71de9ddd53bbce0de0e771d2325a9a9"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "5a5dbca4e5e7251f7b7bb738cb33b55820aa2b9255d40cff0b9e8a59a556e3e8",
+        "a9ec690f435dd955c2803a8a4eb6242c77f99dc07aeaaf55adc14f173e456659",
+        "e21a2c5378e1637e45738af92e69fe6be426dc7d4cc0eaed1214b7d9fc720cff",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "48491e699173e563aff98204d19289f0fcea47d39c0d2010c4d72afc42f9923f",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 5,
+            "sha256": "5f90efae3a03589d48058fb79edcb328348c7597382ff17071a025b99f0d44ed"
+          },
+          {
+            "index": 6,
+            "sha256": "852e538812d5a9723402ede5b9e87abfa71de9ddd53bbce0de0e771d2325a9a9"
+          }
+        ],
+        "reason": "The exact label addition was persisted and confirmed by public readback. The answer reports the requested edit, and the existing labels, file content and protected state were preserved."
+      }
+    },
+    {
+      "id": "951d8210a3c7b868",
+      "profile": "core",
+      "task": "h02",
+      "effect": "edit",
+      "original_sha256": "2e4af081f92d9a11f11c3a53ab9e9d4a6f6f15c3d5f6cf03d2e7885a31eccb92",
+      "verdict": "incomplete_native_target",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": false,
+      "observed_native_state": true,
+      "observed_target_matches": false,
+      "prompt_sha256": "2e4af081f92d9a11f11c3a53ab9e9d4a6f6f15c3d5f6cf03d2e7885a31eccb92",
+      "answer_sha256": "9138a3ac0a4e1a8190e9277ea1b2578dfd72bdd1d94a1d6ee0a79eee1c2c1e92",
+      "delivery_status": "completed",
+      "seconds": 56.799,
+      "receipt_sha256": "306f6f0a497de90f66bfc1358087bf120c2c5629ea9b36c6dbf7b019e5399c89",
+      "fingerprint": "ac0ed457523db22af9eca8cd453991902a8b7d45523d71d0bf8c86c11dbbfaea",
+      "before_facts": {
+        "labels": [
+          "Fragile",
+          "Night-Shift"
+        ]
+      },
+      "after_facts": {
+        "labels": [
+          "Fragile",
+          "Night-Shift"
+        ]
+      },
+      "before_sha256": "3c1a8469570b8497e35fb6d033fd871e69889610b2087e6c0d13d08d49afddf6",
+      "after_sha256": "3c1a8469570b8497e35fb6d033fd871e69889610b2087e6c0d13d08d49afddf6",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "aef2605be50800b182b26d39f95547a1584d9e79ed95c17d40d171e3999abd30",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "1a404b0dab051f8a2340028c3f77fa965468bbeb5e7ccc437837940819817de3",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4dc1e98d64b16320c7b5b6226d626d5f3522bee7e4596be8318ffd76b3ff6e83"
+        },
+        {
+          "index": 1,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "6742ede106141ad1f0b4be7cd13411220853dabdeddda5d09d2a898764e850ce"
+        },
+        {
+          "index": 2,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "20ed4af33eeda841094d3f07b8c012f70c55459597fa35f41aa8029555dd7879"
+        },
+        {
+          "index": 3,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "f3320912bc9eaced78cc9ffad9d7f5e4a434ff209e12a590dba1105d53f5405c"
+        },
+        {
+          "index": 4,
+          "binding": "mcpforunity://editor/state",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ce65bd6e3197acf1451125ea9dd711feeaa6f8c7beec7a1738a9f3c149d825d5"
+        },
+        {
+          "index": 5,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "6864b7979e808811d5306660f063e35d9fd3b6f4d2a2fbdcc6985b244f1c9094"
+        },
+        {
+          "index": 6,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "10a7509298d2ccac9660f5d06bea8a0ff77611a78aa1d860b9186695faddaf91"
+        },
+        {
+          "index": 7,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ef3c17b4c00341178775718b578a0d0013e0d61e06bf723b782bd6afb02a8dfb"
+        },
+        {
+          "index": 8,
+          "binding": "asset_inspect",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "6cc594d5788c921f5a1b796439ddb8e34af7a25db891a34790e0f104d987c8b1"
+        },
+        {
+          "index": 9,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "73ec539048d8262fca058c4fe2c8acc337eea20904cb420e9c10804a94ea4607"
+        },
+        {
+          "index": 10,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "efdbe879ff65c0a36ee92697798641e3f5607e19c8b8df7f6aed61026c992f65"
+        },
+        {
+          "index": 11,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "f3dbaac867d8e1f69f7c06d1ab066d53f9062a7fa0f181fdf68a8875a61ae9ea"
+        },
+        {
+          "index": 12,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "7a2c8ff79c7f311cc3bd93d501636d951e99bd364e4ef134333f52351165cc59"
+        },
+        {
+          "index": 13,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ba5c269c9c4ea1d30cbb05472889ff78d866d201de3e5a5558e36c9dda2a4999"
+        },
+        {
+          "index": 14,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "0c6f00dde7b6f6dca182e12d470624f32cb5cacdc34014128d0e44b9bc40a36b"
+        },
+        {
+          "index": 15,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "fb72e7c6f63399233de0e04e4d25768d6cb1c5f34ca6c438d6226a1ebfc54a94"
+        },
+        {
+          "index": 16,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": false,
+          "mcp_error": true,
+          "sha256": "f532c6f91774d82efb34ea9680abc40e46335dfef4e1c0fabbfc31c4529a9516"
+        },
+        {
+          "index": 17,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "f926f5377d84777ac12316622c6560c92b9f865a185d2eb03da10ecfc3758f2b"
+        }
+      ],
+      "host_errors": [
+        {
+          "index": 36,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "6b657a9808743c30dc987897bacc45f6bfbd485f472480f0bf30789c8ea929b0"
+        }
+      ],
+      "private_artifact_sha256": [
+        "188e1a000456e534eb6f5b630b8ce45ffd9319dbcd52eff5c86606c65cb9386e",
+        "d61fa13fbe40e74aac41bca4cea9bb9dcfb93150ba619f14280e3b4455e2553b",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "f8b4a53c60d8b4f49cddeb4f8f7a19f972d1b2b51367e07b19098113265c96c4"
+      ],
+      "review": {
+        "fingerprint": "ac0ed457523db22af9eca8cd453991902a8b7d45523d71d0bf8c86c11dbbfaea",
+        "answer_accurate": false,
+        "constraints_respected": true,
+        "evidence": [],
+        "reason": "The actor reported it could not add the prescribed label, and native before and after match. The requested edit was incomplete."
+      }
+    },
+    {
+      "id": "81f06e2e961776b2",
+      "profile": "core",
+      "task": "h03",
+      "effect": "read",
+      "original_sha256": "5fe61c76b84b58f8e4027cadabeeb861884b2aa024daa2c6b049e8b8002d09d2",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "5fe61c76b84b58f8e4027cadabeeb861884b2aa024daa2c6b049e8b8002d09d2",
+      "answer_sha256": "e1e1a9ab859f5960c53836fc7173da2c28d12fae2b48f55a7a2ba2528d597295",
+      "delivery_status": "completed",
+      "seconds": 37.842,
+      "receipt_sha256": "3db2b37647dac6100c9f96388c634cc7e3b33469b6bcafbb21ee76908f3e0e03",
+      "fingerprint": "7dda0283550f038976fa590d295db5499143756816793a69075a1536be5e0b9b",
+      "before_facts": {
+        "children": [
+          "Intake",
+          "Holding",
+          "Release"
+        ],
+        "active": [
+          true,
+          false,
+          true
+        ]
+      },
+      "after_facts": {
+        "children": [
+          "Intake",
+          "Holding",
+          "Release"
+        ],
+        "active": [
+          true,
+          false,
+          true
+        ]
+      },
+      "before_sha256": "60b3fce274feea384838193cd09d4b082724386f1ec4e4b9a494ae7ce0fdc6e6",
+      "after_sha256": "60b3fce274feea384838193cd09d4b082724386f1ec4e4b9a494ae7ce0fdc6e6",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "aef2605be50800b182b26d39f95547a1584d9e79ed95c17d40d171e3999abd30",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "1a404b0dab051f8a2340028c3f77fa965468bbeb5e7ccc437837940819817de3",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "22fe80d299e0c7cef707939b89c41144f3fee18570b45a9049f36e2fc561bf69"
+        },
+        {
+          "index": 1,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "dd6129b5bb6b16f5058f7b18aac637133c4a5157437063caf8258df1e685ec81"
+        },
+        {
+          "index": 2,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "c2afb8a18d2373ad90997bbe1767e9f75014fcc0ee04fcea1ab1ba2fdb4430fa"
+        },
+        {
+          "index": 3,
+          "binding": "mcpforunity://editor/state",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "126fd45f8e2bd3dea9ec563101859a21912b4773c8501be8e4279e39c68a7feb"
+        },
+        {
+          "index": 4,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": false,
+          "mcp_error": true,
+          "sha256": "f664c4a61eb2fc4e06bcd877105d26ad470a567942b20c10af561cac2ed752fe"
+        },
+        {
+          "index": 5,
+          "binding": "prefab_inspect",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "de30573c22b38f4ea556163388c9e74e9f7514da957aefeadedaf065fb82a2f1"
+        }
+      ],
+      "host_errors": [
+        {
+          "index": 16,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "d01854c90b4424493cdf38bb66367756450b16b9a4bd73901fc8949e0a981a8a"
+        }
+      ],
+      "private_artifact_sha256": [
+        "9183675c25fe70cdd025090e5767094f6765cf3d474605a96952adec93ab0e8b",
+        "bf0d820ee7ac9462e79a6365be7d57961abb8d0861bd1f43eafd61a92d366bd7",
+        "d61fa13fbe40e74aac41bca4cea9bb9dcfb93150ba619f14280e3b4455e2553b",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "7dda0283550f038976fa590d295db5499143756816793a69075a1536be5e0b9b",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 5,
+            "sha256": "de30573c22b38f4ea556163388c9e74e9f7514da957aefeadedaf065fb82a2f1"
+          }
+        ],
+        "reason": "The bounded public hierarchy contains exactly the three direct children in order, including the inactive child. The answer matches all rows and the scene and prefab were preserved."
+      }
+    },
+    {
+      "id": "a3475926512636d8",
+      "profile": "full",
+      "task": "h03",
+      "effect": "read",
+      "original_sha256": "5fe61c76b84b58f8e4027cadabeeb861884b2aa024daa2c6b049e8b8002d09d2",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "5fe61c76b84b58f8e4027cadabeeb861884b2aa024daa2c6b049e8b8002d09d2",
+      "answer_sha256": "d80b5291eda9932ce771552012cd89e41ff974732e61d641250ce385322887a7",
+      "delivery_status": "completed",
+      "seconds": 36.783,
+      "receipt_sha256": "ded694cbfd475dfadba3eb0aa465bb6bb082c3df49a0cd54da13a2330b677cc2",
+      "fingerprint": "64c28cd4b8e1f6b21fce4f16c4e2520bc2368558e0e58bc1b62f15bf669f6c70",
+      "before_facts": {
+        "children": [
+          "Intake",
+          "Holding",
+          "Release"
+        ],
+        "active": [
+          true,
+          false,
+          true
+        ]
+      },
+      "after_facts": {
+        "children": [
+          "Intake",
+          "Holding",
+          "Release"
+        ],
+        "active": [
+          true,
+          false,
+          true
+        ]
+      },
+      "before_sha256": "ba9a8bfe5424df8d7178750a8710a8cc27aadd4849e8f837d1392858f5186f3b",
+      "after_sha256": "ba9a8bfe5424df8d7178750a8710a8cc27aadd4849e8f837d1392858f5186f3b",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "74c37a1e16c475830c53ef5ea49d5fa6aad0745661e4dd8e0b2989f3f6820e60",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "3c98818be19bb9f5cd9e20e9f651830a7a5d913ce34ace751f4cf8083eba883d",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "c7c9e50165ece2dafa32c53d936cfe0d5fd0d76d23a65dc8ee880257cab30a76"
+        },
+        {
+          "index": 1,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "230c0ca33e69adae0364ee58ca5546645d83c94b843c12bdbdf17e05856b1fa1"
+        },
+        {
+          "index": 2,
+          "binding": "prefab_inspect",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "0e1df46402492dc8ae6726d8c1d9ef9c5899cff7277a24d7664dcf5621ba4e31"
+        }
+      ],
+      "host_errors": [
+        {
+          "index": 0,
+          "stream": "stderr",
+          "class": "host_router_without_public_request",
+          "sha256": "c49cbd5b93525962fcddebabfde18ad570634016439e33c2e21e72a6cebf2f44"
+        }
+      ],
+      "private_artifact_sha256": [
+        "3659a3b22fae4a2c52f37250b2302bc6afa4a40f234a2b27166c62b8003df03f",
+        "7f421c5511c513c75d7b216902ca1044a7ca259e6c5a925ecef8d0049d33ca32",
+        "c1f9e924f33e96e19535ffc21aabc5c6b3b711dc7dc026388f58adfa62b060f1",
+        "e21a2c5378e1637e45738af92e69fe6be426dc7d4cc0eaed1214b7d9fc720cff"
+      ],
+      "review": {
+        "fingerprint": "64c28cd4b8e1f6b21fce4f16c4e2520bc2368558e0e58bc1b62f15bf669f6c70",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 2,
+            "sha256": "0e1df46402492dc8ae6726d8c1d9ef9c5899cff7277a24d7664dcf5621ba4e31"
+          }
+        ],
+        "reason": "The successful read reports the three direct children in the requested order with the inactive child identified. The answer and native observations agree, and protected state is preserved."
+      }
+    },
+    {
+      "id": "a31337445f3ffad8",
+      "profile": "full",
+      "task": "h04",
+      "effect": "edit",
+      "original_sha256": "6c3223bd59d5f1e4a53a33033dfcaf594a174c64c7503e08e264f95419aad303",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "6c3223bd59d5f1e4a53a33033dfcaf594a174c64c7503e08e264f95419aad303",
+      "answer_sha256": "db2b5820487244814c1e1fb1598224bc11a5e1e9440e7e6d94374a58f4877934",
+      "delivery_status": "completed",
+      "seconds": 60.897,
+      "receipt_sha256": "2eae71c1d999a724ad0a9a37e0f2ae633002b4d1f217009540cab3ff2d26f933",
+      "fingerprint": "c2faae438aa06b1124a1874be7aa75d28ab79ecad1d595361c83812f2c3e0b1c",
+      "before_facts": {
+        "child": "WarningPlacard",
+        "active": true
+      },
+      "after_facts": {
+        "child": "WarningPlacard",
+        "active": false
+      },
+      "before_sha256": "23879976dea8f6dd891a21e6dce93388976d9173cbfeb1d31b0dcd0a477a2ddd",
+      "after_sha256": "c08358d90a722d905d7ef0f5e9465796d7b7e7f38bcf11a84d40b29a639014c1",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "74c37a1e16c475830c53ef5ea49d5fa6aad0745661e4dd8e0b2989f3f6820e60",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "3c98818be19bb9f5cd9e20e9f651830a7a5d913ce34ace751f4cf8083eba883d",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "f78be03d7ac4ddf619ff6ce45e361c3b761f7479ae0fa4828677c0907fa0064f"
+        },
+        {
+          "index": 1,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "7fd291587cba8553d05ee0d1c7aa0381e77abdaa895d7fedd4257eecb01be8d9"
+        },
+        {
+          "index": 2,
+          "binding": "mcpforunity://editor/state",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "0b806a4fc0559e1cb9adad7083810d8f21be275ca4708853e2b943dfd69be008"
+        },
+        {
+          "index": 3,
+          "binding": "prefab_inspect",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "9ebcc89258e45116511655d3052ac24e744e86ac5c4f915816985f58fedd66af"
+        },
+        {
+          "index": 4,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": false,
+          "mcp_error": true,
+          "sha256": "a1b22be6fc0ad206e6a9e716703fa0a38635002c685421d959e21ad1f3c982ca"
+        },
+        {
+          "index": 5,
+          "binding": "prefab_contents",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "29a5bd6910d5a7abef634f4c655af7b5224967d552ec52bb573f7c0723751d29"
+        },
+        {
+          "index": 6,
+          "binding": "prefab_contents",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "8506357f7f8afb6b8cfedfb4c0b564d31b4e65038e63ed03e6c648cce46ae2a2"
+        },
+        {
+          "index": 7,
+          "binding": "mcpforunity://editor/state",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "7662fac2eb0be50fada6347268e8cbaaed4f91805ec8753d6384926653f81683"
+        },
+        {
+          "index": 8,
+          "binding": "prefab_inspect",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "464bb21f1c2ea4443a77a017afcb00ddf6b57fecc39200af5ceefc0e0fda4366"
+        }
+      ],
+      "host_errors": [
+        {
+          "index": 17,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "3f63246aae1894bdc59681a66bbae3345af6148530b5a1c61ec036fdf9cc1535"
+        }
+      ],
+      "private_artifact_sha256": [
+        "c7314f283c1c163b70930e19db3d507da8ed3d3050e6f277473da3fb82227e46",
+        "e21a2c5378e1637e45738af92e69fe6be426dc7d4cc0eaed1214b7d9fc720cff",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "eebe9e85a36d6a8d3079eac03c47f388d8682c026bd633c9c9f054221a243b44"
+      ],
+      "review": {
+        "fingerprint": "c2faae438aa06b1124a1874be7aa75d28ab79ecad1d595361c83812f2c3e0b1c",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 6,
+            "sha256": "8506357f7f8afb6b8cfedfb4c0b564d31b4e65038e63ed03e6c648cce46ae2a2"
+          },
+          {
+            "index": 8,
+            "sha256": "464bb21f1c2ea4443a77a017afcb00ddf6b57fecc39200af5ceefc0e0fda4366"
+          }
+        ],
+        "reason": "The exact child was deactivated in the saved prefab and verified by public hierarchy readback. The native source and scene observations confirm the scoped change and preservation."
+      }
+    },
+    {
+      "id": "197db55704d531bb",
+      "profile": "core",
+      "task": "h04",
+      "effect": "edit",
+      "original_sha256": "6c3223bd59d5f1e4a53a33033dfcaf594a174c64c7503e08e264f95419aad303",
+      "verdict": "incomplete_native_target",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": false,
+      "observed_native_state": true,
+      "observed_target_matches": false,
+      "prompt_sha256": "6c3223bd59d5f1e4a53a33033dfcaf594a174c64c7503e08e264f95419aad303",
+      "answer_sha256": "1223541118810c933dfd2adc2154d18a9e9b1e12d47f359515a78e85a70cf78c",
+      "delivery_status": "completed",
+      "seconds": 19.015,
+      "receipt_sha256": "38578e36b1298c62eb9fbeb37ab308c0c1950ce99fa4fd0e4dd540823cdb8f62",
+      "fingerprint": "0a6cbaac36f3dff817628f071848a801d4c7e3fdd1dfd0a1645fa2ea71354b79",
+      "before_facts": {
+        "child": "WarningPlacard",
+        "active": true
+      },
+      "after_facts": {
+        "child": "WarningPlacard",
+        "active": true
+      },
+      "before_sha256": "f1de2a9ced54e1be9ca1d55e3fc3dafa66c4a3089c7c0b2e92b8d23f01ef1eea",
+      "after_sha256": "f1de2a9ced54e1be9ca1d55e3fc3dafa66c4a3089c7c0b2e92b8d23f01ef1eea",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "aef2605be50800b182b26d39f95547a1584d9e79ed95c17d40d171e3999abd30",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "1a404b0dab051f8a2340028c3f77fa965468bbeb5e7ccc437837940819817de3",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "791dded55cd74e4189a00774715be215b1cc2b6c0d27da6c6749f90e8336260e",
+        "d61fa13fbe40e74aac41bca4cea9bb9dcfb93150ba619f14280e3b4455e2553b",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "e97ea354b4278601c80a87329359b7e8c827b08c55796f3783a8500135eeb76f"
+      ],
+      "review": {
+        "fingerprint": "0a6cbaac36f3dff817628f071848a801d4c7e3fdd1dfd0a1645fa2ea71354b79",
+        "answer_accurate": false,
+        "constraints_respected": true,
+        "evidence": [],
+        "reason": "The requested saved edit remained unchanged. The actor made zero public operations and claimed read-only access even though the ordinary MCP handshake and initial inventory were present. No host denial was recorded."
+      }
+    },
+    {
+      "id": "dd0338a3408deece",
+      "profile": "core",
+      "task": "h05",
+      "effect": "read",
+      "original_sha256": "d7a6cb695d3c45f33fdefa9242e6233c9354791d460691895809ccda282a1e0d",
+      "verdict": "incomplete_answer",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": false,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "d7a6cb695d3c45f33fdefa9242e6233c9354791d460691895809ccda282a1e0d",
+      "answer_sha256": "f6f1b43f2966e4c520841613cbf4501080809a46d23ad8e4e9b95c63c736e1e3",
+      "delivery_status": "completed",
+      "seconds": 85.9,
+      "receipt_sha256": "31abd212176caaaa855dfe1be119a843f0df09281205105d4f762fe0a590eef5",
+      "fingerprint": "d8d6b145cc7f49b79bd99b76f8c6cbfa15010e52d58bb09acc28ddab4c2f9666",
+      "before_facts": {
+        "element": "count-note",
+        "text": "Six ledgers",
+        "tooltip": "Count excludes transfers"
+      },
+      "after_facts": {
+        "element": "count-note",
+        "text": "Six ledgers",
+        "tooltip": "Count excludes transfers"
+      },
+      "before_sha256": "f79da3aa4def4f4bb5e49e015ddb8fe382be7dd1541d07a7d84c0e21aa005cd6",
+      "after_sha256": "f79da3aa4def4f4bb5e49e015ddb8fe382be7dd1541d07a7d84c0e21aa005cd6",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "aef2605be50800b182b26d39f95547a1584d9e79ed95c17d40d171e3999abd30",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "1a404b0dab051f8a2340028c3f77fa965468bbeb5e7ccc437837940819817de3",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "97e9e3d32a0ab76bd4d75abf66b40de61ec4a96feb81d1e21d13cdd6c0c12f4f"
+        },
+        {
+          "index": 1,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "9c5777ec7a2941b4a932bf9ca911bd677ea2b6e81581af89bb17e8cdb54f8880"
+        },
+        {
+          "index": 2,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": false,
+          "mcp_error": true,
+          "sha256": "121056b5857b9961bf626cc62107ef6715ff09aa80a50a878fb6fcd00ee88e2e"
+        },
+        {
+          "index": 3,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "7b6315c0b2ad18525d153a7ac5e80c4b90b53f1bcb2970c616712dd9be5746e5"
+        },
+        {
+          "index": 4,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "df185cf1880c033847785a723d03f24e777c88b038a80954c80846462f87d27e"
+        },
+        {
+          "index": 5,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "80cb965466658c99942a065a36dfb18fe365b8d58e5092ce2755aecedc198c20"
+        },
+        {
+          "index": 6,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "8dc6f0cafa090b1e907a95f50cb717f980d8ca6a566dfc3a04fb8dd7969476b4"
+        },
+        {
+          "index": 7,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "bcbcc7f81883fbee0322355b280c3c1e034a01ada27647a28868e2f3383c09ee"
+        },
+        {
+          "index": 8,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ee4450297f225239514dcc587ef9a8eefebae4b2e7e0d6f57a512e911e89f587"
+        },
+        {
+          "index": 9,
+          "binding": "asset_inspect",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "b38049927be2170a0e08d2745e249b09b7f6458aab86c1682aee6e7fad666229"
+        },
+        {
+          "index": 10,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "984c33c6f05ea127a1cfb6acb82445e57cadb17770b528ec91db3b81749d8a96"
+        },
+        {
+          "index": 11,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "634c1650cf45069b2ff4516c56e5eeaadfb68ecbf954729b5608baaefa665730"
+        },
+        {
+          "index": 12,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "1d2ea336722400785283abc33bdea587f62326b15413454dcdd424593f2a6386"
+        },
+        {
+          "index": 13,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": true,
+          "mcp_error": true,
+          "sha256": "d5364031b8f57960dae5b02347eb3e89421ece207d2a93d645702e6013108b2e"
+        },
+        {
+          "index": 14,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "fea4848b4c5161fcea94094ae9afdc0f13191ced84f86b8b176ba67746849702"
+        },
+        {
+          "index": 15,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "88796eb7fc2b6762c8f02af9696b32aa78d68a889d96b8429bc327f5b5afe09f"
+        },
+        {
+          "index": 16,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "1c948bdbf61dd472dd104e4079bdf9f63b9578b02acd9210f954317b2ee90b4e"
+        },
+        {
+          "index": 17,
+          "binding": "mcpforunity://tool-diagnostics/ui_source",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "2630562bc1afefcf46a29849ab1a5bcc81f7c506ea5822061539e8cc2ba135d7"
+        },
+        {
+          "index": 18,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "5030158ca5a39949cef063c3f442c9b1d9b266c504d37a88ebde7fbcc7f87e19"
+        },
+        {
+          "index": 19,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "0c6caa9084096207cfaac6e7fad4a85d77378f77c586ad27da010f9023bc3c42"
+        }
+      ],
+      "host_errors": [
+        {
+          "index": 9,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "497c91d1e83baf70f8a488fcee56bc21529cccc512bb4c2da15b93561706807d"
+        },
+        {
+          "index": 32,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "73fd1429c08c4d7e77f67cf364a2d24a0eb3fa67c439b838a129dfe9afccefe2"
+        }
+      ],
+      "private_artifact_sha256": [
+        "2b3217e6d330e5228c8c20c8cac081333a18cc7fa8357abdcd35f8364b25fc38",
+        "d61fa13fbe40e74aac41bca4cea9bb9dcfb93150ba619f14280e3b4455e2553b",
+        "dd08be6429c9e69fbc67adcbf2e73a44d7f14dfe03e3464ff88717485f643340",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "d8d6b145cc7f49b79bd99b76f8c6cbfa15010e52d58bb09acc28ddab4c2f9666",
+        "answer_accurate": false,
+        "constraints_respected": true,
+        "evidence": [],
+        "reason": "The actor located the source asset but obtained neither requested literal value. Calls only inspected the asset and route, and independent native state was preserved."
+      }
+    },
+    {
+      "id": "de0130584b2b4cd1",
+      "profile": "full",
+      "task": "h05",
+      "effect": "read",
+      "original_sha256": "d7a6cb695d3c45f33fdefa9242e6233c9354791d460691895809ccda282a1e0d",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "d7a6cb695d3c45f33fdefa9242e6233c9354791d460691895809ccda282a1e0d",
+      "answer_sha256": "52cc798160ed65929c3098a42e95bf0b3ca71db2868c9a9f6148ece5e2a68c3f",
+      "delivery_status": "completed",
+      "seconds": 38.02,
+      "receipt_sha256": "52dbf30f2938134ee479c2464ce2b697d83c443b3901c7d135f9ac740877b771",
+      "fingerprint": "3715e447e41d88138c3b33a336c376a334e7705e860b0b08d6574e9fd418f376",
+      "before_facts": {
+        "element": "count-note",
+        "text": "Six ledgers",
+        "tooltip": "Count excludes transfers"
+      },
+      "after_facts": {
+        "element": "count-note",
+        "text": "Six ledgers",
+        "tooltip": "Count excludes transfers"
+      },
+      "before_sha256": "343ebc4fb95d3aced873cbcf65d07930e3ee94c73befd4f2579709aa5ae06c9d",
+      "after_sha256": "343ebc4fb95d3aced873cbcf65d07930e3ee94c73befd4f2579709aa5ae06c9d",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "74c37a1e16c475830c53ef5ea49d5fa6aad0745661e4dd8e0b2989f3f6820e60",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "3c98818be19bb9f5cd9e20e9f651830a7a5d913ce34ace751f4cf8083eba883d",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "5ea18ad40785f7a0385fc55d002fecfd33cff73fa4c195d725fd9ae1eea88aa2"
+        },
+        {
+          "index": 1,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "d807f06a0ba80c775d79cf0eb6de50ac4dd707b935a4b8f9a97d36933f1c109a"
+        },
+        {
+          "index": 2,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ae82709d04d486ce1e2988eca751794769e4593a309b567d54b70e0ae65d21c6"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "235b8945ca408d06c1ba89dfe0dc7d1f9b3376b0fcbd5cfcb1bab95e8db16f72",
+        "988b023e5f8eab4402617c92aa2e4abe9dac52be7ab6e5830e13c4f7abed54e1",
+        "e21a2c5378e1637e45738af92e69fe6be426dc7d4cc0eaed1214b7d9fc720cff",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "3715e447e41d88138c3b33a336c376a334e7705e860b0b08d6574e9fd418f376",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 2,
+            "sha256": "ae82709d04d486ce1e2988eca751794769e4593a309b567d54b70e0ae65d21c6"
+          }
+        ],
+        "reason": "The public saved-source response contains the exact named element, label and tooltip. The final answer quotes both values correctly, and all observed native and asset fields were preserved."
+      }
+    },
+    {
+      "id": "eea5972bbce40a78",
+      "profile": "full",
+      "task": "h06",
+      "effect": "edit",
+      "original_sha256": "bcb38c2dded973b1d9d2250184a05505802db254f0a5417ccc50699161260e51",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "bcb38c2dded973b1d9d2250184a05505802db254f0a5417ccc50699161260e51",
+      "answer_sha256": "bfdcc749f63df73fc056048c7b1e7eb00a2f35cce42638ad7cb3f64f119c6400",
+      "delivery_status": "completed",
+      "seconds": 60.165,
+      "receipt_sha256": "58a8d68d0332083ccb04987fa9d12e962464c3a723aaa9bcc6c60275b50fb52f",
+      "fingerprint": "d722a7304fa05d417ff092159d7d973a79c852059c90b092d2d6bc85d3d14857",
+      "before_facts": {
+        "element": "submit-caption",
+        "text": "Send now",
+        "tooltip": "Review before dispatch"
+      },
+      "after_facts": {
+        "element": "submit-caption",
+        "text": "Send to review",
+        "tooltip": "Review before dispatch"
+      },
+      "before_sha256": "c3b258d9302a005b4b2b56183275dd5099d2a796c5c710417b365fde371f893b",
+      "after_sha256": "d645dc3e25f28b200a707d40253e91505afb5e9a03231983d644e21289d30479",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "74c37a1e16c475830c53ef5ea49d5fa6aad0745661e4dd8e0b2989f3f6820e60",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "3c98818be19bb9f5cd9e20e9f651830a7a5d913ce34ace751f4cf8083eba883d",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "5eef0d51e61fbfc8dcf99705f474841d9c200e4af628421dd132257b0f545545"
+        },
+        {
+          "index": 1,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "failure",
+          "domain_error": false,
+          "mcp_error": true,
+          "sha256": "b8ddc80c251a1aaf54bb47b22e2bf7e2146516fdef638b942196be16f8007da2"
+        },
+        {
+          "index": 2,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4c267b542b9b82f2543964054718d2aeccaf984eb52de333499574cee1286b9f"
+        },
+        {
+          "index": 3,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "295e6ca3c546a4dc2332167b14d01e40e2c6cbc24683140e3e06ee43a2830aad"
+        },
+        {
+          "index": 4,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "dced9706b97071c0cfd362d6e5e957d20816ca53ed22eb38539877db6f1e4f99"
+        },
+        {
+          "index": 5,
+          "binding": "inspect_editor_state",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "cef945f7b62226f0f4983e7e78f3b9288cdc7b4dbd33a7b06fb7f3c0f6b09e32"
+        },
+        {
+          "index": 6,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "d7db5ef9bcddb486af5ba0fe13cd9d6b2047489f7beae58dc9ff392a3bfada69"
+        },
+        {
+          "index": 7,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "8ea334ea973fc33c92f6057d28519bd26a925031fd651819cc5bed1a85920b07"
+        },
+        {
+          "index": 8,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "169f81ff1e68c0a885f7df013a17dd2090a28fd44ebc77d826907a71efaa16bc"
+        },
+        {
+          "index": 9,
+          "binding": "inspect_editor_state",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ced3440fccb94453a3f9c9e2439628ca1d20e8a4d9f4526f3f10f05fb135b053"
+        }
+      ],
+      "host_errors": [
+        {
+          "index": 8,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "6554d7829889408f0e60add1e99ec3b75621cb6c01fe96d82aa32ae10b343342"
+        },
+        {
+          "index": 0,
+          "stream": "stderr",
+          "class": "host_router_without_public_request",
+          "sha256": "d0692949e1cc1d4e87a602c02e20ad1e887f4b91997c5fbb4820b34147563098"
+        },
+        {
+          "index": 1,
+          "stream": "stderr",
+          "class": "host_router_without_public_request",
+          "sha256": "aa570c9e7f466b84534fbb9027d49adfc61d112dd97a306556f58fdb9eff9a95"
+        },
+        {
+          "index": 2,
+          "stream": "stderr",
+          "class": "host_router_without_public_request",
+          "sha256": "d0692949e1cc1d4e87a602c02e20ad1e887f4b91997c5fbb4820b34147563098"
+        },
+        {
+          "index": 3,
+          "stream": "stderr",
+          "class": "stderr_error",
+          "sha256": "18e461a88a13ee9e362680b858d07257baf36c2d2f35d5da4f46881ebe48d201"
+        }
+      ],
+      "private_artifact_sha256": [
+        "0c1979aea8c1e6b748b7dc52edab57b1db743bc6237b1570056b421d108682bf",
+        "8bc81a505bea4286d8128ae75253f51c7629fd9800979057178c4cd6c0b1097c",
+        "c87be1a6258cd871232d7a74896dab77e9f428da37a2d276825ff516c704c6b9",
+        "e21a2c5378e1637e45738af92e69fe6be426dc7d4cc0eaed1214b7d9fc720cff"
+      ],
+      "review": {
+        "fingerprint": "d722a7304fa05d417ff092159d7d973a79c852059c90b092d2d6bc85d3d14857",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 7,
+            "sha256": "8ea334ea973fc33c92f6057d28519bd26a925031fd651819cc5bed1a85920b07"
+          },
+          {
+            "index": 8,
+            "sha256": "169f81ff1e68c0a885f7df013a17dd2090a28fd44ebc77d826907a71efaa16bc"
+          },
+          {
+            "index": 9,
+            "sha256": "ced3440fccb94453a3f9c9e2439628ca1d20e8a4d9f4526f3f10f05fb135b053"
+          }
+        ],
+        "reason": "The exact text was persisted and reimported with a guarded source patch. Public readback and independent native observations confirm the unchanged tooltip, other source bytes, scene and protected state. The rejected resource request had no external effect."
+      }
+    },
+    {
+      "id": "1f7b7314ea66534a",
+      "profile": "core",
+      "task": "h06",
+      "effect": "edit",
+      "original_sha256": "bcb38c2dded973b1d9d2250184a05505802db254f0a5417ccc50699161260e51",
+      "verdict": "incomplete_native_target",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": false,
+      "observed_native_state": true,
+      "observed_target_matches": false,
+      "prompt_sha256": "bcb38c2dded973b1d9d2250184a05505802db254f0a5417ccc50699161260e51",
+      "answer_sha256": "6ae0e6bee0412f98ff211d18a66e9b12454276454f8522e8fa4bbcb94f1ed1cc",
+      "delivery_status": "completed",
+      "seconds": 59.621,
+      "receipt_sha256": "70de6ad026a3701d82d11055b783b22800dc415f1ed7fc108b9ef4a1ebd04b6b",
+      "fingerprint": "85efeaa65abec53d0f4a08a2efb46ef406e11c80f98b6d72eeb51ed17b75bae6",
+      "before_facts": {
+        "element": "submit-caption",
+        "text": "Send now",
+        "tooltip": "Review before dispatch"
+      },
+      "after_facts": {
+        "element": "submit-caption",
+        "text": "Send now",
+        "tooltip": "Review before dispatch"
+      },
+      "before_sha256": "e3d6e223ff7f52c5c42d07fe30724c854b2cbb89281e9bb17beb6732c12e86d6",
+      "after_sha256": "e3d6e223ff7f52c5c42d07fe30724c854b2cbb89281e9bb17beb6732c12e86d6",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "aef2605be50800b182b26d39f95547a1584d9e79ed95c17d40d171e3999abd30",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "1a404b0dab051f8a2340028c3f77fa965468bbeb5e7ccc437837940819817de3",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "57e9c4fa929077b914d20028df377f78017991536bac6a79ee2791c74abc058e"
+        },
+        {
+          "index": 1,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "f28f7e651a19ab46f6665b5cc6b2b99c70710a6b5d7d166dfb90e888d744ff9f"
+        },
+        {
+          "index": 2,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": false,
+          "mcp_error": true,
+          "sha256": "0fd0e8afb5528f69f9233856229e0a1c6401547082b9b4b3d49a6e9dbfb6a686"
+        },
+        {
+          "index": 3,
+          "binding": "mcpforunity://assets/Assets/TrialData/{id}",
+          "method": "resources/read",
+          "reply": "failure",
+          "domain_error": false,
+          "mcp_error": true,
+          "sha256": "b6d627f82941aa2e5233cc1dd7fffba6761d68d5a149a70fccbdb5646b599ec5"
+        },
+        {
+          "index": 4,
+          "binding": "search_unity_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4e25662b4b8b0de95c6b1ae7acfb602cc7b1faa45182dc345e50d6767ec8a49c"
+        },
+        {
+          "index": 5,
+          "binding": "inspect_editor_state",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "16333581174a6c363177585719b83cada88da7f493a02bcfd71776ec4c2d277a"
+        },
+        {
+          "index": 6,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "2aee7b06a45c3750ba171eb7af11b792a5c603dc457a209fe0a0cce02b9dc629"
+        },
+        {
+          "index": 7,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "e6c86a5a9c8dcf71abae32e45996154ba72934f570560d0b26818fe4d3fb1404"
+        },
+        {
+          "index": 8,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "7d9a8a8a2b7dd69f75d2a6256f99fbeccd3eaa9805088f63f224aae452270afe"
+        },
+        {
+          "index": 9,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "7ed796102fc8b578d723518606e3c46e5639caf368ca72356624171586829109"
+        },
+        {
+          "index": 10,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "failure",
+          "domain_error": true,
+          "mcp_error": true,
+          "sha256": "4b560acee5f6a9773d8171c8d445e4713679a6004c5e7f42733b2315a6805a21"
+        },
+        {
+          "index": 11,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "bd33e9fe3f850061db4d343bee2231aadeb810d10d694d8f3285fbfb8995ba8e"
+        },
+        {
+          "index": 12,
+          "binding": "mcpforunity://tool-diagnostics/ui_source",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "713f2118025d3c1d13463a859fbd9fddf594683f64ca0a6b81dbecb56082f59d"
+        },
+        {
+          "index": 13,
+          "binding": "asset_inspect",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "2ce81e1cf6668dd3bcac9ce434b0eb735356a225adda9836de6834a9a697985c"
+        },
+        {
+          "index": 14,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "a3e48490466d6d411be913f4eb8eddf012098095426e352f9bddc7d35d724fbf"
+        },
+        {
+          "index": 15,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "38b265af5123aa88fe0be6e230c8e18e4ec4b9dca8cb77e3132fe900eb93944b"
+        }
+      ],
+      "host_errors": [
+        {
+          "index": 6,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "0ee122a93c53227067fa2ecc22b44ba8aa47e272571c49799890c76528b91224"
+        },
+        {
+          "index": 13,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "f4efdae7b5ca070b47870e7dfbb844c72a87bceafc2de622b4edf971bdf8ea83"
+        },
+        {
+          "index": 27,
+          "stream": "events",
+          "class": "item.completed",
+          "sha256": "6024e615924d16b654814187d28f626ba2e177563d1a8b73cf8376024052b21b"
+        },
+        {
+          "index": 0,
+          "stream": "stderr",
+          "class": "stderr_error",
+          "sha256": "c1820c2d55055fc41aea3cdb28f1f52b762fc57a917fc3001ba3bfe3b626da50"
+        }
+      ],
+      "private_artifact_sha256": [
+        "41fd57662304064b6b36bf2101eb4b56a553b710d43f4f3c974ff67d0b14481f",
+        "4ce81cd1906a2159c9f0fa72db89596f3928949f126e6c0ff10046e2e2d13e9a",
+        "604c09ce00a03d11a3afc25d51b9f2c58bad0442e4b13fe954b7ac0ae24e0411",
+        "d61fa13fbe40e74aac41bca4cea9bb9dcfb93150ba619f14280e3b4455e2553b"
+      ],
+      "review": {
+        "fingerprint": "85efeaa65abec53d0f4a08a2efb46ef406e11c80f98b6d72eeb51ed17b75bae6",
+        "answer_accurate": false,
+        "constraints_respected": true,
+        "evidence": [],
+        "reason": "The requested saved edit remained unchanged. The actor found the target and reported a missing host binding without claiming a successful edit; protected state was preserved."
+      }
+    },
+    {
+      "id": "49ccdb87a20351c5",
+      "profile": "core",
+      "task": "h07",
+      "effect": "read",
+      "original_sha256": "496fe1e645a0645ac058ad9ca04ce55c621245426805303bd79ec6d6d9037a99",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "496fe1e645a0645ac058ad9ca04ce55c621245426805303bd79ec6d6d9037a99",
+      "answer_sha256": "ee1556e64b5885d389984e1c44034ee3176b90454eef1b3ea802aee0bfbad567",
+      "delivery_status": "completed",
+      "seconds": 30.41,
+      "receipt_sha256": "1708fdf45a165c3ebf8c33791acea0e2d1f04f6dbb3541f2df7ad800224d42cc",
+      "fingerprint": "33682df556f23f621122399e854121bea87a60f3d4cf7b367410de2d6c2ce7c5",
+      "before_facts": {
+        "renderMode": "ScreenSpaceOverlay",
+        "sortingOrder": 37
+      },
+      "after_facts": {
+        "renderMode": "ScreenSpaceOverlay",
+        "sortingOrder": 37
+      },
+      "before_sha256": "e7a1f3525406536c3a8b6f317dbf11b4e0dddb2d400ef5582bb3b270f1c3669e",
+      "after_sha256": "e7a1f3525406536c3a8b6f317dbf11b4e0dddb2d400ef5582bb3b270f1c3669e",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "aef2605be50800b182b26d39f95547a1584d9e79ed95c17d40d171e3999abd30",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "1a404b0dab051f8a2340028c3f77fa965468bbeb5e7ccc437837940819817de3",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "111a4551aa0aff1a26af776b1c91ef513722d6abdc1b9dd675a810efe1b527d3"
+        },
+        {
+          "index": 1,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "3757149f26488b9e7c247c5e0320f8e7abc5b98f450ec521901aba1117ea4048"
+        },
+        {
+          "index": 2,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "2260173cf28445e6a7ebfb21f62b0a21fbc0da7727b09197498a4a14ff9ef560"
+        },
+        {
+          "index": 3,
+          "binding": "find_gameobjects",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4f14ec55c0be01c1ae33bc6bf12aa72d68f428ad0f671d76d7c7f5fb6664fa5c"
+        },
+        {
+          "index": 4,
+          "binding": "mcpforunity://scene/gameobject/{id}/component/Canvas",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "c263a088cba0f74348351ace71eaa23a9c081db3c53ec562b4b19588d4e46aa3"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "5a600e65537b8669adbbe624f568117a32b2b9764012692a3304c04fb275323c",
+        "c16b21418ab1640718a1f76a874fd5fa5ed648b2dc9375d1683cffee3b2681b3",
+        "d61fa13fbe40e74aac41bca4cea9bb9dcfb93150ba619f14280e3b4455e2553b",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "33682df556f23f621122399e854121bea87a60f3d4cf7b367410de2d6c2ce7c5",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 3,
+            "sha256": "4f14ec55c0be01c1ae33bc6bf12aa72d68f428ad0f671d76d7c7f5fb6664fa5c"
+          },
+          {
+            "index": 4,
+            "sha256": "c263a088cba0f74348351ace71eaa23a9c081db3c53ec562b4b19588d4e46aa3"
+          }
+        ],
+        "reason": "The public lookup identified the exact object, and its component read returned the mode and sorting order. The answer matches both values and the scene stayed unchanged."
+      }
+    },
+    {
+      "id": "7a25399d78e86cc4",
+      "profile": "full",
+      "task": "h07",
+      "effect": "read",
+      "original_sha256": "496fe1e645a0645ac058ad9ca04ce55c621245426805303bd79ec6d6d9037a99",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "496fe1e645a0645ac058ad9ca04ce55c621245426805303bd79ec6d6d9037a99",
+      "answer_sha256": "e5493b47fcccce18ca4e3a2d6bc5f78091a4b0d16826b350cd4ef7ce8ed9f322",
+      "delivery_status": "completed",
+      "seconds": 33.656,
+      "receipt_sha256": "0b05772a36e411f6a6ab7a6a84d870e735cf00092b809c0d4b4ff7cfd3cc4056",
+      "fingerprint": "4fb9d7b49391becbcd0c097c67af481cfe53a33f69d70d76a9ecfec6e2bc2ccc",
+      "before_facts": {
+        "renderMode": "ScreenSpaceOverlay",
+        "sortingOrder": 37
+      },
+      "after_facts": {
+        "renderMode": "ScreenSpaceOverlay",
+        "sortingOrder": 37
+      },
+      "before_sha256": "392ff115e7c491e2f9245e351e72d9a5560ee6420d8c67c65426b9aa64807185",
+      "after_sha256": "392ff115e7c491e2f9245e351e72d9a5560ee6420d8c67c65426b9aa64807185",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "74c37a1e16c475830c53ef5ea49d5fa6aad0745661e4dd8e0b2989f3f6820e60",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "3c98818be19bb9f5cd9e20e9f651830a7a5d913ce34ace751f4cf8083eba883d",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "c80b3c280e1a52eb420c1f6ee6b4fa7aece1f331b22788690443ebf3cc2165b9"
+        },
+        {
+          "index": 1,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "8d01f21ac26ead5644e827d3800787f0907365d40b31aa71d6319c6965fead15"
+        },
+        {
+          "index": 2,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "660aab5b6bb5ea392bdfd511b2a16ce92b390e47a7673b8aca9fb1e0d6059391"
+        },
+        {
+          "index": 3,
+          "binding": "mcpforunity://editor/state",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "28085b62f7cc494aa6835c7aaa631acbdba2b4cb107801a344c1eb2a61af95ba"
+        },
+        {
+          "index": 4,
+          "binding": "find_gameobjects",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "a0848333280118e6966579ee63cfcd99c9931e2655bacefc09a6b74b164b8472"
+        },
+        {
+          "index": 5,
+          "binding": "mcpforunity://scene/gameobject/{id}/component/Canvas",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "755e185e5e2c4cef2bafe7b6791da35e8efdd4adb34266373abecc7252fd5d64"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "c618b945840bf2d6c7ec8a32fd66e4609b516598f42a22f4036762a65aa5dcae",
+        "e21a2c5378e1637e45738af92e69fe6be426dc7d4cc0eaed1214b7d9fc720cff",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ef24d623548c2925ea24b4daf044f3e38430cf224fc527eb5dccf50bb56c64a3"
+      ],
+      "review": {
+        "fingerprint": "4fb9d7b49391becbcd0c097c67af481cfe53a33f69d70d76a9ecfec6e2bc2ccc",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 4,
+            "sha256": "a0848333280118e6966579ee63cfcd99c9931e2655bacefc09a6b74b164b8472"
+          },
+          {
+            "index": 5,
+            "sha256": "755e185e5e2c4cef2bafe7b6791da35e8efdd4adb34266373abecc7252fd5d64"
+          }
+        ],
+        "reason": "The public lookup identified the exact object, then its Canvas response supported both reported values. Independent observations agree and native state was preserved."
+      }
+    },
+    {
+      "id": "9d0dda4b29cf7fda",
+      "profile": "full",
+      "task": "h08",
+      "effect": "edit",
+      "original_sha256": "cc9ea7ecdd17466ff8f2cdb97b3784ea78109f6ad11c9e4a59ea3996215167f4",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "cc9ea7ecdd17466ff8f2cdb97b3784ea78109f6ad11c9e4a59ea3996215167f4",
+      "answer_sha256": "8a0cc3d18190f7423380734ff4f85f971c2c45dfd1c5998ea3a850e5f14e63c5",
+      "delivery_status": "completed",
+      "seconds": 59.425,
+      "receipt_sha256": "4114d19948ac7794a3a4c64e8910408680cc6d89e3d6b87412b452947eb4cd4b",
+      "fingerprint": "2a02b555df9ab071ce664287eaf4897be390cf26a00887d071b09c26bec94248",
+      "before_facts": {
+        "renderMode": "ScreenSpaceOverlay",
+        "sortingOrder": 6
+      },
+      "after_facts": {
+        "renderMode": "ScreenSpaceOverlay",
+        "sortingOrder": 18
+      },
+      "before_sha256": "f61707cb036cfc2e16fa14fe28ddf617f2f2adc464da5837b191ea852e4de2f8",
+      "after_sha256": "bfb1fe373b3e7f7ce93018ef32c9a3b788bcf037e272924ee14d2fcd8a005f5d",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "74c37a1e16c475830c53ef5ea49d5fa6aad0745661e4dd8e0b2989f3f6820e60",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "3c98818be19bb9f5cd9e20e9f651830a7a5d913ce34ace751f4cf8083eba883d",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "1d586dd23ea9eeb420370911511fdcf80f60489090927b2b14bfe3673cbf397c"
+        },
+        {
+          "index": 1,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "556a3c0c5eae51f3a5c2b8c8caab741e74aafff3f0f6b0f8f8dc72249304adb0"
+        },
+        {
+          "index": 2,
+          "binding": "scene_inspect",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "1faaaf9dd94851e0a03c4e467bee0835c9b63e7ae7b92464c9a2e17a955fc9d1"
+        },
+        {
+          "index": 3,
+          "binding": "find_gameobjects",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "d1e3db94c6207c08cc3cd55c2dc11df385f2f668e14892e83bb85b134671d002"
+        },
+        {
+          "index": 4,
+          "binding": "mcpforunity://scene/gameobject/{id}/component/Canvas",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "88d50959602d7a2aad1cddf3db2bb996b6723e4969ad44f5557deb978b4b2039"
+        },
+        {
+          "index": 5,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "0f4a79bbbb6eb4b8598019287a40a9da0a0ab3f1b7ebc9c161987642e25787f2"
+        },
+        {
+          "index": 6,
+          "binding": "mcpforunity://editor/state",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "0ee57ccbf17efeea66b9c85db71b72d2e2c4b13cf2ecfeb6965580ea960d8ae2"
+        },
+        {
+          "index": 7,
+          "binding": "mcpforunity://scene/gameobject/{id}/component/Canvas",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "2f1363fa3b218cd8c1bc7dc8be04914905794b531da4d8e4c3b8be37768294c6"
+        },
+        {
+          "index": 8,
+          "binding": "mcpforunity://scene/gameobject/{id}",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "e018406637a093ea162dd23c66fda884e3edb003ddd887744a6273739ab3bcb3"
+        },
+        {
+          "index": 9,
+          "binding": "manage_components",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "f54f07286d87a7285d90e30b212173f9908a5093a78e1b8f7d324a675700f8ba"
+        },
+        {
+          "index": 10,
+          "binding": "scene_lifecycle",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "67879fab3a33964ec31f83215507fb39bb3a21fd294d791677fb1ff7ce2e555c"
+        },
+        {
+          "index": 11,
+          "binding": "mcpforunity://scene/gameobject/{id}",
+          "method": "resources/read",
+          "reply": "failure",
+          "domain_error": true,
+          "mcp_error": false,
+          "sha256": "64956ad810e40d055329b49a1cf7fcc7f93762e7548976d6e9b6e5cb2f3f3e06"
+        },
+        {
+          "index": 12,
+          "binding": "mcpforunity://scene/gameobject/{id}/component/Canvas",
+          "method": "resources/read",
+          "reply": "failure",
+          "domain_error": true,
+          "mcp_error": false,
+          "sha256": "9d17d63a4a67b3a07a3a215ddc6609b32f93f69d27742934c1f8b9d8b679f711"
+        },
+        {
+          "index": 13,
+          "binding": "mcpforunity://scene/gameobject/{id}/component/Canvas",
+          "method": "resources/read",
+          "reply": "failure",
+          "domain_error": true,
+          "mcp_error": false,
+          "sha256": "18c167ab118b9b975476b2f2789f5afbd7b06dceab972ac47d65e5b4a32f6ad0"
+        },
+        {
+          "index": 14,
+          "binding": "mcpforunity://scene/gameobject/{id}/component/Canvas",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "bc1c45e5e9a5b31efc0acd74ad0ddd8ba78403b90dc7b6a1f39c300d707b6966"
+        },
+        {
+          "index": 15,
+          "binding": "mcpforunity://scene/gameobject/{id}",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4db1263319551203b0239d8d5fd9d95e8f1816016e9fb405c3ab446a5022f21c"
+        },
+        {
+          "index": 16,
+          "binding": "mcpforunity://scene/gameobject/{id}/component/Canvas",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "13f4433cb100db8282d3ea6cfcbef97bc4ba596be084199c439c54bc5e29fd11"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "934cb4e932364abe1fed0ea45504f82facf22f4bf3a67664baee24e76b6ff386",
+        "c572404e24a8d70af0da509ced94f4b6e2c7afa584244f998ac0c234c2db3a80",
+        "e21a2c5378e1637e45738af92e69fe6be426dc7d4cc0eaed1214b7d9fc720cff",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "2a02b555df9ab071ce664287eaf4897be390cf26a00887d071b09c26bec94248",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 7,
+            "sha256": "2f1363fa3b218cd8c1bc7dc8be04914905794b531da4d8e4c3b8be37768294c6"
+          },
+          {
+            "index": 8,
+            "sha256": "e018406637a093ea162dd23c66fda884e3edb003ddd887744a6273739ab3bcb3"
+          },
+          {
+            "index": 9,
+            "sha256": "f54f07286d87a7285d90e30b212173f9908a5093a78e1b8f7d324a675700f8ba"
+          },
+          {
+            "index": 10,
+            "sha256": "67879fab3a33964ec31f83215507fb39bb3a21fd294d791677fb1ff7ce2e555c"
+          },
+          {
+            "index": 14,
+            "sha256": "bc1c45e5e9a5b31efc0acd74ad0ddd8ba78403b90dc7b6a1f39c300d707b6966"
+          },
+          {
+            "index": 15,
+            "sha256": "4db1263319551203b0239d8d5fd9d95e8f1816016e9fb405c3ab446a5022f21c"
+          },
+          {
+            "index": 16,
+            "sha256": "13f4433cb100db8282d3ea6cfcbef97bc4ba596be084199c439c54bc5e29fd11"
+          }
+        ],
+        "reason": "The native edit and saved scene set the exact sorting order. Public verification supports the target value and preserved render mode, hierarchy and second Canvas. The transient reconnect read failures had no observed effects."
+      }
+    },
+    {
+      "id": "3baa919ad574cf11",
+      "profile": "core",
+      "task": "h08",
+      "effect": "edit",
+      "original_sha256": "cc9ea7ecdd17466ff8f2cdb97b3784ea78109f6ad11c9e4a59ea3996215167f4",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "cc9ea7ecdd17466ff8f2cdb97b3784ea78109f6ad11c9e4a59ea3996215167f4",
+      "answer_sha256": "f1f3f9d1642c5c8c7b24090f64de7193f8808b21bfd959c2f26f8d3cd271f048",
+      "delivery_status": "completed",
+      "seconds": 53.276,
+      "receipt_sha256": "9b169dd68315d8204978167a7aaec4d2fc7d003d92129c89af50a686adb46124",
+      "fingerprint": "9c33078018cedb59282f3ecf1b18d20d6d0fe1ed495d8410e4c7edb653d1d139",
+      "before_facts": {
+        "renderMode": "ScreenSpaceOverlay",
+        "sortingOrder": 6
+      },
+      "after_facts": {
+        "renderMode": "ScreenSpaceOverlay",
+        "sortingOrder": 18
+      },
+      "before_sha256": "bd4d9a06f748e8e067aa32a2c3cbc616ca67975dcab8b655436e0fe92ba10802",
+      "after_sha256": "dec9243d84b97a14a5f9900c29bcf079a5e76c3c06150719671382598b9b9dc2",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "aef2605be50800b182b26d39f95547a1584d9e79ed95c17d40d171e3999abd30",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "1a404b0dab051f8a2340028c3f77fa965468bbeb5e7ccc437837940819817de3",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "redacted_binding",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "69caed437b18d5e7a1dc78f4cc9cd89eae463675994760b49c0d62f0fb036294"
+        },
+        {
+          "index": 1,
+          "binding": "mcpforunity://instances",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "3c6a16f64dc70b848fa47057f12d7b26f077c104b37e9b2934d3a2e1df8c60ec"
+        },
+        {
+          "index": 2,
+          "binding": "find_gameobjects",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "449aa0b52e99839ca04db75f69a00c86284e822fc973cac7ccc31e81822e29a5"
+        },
+        {
+          "index": 3,
+          "binding": "mcpforunity://editor/state",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "20d5a0faf0d01fd4dbb95dd80b4d333bc9b0c24d50479d84c337c2e386366826"
+        },
+        {
+          "index": 4,
+          "binding": "mcpforunity://scene/gameobject/{id}/component/Canvas",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "019aeb3f24a4270d58d15713719a2aa13494062a1d30eb47c08e978cc2e98c4e"
+        },
+        {
+          "index": 5,
+          "binding": "scene_inspect",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "c93bec23409a37ec2eb8015dac0ae4a9da6eb777bd30a0d0a37ff05ce984ee8f"
+        },
+        {
+          "index": 6,
+          "binding": "manage_components",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "af2aaaa1173efb39be8a0388cc8df14719d8737eb6a52c5a34af63bb29a59aba"
+        },
+        {
+          "index": 7,
+          "binding": "mcpforunity://scene/gameobject/{id}/component/Canvas",
+          "method": "resources/read",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ee7e8e52a05fb96b22a6247b3e3e8393ecf5784367bd0321aaf7f107d7544058"
+        },
+        {
+          "index": 8,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "cd7013f09f33871ad75f601bf35f2cf7501737f183c066c774baf15205af3d85"
+        },
+        {
+          "index": 9,
+          "binding": "scene_lifecycle",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "c222516362fa8b0168c668e491f658d84e6a5288f459b27848dfd51724375372"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "4560556091cb40cf8662df7f5e423ec246c1a3a25471ddfe12ec7ac4b3cd1234",
+        "68425e051537288e951c7b40ef7d285d682db6e1915d260eba8d4c5619f6fed6",
+        "d61fa13fbe40e74aac41bca4cea9bb9dcfb93150ba619f14280e3b4455e2553b",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "9c33078018cedb59282f3ecf1b18d20d6d0fe1ed495d8410e4c7edb653d1d139",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 4,
+            "sha256": "019aeb3f24a4270d58d15713719a2aa13494062a1d30eb47c08e978cc2e98c4e"
+          },
+          {
+            "index": 6,
+            "sha256": "af2aaaa1173efb39be8a0388cc8df14719d8737eb6a52c5a34af63bb29a59aba"
+          },
+          {
+            "index": 7,
+            "sha256": "ee7e8e52a05fb96b22a6247b3e3e8393ecf5784367bd0321aaf7f107d7544058"
+          },
+          {
+            "index": 9,
+            "sha256": "c222516362fa8b0168c668e491f658d84e6a5288f459b27848dfd51724375372"
+          }
+        ],
+        "reason": "The exact Canvas property was changed, read back and saved. The final answer matches the independent target and persisted values, and protected scene state stayed unchanged."
+      }
+    }
+  ]
+}
