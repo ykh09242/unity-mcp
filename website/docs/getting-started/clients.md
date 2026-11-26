@@ -26,6 +26,8 @@ The [Client Configurators](../guides/client-configurators.md) guide documents th
 - OpenClaw requires its MCP bridge plugin; Pi requires an MCP extension. A config write cannot install or enable those integrations.
 - Some clients need an MCP toggle or restart. Successful configuration is not proof of a live connection.
 
+After updating the server, reconnect to see the Unity MCP mark beside its tool activity in Codex. Codex selects the icon for its light or dark theme. A soft highlight travels across the mark when the system allows animation. With reduced motion enabled, the mark stays still.
+
 ## Manual client configuration
 
 These are connection shapes, not universal file paths. Use your client's format, preserve unrelated settings, and never commit token-bearing configuration.
@@ -116,7 +118,7 @@ This beta checkout uses the following immutable server source. Unity and Python 
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/737602878ce5b5b20bb1c60cb4b4ad81eeef2bba.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/5bc8045d6b406a59d38fbe2de28e1bcce9a4cc6b.zip#subdirectory=Server",
         "mcp-for-unity",
         "--transport",
         "stdio"
