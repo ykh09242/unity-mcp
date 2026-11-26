@@ -2,27 +2,42 @@
   <title>Unity MCP</title>
   <style>
     @media (prefers-reduced-motion: no-preference) {
-      .left { animation: open-left 3.2s ease-in-out infinite; }
-      .right { animation: open-right 3.2s ease-in-out infinite; }
+      .sheen { animation: sweep 3.2s linear infinite; }
     }
-    @keyframes open-left {
-      0%, 70%, 100% { transform: translateX(0); }
-      30%, 40% { transform: translateX(-2px); }
-    }
-    @keyframes open-right {
-      0%, 70%, 100% { transform: translateX(0); }
-      30%, 40% { transform: translateX(2px); }
+    @keyframes sweep {
+      from { transform: translateX(0); }
+      to { transform: translateX(76px); }
     }
   </style>
+  <defs>
+    <path id="blue-face" d="M14.5 2 3.5 8.4v15.2l11 6.4Z"/>
+    <path id="teal-face" d="m17.5 2 11 6.4v15.2l-11 6.4Z"/>
+    <clipPath id="faces">
+      <use href="#blue-face"/>
+      <use href="#teal-face"/>
+    </clipPath>
+    <linearGradient id="light">
+      <stop stop-color="#ddfbff" stop-opacity="0"/>
+      <stop offset=".24" stop-color="#ddfbff" stop-opacity=".08"/>
+      <stop offset=".5" stop-color="#ddfbff" stop-opacity=".40"/>
+      <stop offset=".76" stop-color="#ddfbff" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#ddfbff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
   <path d="M12 9h8 M12 16h8 M12 23h8" fill="none" stroke="#22d3ee" stroke-width="2"/>
   <g stroke-width="1.5" stroke-linejoin="round">
-    <g class="left" stroke="#60a5fa">
-      <path d="M14.5 2 3.5 8.4v15.2l11 6.4Z" fill="#2563eb"/>
+    <g stroke="#60a5fa">
+      <use href="#blue-face" fill="#2563eb"/>
       <path d="m3.5 8.4 11 6.4" fill="none"/>
     </g>
-    <g class="right" stroke="#2dd4bf">
-      <path d="m17.5 2 11 6.4v15.2l-11 6.4Z" fill="#0d9488"/>
+    <g stroke="#2dd4bf">
+      <use href="#teal-face" fill="#0d9488"/>
       <path d="m28.5 8.4-11 6.4" fill="none"/>
+    </g>
+  </g>
+  <g clip-path="url(#faces)">
+    <g transform="rotate(16 16 16)">
+      <rect class="sheen" x="-34" y="-16" width="26" height="64" fill="url(#light)"/>
     </g>
   </g>
 </svg>
