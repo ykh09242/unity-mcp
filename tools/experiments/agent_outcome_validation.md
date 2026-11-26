@@ -38,6 +38,8 @@ In this setting the six originals did not yield the requested terrain mask value
 
 ## Held-out requests
 
+The later paired edit experiment revisits the six edits from these panels using the same originals, a new multilingual panel and the revised default startup profile. [First-turn edit comparison](compact_edit_outcomes.md)
+
 Eight originals cover German, French, Russian and Vietnamese requests about asset labels, prefabs, uGUI and UI Toolkit. The prompts, expected native state, collateral checks and case allocation were sealed before product changes. Both catalogs received the same four reads and four edits on each package. Four additional originals stayed sealed through development of the final correction and ran for the first time on the final package. [Intermediate prompts and first attempts](agent_outcome_holdout_results.json) · [Final paired and first-use reserve results](agent_outcome_holdout_confirmation.json)
 
 | Package and panel | Catalog | Verified reads | Verified edits | Completed | Failed tool replies | Failed resource reads |
