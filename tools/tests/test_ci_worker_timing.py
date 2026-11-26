@@ -285,7 +285,12 @@ def test_real_worker_plugin_reports_completed_and_partial_sessions(tmp_path, mod
     else:
         assert len(report["workers"]) < report["expectedWorkers"]
         progress = [json.loads(path.read_text()) for path in (tmp_path / "progress").glob("*.json")]
-        crashed = [entry for entry in progress if not entry["complete"]]
+        controller = next(entry for entry in progress if entry["workerId"] == "main")
+        assert controller["phase"] == "unconfigured"
+        assert controller["exitstatus"] == 1
+        crashed = [
+            entry for entry in progress if entry["workerId"] != "main" and not entry["complete"]
+        ]
         assert len(crashed) == 1
         assert crashed[0]["nodeid"] == "test_second.py::test_second"
         assert crashed[0]["phase"] == "call"
