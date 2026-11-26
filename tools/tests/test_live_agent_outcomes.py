@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments import live_agent_outcomes as trial
 from tools.experiments import verify_agent_outcome_originals as originals
+from tools.experiments import verify_compact_edit as compact
 
 
 @pytest.mark.parametrize(
@@ -21,11 +22,42 @@ from tools.experiments import verify_agent_outcome_originals as originals
         "verify_agent_outcome_originals.py",
         "verify_agent_outcome_holdout.py",
         "verify_agent_outcome_holdout_confirmation.py",
+        "verify_compact_edit.py",
     ),
 )
 def test_published_evidence_verifies_from_an_empty_directory(tmp_path, script):
     verifier = Path(originals.__file__).with_name(script)
     subprocess.run([sys.executable, "-I", "-B", verifier], cwd=tmp_path, check=True, timeout=60)
+
+
+@pytest.mark.parametrize("alteration", ["catalog", "binding", "answer", "downgrade"])
+def test_compact_edit_ledger_rejects_regraded_cases(alteration):
+    report = compact.read(Path(compact.__file__).with_name("compact_edit_results.json"))
+    runs = report["runs"]
+    revision = "baseline" if alteration == "catalog" else "candidate"
+    panel = runs[revision]["panels"]["new"]
+    rows = [row for row in panel["cases"] if row["profile"] == "core"]
+    if alteration == "catalog":
+        row = next(row for row in rows if row["verdict"] == "unverifiable_initial_catalog")
+        row["actor_first_tools_list_complete"] = False
+        row["verdict"] = "completed"
+    elif alteration == "answer":
+        row = next(row for row in rows if not row["review"]["answer_accurate"])
+        row["host_final_correct"] = True
+    else:
+        row = next(row for row in rows if row["verdict"] == "completed")
+        if alteration == "binding":
+            evidence = [row["calls"][item["index"]] for item in row["review"]["evidence"]]
+            call = next(call for call in evidence if call["method"] == "tools/call")
+            call["binding"] = "unrelated_tool"
+        else:
+            row["verdict"] = "incomplete_native_target"
+    panel["summary"] = compact.summary(panel["cases"])
+    report["paired_transitions"]["new"] = compact.transitions(
+        runs["baseline"]["panels"]["new"]["cases"], runs["candidate"]["panels"]["new"]["cases"]
+    )
+    with pytest.raises(ValueError):
+        compact.verify(report, compact.CANDIDATE)
 
 
 def test_host_stderr_is_counted_even_when_public_calls_succeed():
