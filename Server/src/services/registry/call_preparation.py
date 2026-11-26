@@ -1,6 +1,9 @@
 """Construct a public call without executing it or acquiring permissions."""
 
+from typing import Annotated
+
 from jsonschema import Draft202012Validator, validators
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictStr
 from referencing import Registry
 from referencing.exceptions import Unresolvable
 
@@ -9,12 +12,35 @@ from models.custom_tool_schema import SchemaContractError, bounded_json, validat
 
 PAGE_SIZE = "x-unity-mcp-page-size"
 ORIGINAL_REQUEST = "x-unity-mcp-original-request"
+MAX_ORIGINAL_REQUEST_LENGTH = 512
 _Validator = validators.extend(
     Draft202012Validator,
     type_checker=Draft202012Validator.TYPE_CHECKER.redefine(
         "integer", lambda _, value: type(value) is int
     ),
 )
+
+
+class ExactTextAssertion(BaseModel):
+    """A caller-selected literal from the original request and its outbound field."""
+
+    model_config = ConfigDict(extra="forbid")
+    path: Annotated[
+        list[StrictStr | Annotated[int, Field(strict=True, ge=0)]],
+        Field(
+            min_length=1,
+            max_length=32,
+            description="Path within arguments. Strings are exact object keys. Integers are zero-based array indices.",
+        ),
+    ]
+    expected: Annotated[
+        StrictStr,
+        Field(
+            min_length=1,
+            max_length=MAX_ORIGINAL_REQUEST_LENGTH,
+            description="Select this literal verbatim from the original query before drafting arguments.",
+        ),
+    ]
 
 
 def not_prepared(reason: str, **details) -> dict:
@@ -37,6 +63,25 @@ def _page_maximum(name, definition):
     return None
 
 
+def _exact_text_error(
+    args: dict[str, JsonValue], assertion: ExactTextAssertion, original: str
+) -> str | None:
+    if assertion.expected not in original:
+        return "expected_not_in_query"
+    value: JsonValue = args
+    for segment in assertion.path:
+        match value, segment:
+            case dict() as values, str() as key if key in values:
+                value = values[key]
+            case list() as values, int() as index if index < len(values):
+                value = values[index]
+            case _:
+                return "missing_path"
+    if not isinstance(value, str):
+        return "not_string"
+    return "mismatch" if value != assertion.expected else None
+
+
 def prepare_tool_call(
     name,
     schema,
@@ -47,6 +92,7 @@ def prepare_tool_call(
     project=None,
     registered=False,
     closed_signature=False,
+    exact_text: list[ExactTextAssertion] | None = None,
 ):
     """Prepare registered pagination and original-text fields within the advertised schema."""
     try:
@@ -100,9 +146,22 @@ def prepare_tool_call(
         return not_prepared("The advertised input schema could not be resolved locally.")
     if details["validation_errors"]:
         return not_prepared("The draft does not satisfy this input schema.", **details)
-    return {
+
+    result = {
         "ready": True,
         "scope": "input_schema",
         "prepared_call": {"tool": name, "arguments": args},
         "adjustments": adjustments,
     }
+    if exact_text is not None:
+        if not original:
+            return not_prepared("Supply the original request verbatim in query with exact_text.")
+        errors = []
+        for index, assertion in enumerate(exact_text):
+            reason = _exact_text_error(args, assertion, original)
+            if reason is not None:
+                errors.append({"index": index, "reason": reason})
+        if errors:
+            return not_prepared("Exact text check failed.", exact_text_errors=errors)
+        result["exact_text_checked"] = len(exact_text)
+    return result

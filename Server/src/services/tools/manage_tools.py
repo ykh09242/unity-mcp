@@ -31,8 +31,10 @@ from services.registry import (
 )
 from services.registry.action_catalog import ActionIntent, CatalogResource, ObservationSource
 from services.registry.call_preparation import (
+    MAX_ORIGINAL_REQUEST_LENGTH,
     ORIGINAL_REQUEST,
     PAGE_SIZE,
+    ExactTextAssertion,
     not_prepared,
     prepare_tool_call,
 )
@@ -43,7 +45,7 @@ logger = logging.getLogger("mcp-for-unity-server")
 _SearchQuery = Annotated[
     str | None,
     Field(
-        max_length=512,
+        max_length=MAX_ORIGINAL_REQUEST_LENGTH,
         json_schema_extra={ORIGINAL_REQUEST: {}},
         description=(
             "Original user request. Keep its language, names, paths and text verbatim. Required "
@@ -397,6 +399,19 @@ async def search_unity_tools(
                 },
             },
         },
+        {
+            "if": {
+                "required": ["exact_text"],
+                "properties": {"exact_text": {"type": "array"}},
+            },
+            "then": {
+                "required": ["query"],
+                "properties": {
+                    "action": {"const": "prepare"},
+                    "query": {"type": "string", "minLength": 1},
+                },
+            },
+        },
     ),
     description=(
         "Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. "
@@ -497,6 +512,11 @@ async def manage_tools(
         Field(max_length=128),
         "Prepare only: proposed input object for the exact tool. Pass the original user text in query when needed.",
     ] = None,
+    exact_text: Annotated[
+        list[ExactTextAssertion] | None,
+        Field(min_length=1, max_length=16),
+        "Prepare only: for user-specified exact text, check literals selected independently from the unchanged query against argument values. Requires query.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
@@ -532,9 +552,11 @@ async def manage_tools(
             host_tool_evidence is not None and host_tool_evidence.received(tool) is False
         ):
             return not_prepared("The tool is absent from the reported host inventory.")
-        return await _prepare_binding(ctx, tool, arguments, query, operation)
+        return await _prepare_binding(ctx, tool, arguments, query, operation, exact_text=exact_text)
     if arguments is not None:
         return {"success": False, "error": "arguments is supported only for prepare."}
+    if exact_text is not None:
+        return {"success": False, "error": "exact_text is supported only for prepare."}
     if host_tool_names is not None and action not in {"search", "inspect_inventory"}:
         return {"success": False, "error": "host_tool_names requires search or inspect_inventory."}
     if host_tool_evidence is not None and action not in {"search", "inspect_inventory"}:
@@ -839,7 +861,7 @@ def _describe_binding(entry, definition, operation, visible):
         return {"success": False, "error": str(error)}
 
 
-async def _prepare_binding(ctx, name, draft, original, operation):
+async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=None):
     visible = await _selection_inventory(ctx)
     if visible is None or name not in visible:
         return not_prepared("The tool is unavailable on this connection.")
@@ -890,6 +912,7 @@ async def _prepare_binding(ctx, name, draft, original, operation):
         project=project,
         registered=func is not None,
         closed_signature=closed,
+        exact_text=exact_text,
     )
 
 
