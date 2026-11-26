@@ -282,6 +282,151 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(importer.ContainsSampleSettingsOverride(nativePlatform));
         }
 
+        [TestCase("Default")]
+#if UNITY_2022_2_OR_NEWER
+        [TestCase("Standalone")]
+#endif
+        public void ImportPolicy_PreloadRoundTripsWithoutChangingOtherImportSettings(string platform)
+        {
+            const string otherPlatform = "iOS";
+            string path = Wav();
+            var importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            var defaults = importer.defaultSampleSettings;
+            defaults.loadType = AudioClipLoadType.DecompressOnLoad;
+#if UNITY_2022_2_OR_NEWER
+            defaults.preloadAudioData = true;
+            const string scope = "platform";
+#else
+            importer.preloadAudioData = true;
+            const string scope = "global";
+#endif
+            importer.defaultSampleSettings = defaults;
+            var other = importer.GetOverrideSampleSettings(otherPlatform);
+            other.quality = 0.61f;
+            Assert.IsTrue(importer.SetOverrideSampleSettings(otherPlatform, other));
+            importer.SaveAndReimport();
+            importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            defaults = importer.defaultSampleSettings;
+            other = importer.GetOverrideSampleSettings(otherPlatform);
+            var selected = platform == "Default" ? defaults : importer.GetOverrideSampleSettings(platform);
+            bool mono = importer.forceToMono;
+            bool background = importer.loadInBackground;
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            string sourcePath = Path.Combine(Application.dataPath, path.Substring(7));
+            byte[] sourceBytes = File.ReadAllBytes(sourcePath);
+            byte[] metaBefore = File.ReadAllBytes(sourcePath + ".meta");
+            source.clip = AssetDatabase.LoadAssetAtPath<AudioClip>(path);
+
+            var request = new JObject
+            {
+                ["action"] = "apply_import_settings",
+                ["target"] = path,
+                ["platform"] = platform,
+                ["settings"] = new JObject { ["preload_audio_data"] = false },
+            };
+            var disabled = Send(request);
+            Assert.IsTrue(disabled.Value<bool>("success"), disabled.ToString());
+            Assert.IsTrue(disabled["data"]["before"]["sample_settings"].Value<bool>("preload_audio_data"));
+            Assert.IsFalse(disabled["data"]["after"]["sample_settings"].Value<bool>("preload_audio_data"));
+            Assert.AreEqual(scope, disabled["data"]["after"]["sample_settings"].Value<string>("preload_audio_data_scope"));
+            importer = (AudioImporter)AssetImporter.GetAtPath(path);
+#if UNITY_2022_2_OR_NEWER
+            selected.preloadAudioData = false;
+            if (platform != "Default")
+            {
+                Assert.IsTrue(importer.ContainsSampleSettingsOverride(platform));
+                Assert.AreEqual(defaults, importer.defaultSampleSettings);
+            }
+#else
+            Assert.IsFalse(importer.preloadAudioData);
+#endif
+            Assert.AreEqual(selected, platform == "Default" ? importer.defaultSampleSettings : importer.GetOverrideSampleSettings(platform));
+            Assert.IsTrue(importer.ContainsSampleSettingsOverride(otherPlatform));
+            Assert.AreEqual(other, importer.GetOverrideSampleSettings(otherPlatform));
+            Assert.AreEqual(mono, importer.forceToMono);
+            Assert.AreEqual(background, importer.loadInBackground);
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(source.clip));
+            CollectionAssert.AreEqual(sourceBytes, File.ReadAllBytes(sourcePath));
+            CollectionAssert.AreNotEqual(metaBefore, File.ReadAllBytes(sourcePath + ".meta"));
+
+            request["settings"] = new JObject { ["quality"] = 0.48 };
+            var omitted = Send(request);
+            Assert.IsTrue(omitted.Value<bool>("success"), omitted.ToString());
+            Assert.IsFalse(omitted["data"]["after"]["sample_settings"].Value<bool>("preload_audio_data"));
+
+            request["settings"] = new JObject { ["preload_audio_data"] = true };
+            var enabled = Send(request);
+            Assert.IsTrue(enabled.Value<bool>("success"), enabled.ToString());
+            Assert.IsTrue(enabled["data"]["after"]["sample_settings"].Value<bool>("preload_audio_data"));
+            request["action"] = "read_import_settings";
+            request.Remove("settings");
+            var read = Send(request);
+            Assert.IsTrue(read.Value<bool>("success"), read.ToString());
+            Assert.IsTrue(read["data"]["sample_settings"].Value<bool>("preload_audio_data"));
+        }
+
+#if !UNITY_2022_2_OR_NEWER
+        [Test]
+        public void ImportPolicy_LegacyPreloadCannotChangeGlobalFlagFromAPlatformOverride()
+        {
+            string path = Wav();
+            var importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            bool before = importer.preloadAudioData;
+            var result = Send(
+                new JObject
+                {
+                    ["action"] = "apply_import_settings",
+                    ["target"] = path,
+                    ["platform"] = "Standalone",
+                    ["settings"] = new JObject { ["preload_audio_data"] = !before },
+                }
+            );
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("global", result.Value<string>("error"));
+            importer = (AudioImporter)AssetImporter.GetAtPath(path);
+            Assert.AreEqual(before, importer.preloadAudioData);
+            Assert.IsFalse(importer.ContainsSampleSettingsOverride("Standalone"));
+        }
+#endif
+
+        [Test]
+        public void ImportPolicy_PreloadValidatesTheResultingLoadTypeBeforeApplying()
+        {
+            string path = Wav();
+            var request = new JObject
+            {
+                ["action"] = "apply_import_settings",
+                ["target"] = path,
+                ["settings"] = new JObject { ["preload_audio_data"] = true, ["load_type"] = "DecompressOnLoad" },
+            };
+            var initial = Send(request);
+            Assert.IsTrue(initial.Value<bool>("success"), initial.ToString());
+            request["settings"] = new JObject { ["preload_audio_data"] = true, ["load_type"] = "Streaming" };
+            var denied = Send(request);
+            Assert.IsFalse(denied.Value<bool>("success"), denied.ToString());
+            StringAssert.Contains("Streaming", denied.Value<string>("error"));
+            Assert.AreEqual(AudioClipLoadType.DecompressOnLoad, ((AudioImporter)AssetImporter.GetAtPath(path)).defaultSampleSettings.loadType);
+
+            request["settings"] = new JObject { ["load_type"] = "Streaming" };
+            var streaming = Send(request);
+            Assert.IsTrue(streaming.Value<bool>("success"), streaming.ToString());
+            Assert.IsTrue(streaming["data"]["after"]["sample_settings"].Value<bool>("preload_audio_data"));
+            request["settings"] = new JObject { ["preload_audio_data"] = true };
+            var deniedStreaming = Send(request);
+            Assert.IsFalse(deniedStreaming.Value<bool>("success"), deniedStreaming.ToString());
+            request["settings"] = new JObject { ["preload_audio_data"] = false };
+            var disabled = Send(request);
+            Assert.IsTrue(disabled.Value<bool>("success"), disabled.ToString());
+            Assert.IsFalse(disabled["data"]["after"]["sample_settings"].Value<bool>("preload_audio_data"));
+            Assert.AreEqual("Streaming", disabled["data"]["after"]["sample_settings"].Value<string>("load_type"));
+
+            request["settings"] = new JObject { ["preload_audio_data"] = true, ["load_type"] = "CompressedInMemory" };
+            var enabled = Send(request);
+            Assert.IsTrue(enabled.Value<bool>("success"), enabled.ToString());
+            Assert.IsTrue(enabled["data"]["after"]["sample_settings"].Value<bool>("preload_audio_data"));
+        }
+
         [TestCase("\"Unknown\"")]
         [TestCase("\"4\"")]
         [TestCase("4")]
@@ -395,13 +540,18 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
         }
 
-        [Test]
-        public void ImportPolicy_InvalidSettingsRefuseAllChanges()
+        [TestCase("{\"quality\": 2}")]
+        [TestCase("{\"preload_audio_data\": null}")]
+        [TestCase("{\"preload_audio_data\": \"false\"}")]
+        [TestCase("{\"preload_audio_data\": 0}")]
+        public void ImportPolicy_InvalidSettingsRefuseAllChanges(string settingsJson)
         {
             // Given
             string path = Wav();
             var importer = (AudioImporter)AssetImporter.GetAtPath(path);
             bool before = importer.forceToMono;
+            var settings = new JObject { ["force_to_mono"] = !before };
+            settings.Merge(JObject.Parse(settingsJson), new JsonMergeSettings { MergeNullValueHandling = MergeNullValueHandling.Merge });
             // When
             var result = Send(
                 new JObject
@@ -409,7 +559,7 @@ namespace MCPForUnityTests.Editor.Tools
                     ["action"] = "apply_import_settings",
                     ["target"] = path,
                     ["platform"] = "Default",
-                    ["settings"] = new JObject { ["force_to_mono"] = !before, ["quality"] = 2 },
+                    ["settings"] = settings,
                 }
             );
             // Then

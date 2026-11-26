@@ -313,10 +313,17 @@ namespace MCPForUnity.Editor.Tools
             return token.Value<bool>();
         }
 
-        private static object Snapshot(AudioImporter importer, string platform, string selector)
+        private static object Snapshot(AudioImporter importer, string platform, string selector, out bool preloadAudioData)
         {
             bool defaults = platform == "Default";
             var sample = defaults ? importer.defaultSampleSettings : importer.GetOverrideSampleSettings(platform);
+#if UNITY_2022_2_OR_NEWER
+            preloadAudioData = sample.preloadAudioData;
+            const string preloadScope = "platform";
+#else
+            preloadAudioData = importer.preloadAudioData;
+            const string preloadScope = "global";
+#endif
             return new
             {
                 path = importer.assetPath,
@@ -332,6 +339,8 @@ namespace MCPForUnity.Editor.Tools
                     sample.quality,
                     sample_rate_setting = sample.sampleRateSetting.ToString(),
                     sample_rate_override = sample.sampleRateOverride,
+                    preload_audio_data = preloadAudioData,
+                    preload_audio_data_scope = preloadScope,
                 },
             };
         }
@@ -369,7 +378,7 @@ namespace MCPForUnity.Editor.Tools
             if (!apply)
                 return new SuccessResponse(
                     "Audio import settings observed; platform values may be Unity-translated defaults when no override exists.",
-                    Snapshot(importer, platform, selector)
+                    Snapshot(importer, platform, selector, out _)
                 );
             if (EditorApplication.isPlaying)
                 throw new ArgumentException("Audio importer edits require Edit mode.");
@@ -382,11 +391,12 @@ namespace MCPForUnity.Editor.Tools
             var settings = settingsToken as JObject;
             if (clear && (platform == "Default" || settingsToken != null))
                 throw new ArgumentException("clear_override requires a platform override and no settings.");
-            if (!clear && (settings == null || settings.Count < 1 || settings.Count > 7))
-                throw new ArgumentException("settings requires 1..7 explicit audio import properties.");
+            if (!clear && (settings == null || settings.Count < 1 || settings.Count > 8))
+                throw new ArgumentException("settings requires 1..8 explicit audio import properties.");
             var sample = platform == "Default" ? importer.defaultSampleSettings : importer.GetOverrideSampleSettings(platform);
-            bool mono = importer.forceToMono;
-            bool background = importer.loadInBackground;
+            bool? mono = null;
+            bool? background = null;
+            bool? preload = null;
             if (settings != null)
                 foreach (var property in settings.Properties())
                 {
@@ -420,11 +430,24 @@ namespace MCPForUnity.Editor.Tools
                                 throw new ArgumentException("load_in_background is global; use platform Default explicitly.");
                             background = Boolean(property.Value);
                             break;
+                        case "preload_audio_data":
+#if !UNITY_2022_2_OR_NEWER
+                            if (platform != "Default")
+                                throw new ArgumentException("preload_audio_data is global in this Unity version; use platform Default.");
+#endif
+                            preload = Boolean(property.Value);
+                            break;
                         default:
                             throw new ArgumentException("Unsupported audio import setting: " + property.Name);
                     }
                 }
-            object before = Snapshot(importer, platform, selector);
+            if (preload == true && sample.loadType == AudioClipLoadType.Streaming)
+                throw new ArgumentException("preload_audio_data cannot be enabled with Streaming load type.");
+#if UNITY_2022_2_OR_NEWER
+            if (preload.HasValue)
+                sample.preloadAudioData = preload.Value;
+#endif
+            object before = Snapshot(importer, platform, selector, out _);
             Undo.RegisterCompleteObjectUndo(importer, "Apply audio import settings");
             if (clear)
             {
@@ -436,8 +459,14 @@ namespace MCPForUnity.Editor.Tools
                 importer.defaultSampleSettings = sample;
             else if (!importer.SetOverrideSampleSettings(platform, sample))
                 return new ErrorResponse("Unity rejected the platform sample settings; no global settings were changed.");
-            importer.forceToMono = mono;
-            importer.loadInBackground = background;
+            if (mono.HasValue)
+                importer.forceToMono = mono.Value;
+            if (background.HasValue)
+                importer.loadInBackground = background.Value;
+#if !UNITY_2022_2_OR_NEWER
+            if (preload.HasValue)
+                importer.preloadAudioData = preload.Value;
+#endif
             try
             {
                 importer.SaveAndReimport();
@@ -457,12 +486,24 @@ namespace MCPForUnity.Editor.Tools
             var readback = AssetImporter.GetAtPath(path) as AudioImporter;
             if (readback == null)
                 return new ErrorResponse("Audio importer was unavailable after reimport.", new { before, persistence = "unknown" });
+            object after = Snapshot(readback, platform, selector, out bool appliedPreload);
+            if (preload.HasValue && (preload.Value != appliedPreload || (platform != "Default" && !readback.ContainsSampleSettingsOverride(platform))))
+                return new ErrorResponse(
+                    "Unity did not persist the requested preload_audio_data setting; inspect the native settings before retrying.",
+                    new
+                    {
+                        before,
+                        after,
+                        reimported = true,
+                        undo_recorded = true,
+                    }
+                );
             return new SuccessResponse(
                 "Audio import policy saved and reimported; native settings read back.",
                 new
                 {
                     before,
-                    after = Snapshot(readback, platform, selector),
+                    after,
                     reimported = true,
                     undo_recorded = true,
                     undo_limitation = "Importer Undo is recorded; native reimport can limit restoration. No transactional rollback is promised.",

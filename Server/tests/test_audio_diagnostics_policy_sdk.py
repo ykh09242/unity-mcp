@@ -35,6 +35,7 @@ def test_audio_diagnostics_policy_sdk_boundary(tmp_path):
                 assert "diagnose" in schema["properties"]["action"]["enum"]
                 assert not any(part.get("type") == "null" for part in schema["properties"]["settings"].get("anyOf", []))
                 policy = schema["properties"]["settings"]
+                assert policy["properties"]["preload_audio_data"]["type"] == "boolean"
                 for field in policy["properties"].values():
                     assert field.get("type") != "null"
                     assert not any(part.get("type") == "null" for part in field.get("anyOf", []))
@@ -47,6 +48,8 @@ def test_audio_diagnostics_policy_sdk_boundary(tmp_path):
                     ({"action": "read_import_settings", "target": "Assets/Owned.wav", "platform": "Standalone"}, "read"),
                     ({"action": "apply_import_settings", "target": "Assets/Owned.wav", "platform": "Standalone", "settings": {"quality": .42, "load_type": "CompressedInMemory"}}, "write"),
                     ({"action": "apply_import_settings", "target": "Assets/Owned.wav", "settings": {"quality": 0, "force_to_mono": False, "load_in_background": False}}, "write"),
+                    ({"action": "apply_import_settings", "target": "Assets/Owned.wav", "platform": "Standalone", "settings": {"preload_audio_data": False}}, "write"),
+                    ({"action": "apply_import_settings", "target": "Assets/Owned.wav", "settings": {"preload_audio_data": True}}, "write"),
                     ({"action": "apply_import_settings", "target": "Assets/Owned.wav", "platform": "Standalone", "clear_override": True}, "write"),
                 ):
                     result = await client.call_tool("manage_audio", args)
@@ -60,6 +63,8 @@ def test_audio_diagnostics_policy_sdk_boundary(tmp_path):
                     {"action": "diagnose", "target": 42, "settings": {"quality": .5}},
                     {"action": "apply_import_settings", "target": "Assets/Owned.wav", "settings": {"quality": 2}},
                     {"action": "apply_import_settings", "target": "Assets/Owned.wav", "settings": {"force_to_mono": "true"}},
+                    {"action": "apply_import_settings", "target": "Assets/Owned.wav", "settings": {"preload_audio_data": "false"}},
+                    {"action": "apply_import_settings", "target": "Assets/Owned.wav", "settings": {"preload_audio_data": 0}},
                     {"action": "apply_import_settings", "target": "Assets/Owned.wav", "settings": {"unsupported": True}},
                 ):
                     before = len(sent)
@@ -68,7 +73,7 @@ def test_audio_diagnostics_policy_sdk_boundary(tmp_path):
                         assert type(error).__name__ in ("ToolError", "MCPError", "ValidationError"), error
                     else: assert result.is_error or not result.structured_content["success"], result
                     assert len(sent) == before
-                for name in ("load_type", "compression_format", "quality", "sample_rate_setting", "sample_rate_override", "force_to_mono", "load_in_background"):
+                for name in policy["properties"]:
                     before = len(sent)
                     try:
                         result = await client.call_tool("manage_audio", {

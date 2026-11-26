@@ -12,6 +12,7 @@ def test_audio_at_actual_registry_and_sdk_boundary():
         from fastmcp import FastMCP, Client
         from fastmcp.exceptions import ToolError
         from fastmcp.server.middleware import Middleware
+        from jsonschema import Draft202012Validator
         from services.registry import get_registered_tools
         from services.tools import register_all_tools
 
@@ -47,12 +48,39 @@ def test_audio_at_actual_registry_and_sdk_boundary():
             for mode in ("2026-07-28", "legacy"):
                 async with Client(server, mode=mode) as client:
                     tool = next(t for t in await client.list_tools() if t.name == "manage_audio")
-                    check(set(tool.inputSchema["required"]) == {"action", "target"}, "required schema " + mode)
+                    schema = tool.input_schema
+                    check(set(schema["required"]) == {"action", "target"}, "required schema " + mode)
+                    validate = Draft202012Validator(schema).is_valid
+                    for action, options, scoped_field, other_action in (
+                        ("play", {"clip": "Assets/Owned.wav"}, "clip", "stop"),
+                        ("stop", {"search_method": "by_id"}, "search_method", "read_import_settings"),
+                        ("get_routing", {"mixer_path": "Assets/Owned.mixer"}, "mixer_path", "diagnose"),
+                        ("set_routing", {"mixer_path": "Assets/Owned.mixer", "group_id": "24300002"}, "group_id", "get_routing"),
+                        ("set_routing", {"clear_routing": True}, "clear_routing", "get_routing"),
+                        ("read_import_settings", {"platform": "Standalone"}, "platform", "diagnose"),
+                        ("apply_import_settings", {"settings": {"preload_audio_data": False}}, "settings", "read_import_settings"),
+                        ("apply_import_settings", {"platform": "Standalone", "clear_override": True}, "clear_override", "read_import_settings"),
+                    ):
+                        check(validate({"action": action, "target": "Assets/Owned.wav", **options}), "schema accepts " + scoped_field)
+                        check(not validate({"action": other_action, "target": "Assets/Owned.wav", scoped_field: options[scoped_field]}), "schema scopes " + scoped_field)
+                    check(validate({"action": "diagnose", "target": 42, "clear_routing": False, "clear_override": False, "clip": None}), "neutral values outside scoped actions")
+                    for action, expected in (
+                        ("play", {"clip", "search_method"}),
+                        ("get_routing", {"mixer_path", "search_method"}),
+                        ("set_routing", {"mixer_path", "group_id", "clear_routing", "search_method"}),
+                        ("read_import_settings", {"platform"}),
+                        ("apply_import_settings", {"platform", "settings", "clear_override"}),
+                    ):
+                        description = await client.call_tool("manage_tools", {"action": "describe", "tool": "manage_audio", "operation": action})
+                        optional = description.structured_content["operation"]["optional_parameters"]
+                        check(set(optional) == expected, "described parameters " + action)
                     for target in ("Speaker", "42", "/Root/Speaker", -42, 0):
                         for action in ("play", "stop"):
                             result = await client.call_tool("manage_audio", {"action": action, "target": target})
                             check(result.structured_content == reply, "success shape " + mode)
                             check(sent[-1] == ("Project@audio", "manage_audio", {"action": action, "target": target}), "target/context/wire " + repr(target))
+                    result = await client.call_tool("manage_audio", {"action": "stop", "target": 42, "clip": None, "clear_routing": False, "clear_override": False})
+                    check(result.structured_content == reply and sent[-1][2] == {"action": "stop", "target": 42}, "neutral values omitted on wire")
                     for selector in (None, "by_id", "by_name", "by_path", "by_id_or_name_or_path"):
                         result = await client.call_tool("manage_audio", {"action": "play", "target": "42", "clip": None, "search_method": selector})
                         expected = {"action": "play", "target": "42"}

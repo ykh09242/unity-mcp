@@ -18,6 +18,7 @@ from pydantic import (
 from pydantic.json_schema import SkipJsonSchema
 
 from services.registry import mcp_for_unity_tool
+from services.registry.action_contracts import input_actions
 from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import send_mutation
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -25,7 +26,7 @@ from transport.unity_transport import send_with_unity_instance
 
 
 class AudioImportPolicy(BaseModel):
-    """An explicit patch to one platform's existing sample settings."""
+    """An explicit patch to the selected audio import settings."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     load_type: (
@@ -47,6 +48,16 @@ class AudioImportPolicy(BaseModel):
     ) = None
     force_to_mono: StrictBool | SkipJsonSchema[None] = None
     load_in_background: StrictBool | SkipJsonSchema[None] = None
+    preload_audio_data: Annotated[
+        StrictBool | SkipJsonSchema[None],
+        Field(
+            description=(
+                "Stored preload flag. Unity 2022.2+ applies it to the selected sample settings; "
+                "earlier versions use one global flag edited with platform Default. "
+                "Streaming ignores preload and only accepts false. Omit to keep the stored value."
+            )
+        ),
+    ] = None
 
     @field_validator("*", mode="before")
     @classmethod
@@ -101,17 +112,22 @@ async def manage_audio(
     clip: Annotated[
         str | None,
         "Optional AudioClip asset path for play only; omit to use the source's current clip.",
+        input_actions("play"),
     ] = None,
     search_method: Annotated[
         Literal["by_id", "by_name", "by_path", "by_id_or_name_or_path"] | None,
         "Target selector. Omitted or null uses automatic ID, path or name resolution.",
+        input_actions("play", "stop", "diagnose", "get_routing", "set_routing"),
     ] = None,
     mixer_path: Annotated[
-        StrictStr | None, "get_routing inventory or set_routing existing AudioMixer asset path."
+        StrictStr | None,
+        "get_routing inventory or set_routing existing AudioMixer asset path.",
+        input_actions("get_routing", "set_routing"),
     ] = None,
     group_id: Annotated[
         StrictStr | None,
         "set_routing exact persistent group local file ID from get_routing inventory; never a first-name match.",
+        input_actions("set_routing"),
     ] = None,
     clear_routing: Annotated[
         bool,
@@ -119,14 +135,17 @@ async def manage_audio(
             strict=True,
             description="set_routing explicit reset to the default output; excludes mixer_path/group_id.",
         ),
+        input_actions("set_routing", inactive_value=False),
     ] = False,
     platform: Annotated[
         StrictStr | None,
         "Importer platform: Default (omitted) or a Unity BuildTargetGroup name, e.g. Standalone, Android, iOS. Names are case-insensitive. Reuse the returned platform on later calls. Values without an override are Unity-translated defaults.",
+        input_actions("read_import_settings", "apply_import_settings"),
     ] = None,
     settings: Annotated[
         AudioImportPolicy | None,
         BeforeValidator(_provided_policy, json_schema_input_type=AudioImportPolicy),
+        input_actions("apply_import_settings"),
     ] = None,
     clear_override: Annotated[
         bool,
@@ -134,6 +153,7 @@ async def manage_audio(
             strict=True,
             description="apply_import_settings removes the selected platform override; excludes settings and Default platform.",
         ),
+        input_actions("apply_import_settings", inactive_value=False),
     ] = False,
 ) -> dict[str, Any]:
     routing = action in ("get_routing", "set_routing")
