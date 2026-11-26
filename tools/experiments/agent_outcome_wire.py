@@ -19,6 +19,9 @@ TRANSPORTS = ("stdio", "http")
 COUNTS = {"search_limit": 8, "search_query": 5, "inspection_page": 3}
 CAPS = {"search_limit": ("limit", 20), "inspection_page": ("page_size", 64)}
 ALIASES = ("search_unity_tools", "manage_tools")
+NESTED_BASELINE = "7e5e1a89739b6859ef789b71e0ca61a080ce8cda"
+NESTED_SOURCE_PACKAGE = "658e6070b8f1dabfd2a4ee8ad16cc14f003f7031"
+NESTED_DRAFTS = {"manage_components", "manage_input_actions"}
 
 
 def require(condition, label):
@@ -194,6 +197,7 @@ def summarize_native(path):
         "fixture_plugin_git_revision": fixture["base_git_revision"],
         "fixture_plugin_tree_sha256": fixture["tree_content_sha256"],
         "fixture_source_receipt_sha256": file_sha256(fixture_path),
+        "preparation_binding": observation.get("preparation_binding", "explicit_request"),
         "camera_type": camera["data"]["target"]["type"],
         "camera_records": camera["data"]["returned"],
         "gameobject_error": rejected["observation"]["code"],
@@ -237,6 +241,80 @@ def verify_package(package_revision, server_revision):
         "the packaged server and skill pins",
     )
     return inputs["skill_commit"]
+
+
+def summarize_nested_target(directory, revision, tree_sha256):
+    baseline_source = read(directory / "candidate-final" / "source-manifest.json")
+    require(baseline_source["base_git_revision"] == NESTED_BASELINE, "nested draft baseline pin")
+    verify_source(baseline_source)
+    verify_package(NESTED_SOURCE_PACKAGE, NESTED_BASELINE)
+    runs = {}
+    for transport in TRANSPORTS:
+        snapshots = []
+        for pin, source_hash in (
+            (NESTED_BASELINE, baseline_source["tree_content_sha256"]),
+            (revision, tree_sha256),
+        ):
+            path = directory / f"nested-target-{pin[:9]}" / f"{transport}.json"
+            result = read(path)
+            require(
+                result["source_revision"] == pin
+                and result["source_tree_sha256"] == source_hash
+                and result["transport"] == transport
+                and result["protocol"] == PROTOCOL
+                and result["editor_execute_frames"] == 0
+                and result["artifact_kind"] == "ordinary_developmental_case_replay",
+                f"{transport} nested draft source and no Editor dispatch",
+            )
+            snapshots.append((file_sha256(path), index(result["drafts"])))
+        (before_sha, before), (after_sha, after) = snapshots
+        require(before.keys() == after.keys() and len(before) == 2, "nested draft archive coverage")
+        runs[transport] = {"before_sha256": before_sha, "after_sha256": after_sha, "drafts": []}
+        for key, original in before.items():
+            repaired = after[key]
+            fingerprints = (
+                "case",
+                "call_index_zero_based",
+                "tool",
+                "language",
+                "profile",
+                "row_sha256",
+                "wire_sha256",
+                "request_sha256",
+                "archived_reply_sha256",
+            )
+            require(
+                all(original[field] == repaired[field] for field in fingerprints)
+                and original["nested_response_sha256"] == original["archived_reply_sha256"]
+                and original["nested_ready"] is False
+                and repaired["nested_ready"] is True,
+                f"{transport} exact nested draft transition {key}",
+            )
+            for draft in (original, repaired):
+                require(
+                    draft["before_selection"]["ready"] is False
+                    and draft["explicit_control_ready"] is True
+                    and draft["different_target_ready"] is False
+                    and draft["unavailable_target_ready"] is False,
+                    f"{transport} nested draft target boundaries {key}",
+                )
+            runs[transport]["drafts"].append(
+                {
+                    **{field: original[field] for field in fingerprints},
+                    "prior_ready": False,
+                    "corrected_ready": True,
+                    "prepared_call_sha256": repaired["nested_prepared_call_sha256"],
+                }
+            )
+    return {
+        "baseline_server_revision": NESTED_BASELINE,
+        "source_package_revision": NESTED_SOURCE_PACKAGE,
+        "cohort": "ordinary_developmental",
+        "binding": "The isolated fixture admitted the archived selector. Its SDK session explicitly selected that Editor before retrying the unchanged drafts.",
+        "editor_execute_frames": 0,
+        "mismatched_and_unavailable_targets_refused": True,
+        "transports": runs,
+    }
 
 
 def build(directory, candidate_folder, catalog_folder, package_revision, native_paths):
@@ -354,7 +432,7 @@ def build(directory, candidate_folder, catalog_folder, package_revision, native_
         }
     require(len(archive_shas) == 1, "baseline source archive")
     report = {
-        "version": 1,
+        "version": 2,
         "archived_shipping_result_sha256": originals_document["shipping_results_sha256"],
         "selected_originals_sha256": file_sha256(original_path),
         "baseline_git_revision": BASELINE,
@@ -373,6 +451,7 @@ def build(directory, candidate_folder, catalog_folder, package_revision, native_
         "calls": list(joined.values()),
         "native_controls": [summarize_native(path) for path in native_paths],
         "independent_json_rpc_control": {**node, "artifact_sha256": file_sha256(node_path)},
+        "nested_selected_target_control": summarize_nested_target(directory, revision, tree_sha256),
     }
     verify(report)
     return report
@@ -380,7 +459,7 @@ def build(directory, candidate_folder, catalog_folder, package_revision, native_
 
 def verify(report):
     require(
-        report["version"] == 1
+        report["version"] == 2
         and report["baseline_git_revision"] == BASELINE
         and re.fullmatch(r"[0-9a-f]{40}", report["candidate_git_revision"])
         and re.fullmatch(r"[0-9a-f]{40}", report["candidate_package_git_revision"])
@@ -397,6 +476,26 @@ def verify(report):
         node["source_revision"] == report["candidate_git_revision"]
         and node["source_tree_sha256"] == report["candidate_server_src_sha256"],
         "published Node client source binding",
+    )
+    binding = report["nested_selected_target_control"]
+    require(
+        binding["baseline_server_revision"] == NESTED_BASELINE
+        and binding["source_package_revision"] == NESTED_SOURCE_PACKAGE
+        and binding["cohort"] == "ordinary_developmental"
+        and binding["editor_execute_frames"] == 0
+        and binding["mismatched_and_unavailable_targets_refused"] is True
+        and set(binding["transports"]) == set(TRANSPORTS),
+        "published nested draft provenance and target boundaries",
+    )
+    nested = [index(binding["transports"][transport]["drafts"]) for transport in TRANSPORTS]
+    require(
+        nested[0] == nested[1]
+        and {draft["tool"] for draft in nested[0].values()} == NESTED_DRAFTS
+        and all(
+            draft["prior_ready"] is False and draft["corrected_ready"] is True
+            for draft in nested[0].values()
+        ),
+        "published nested draft transitions",
     )
     public_cases = {case["id"]: case for case in read(SHIPPING)["cases"]}
     count_calls(report["calls"])
@@ -443,13 +542,22 @@ def verify(report):
             == native["component_inventory_sha256_after"],
             "published native controls",
         )
+    require(
+        any(
+            native["server_git_revision"] == report["candidate_git_revision"]
+            and native["fixture_plugin_git_revision"] == report["candidate_package_git_revision"]
+            and native["preparation_binding"] == "selected_editor_nested_only"
+            for native in report["native_controls"]
+        ),
+        "published corrected package native selected-target inspection",
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rebuild-from", type=Path, metavar="WIRE_EVIDENCE_DIRECTORY")
-    parser.add_argument("--candidate-folder", default="candidate-final")
-    parser.add_argument("--catalog-folder", default="candidate-final-catalog")
+    parser.add_argument("--candidate-folder", default="candidate-e221c9366")
+    parser.add_argument("--catalog-folder", default="candidate-e221c9366-catalog")
     parser.add_argument("--package-revision")
     parser.add_argument("--native-control", action="append", type=Path, default=[])
     parser.add_argument("--report", default=REPORT, type=Path)
