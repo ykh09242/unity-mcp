@@ -51,10 +51,65 @@ def actor_inventories(events):
     return snapshots
 
 
+STDERR_CLASSES = {
+    "argument_parsing",
+    "resource_read",
+    "unknown_server",
+    "image_processing",
+    "other_router",
+    "other_host",
+}
+
+
+def host_stderr_summary(path):
+    """Count structured host error records without publishing messages or local paths."""
+    classes = Counter()
+    if not path.is_file():
+        return {"captured": False, "sha256": None, "error_records": 0, "classes": {}}
+    raw = path.read_bytes()
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", line)
+        event = re.match(r"^\s*(?:\d{4}-\d\d-\d\dT\S+\s+)?ERROR\s+([\w:.-]+):\s*(.*)", plain)
+        if not event:
+            continue
+        source, message = event.groups()
+        kind = "other_host"
+        if source == "codex_core::tools::router":
+            kind = "other_router"
+            for prefix, category in (
+                ("error=failed to parse function arguments", "argument_parsing"),
+                ("error=resources/read failed", "resource_read"),
+                ("error=unknown MCP server", "unknown_server"),
+                ("error=unable to process image", "image_processing"),
+            ):
+                if message.startswith(prefix):
+                    kind = category
+                    break
+        classes[kind] += 1
+    return {
+        "captured": True,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "error_records": sum(classes.values()),
+        "classes": dict(sorted(classes.items())),
+    }
+
+
 def summarize(rows):
     counts = {}
     for profile in ("core", "full"):
         group = [r for r in rows if r["profile"] == profile]
+        stderr = [r["host_stderr"] for r in group]
+        stderr_only = [
+            r["host_stderr"]["error_records"]
+            for r in group
+            if r["host_stderr"]["error_records"]
+            and not (
+                r["public_errors"]
+                or r["unresolved_calls"]
+                or r["host_failures"]
+                or r["unresolved_host_calls"]
+            )
+        ]
         counts[profile] = {
             "scheduled": len(group),
             "submitted": sum(r["prompt_submissions"] for r in group),
@@ -85,7 +140,14 @@ def summarize(rows):
             "host_requests_without_terminal_event": sum(
                 len(r["unresolved_host_calls"] or []) for r in group
             ),
-            "host_reported_errors": sum(len(r["host_failures"]) for r in group),
+            "failed_host_items": sum(len(r["host_failures"]) for r in group),
+            "host_stderr_error_records": sum(s["error_records"] for s in stderr),
+            "cases_with_host_stderr_errors": sum(bool(s["error_records"]) for s in stderr),
+            "host_stderr_errors_in_otherwise_clean_cases": sum(stderr_only),
+            "cases_with_only_host_stderr_errors": len(stderr_only),
+            "host_stderr_error_classes": dict(
+                sum((Counter(s["classes"]) for s in stderr), Counter())
+            ),
             "completed_host_calls": sum(sum(r["host_calls_by_binding"].values()) for r in group),
             "host_errors_without_unsuccessful_wire_reply": sum(
                 f["location"] == "host_error_without_unsuccessful_wire_reply"
@@ -112,6 +174,21 @@ def verify_case(case, spec):
     require(len(case["attempts"]) == 1, f"Unexpected replacement for {spec['id']}")
     require(case["outcome"] in {"pass", "fail", "incomplete", "unobserved"}, "Unresolved verdict")
     calls = case["calls"]
+    stderr = case["host_stderr"]
+    require(
+        type(stderr["captured"]) is bool
+        and (
+            bool(re.fullmatch(r"[0-9a-f]{64}", str(stderr["sha256"])))
+            if stderr["captured"]
+            else stderr["sha256"] is None
+        )
+        and bool(case["prompt_submissions"]) == stderr["captured"]
+        and type(stderr["error_records"]) is int
+        and set(stderr["classes"]) <= STDERR_CLASSES
+        and all(type(v) is int and v > 0 for v in stderr["classes"].values())
+        and stderr["error_records"] == sum(stderr["classes"].values()),
+        "Invalid host stderr classification",
+    )
     require(case["public_errors"] == sum(c["ok"] is False for c in calls), "Error count differs")
     require(
         case["unresolved_calls"] == sum(c["ok"] is None for c in calls),
@@ -398,7 +475,8 @@ def require_perfect(summary):
                     "unsuccessful_public_replies",
                     "public_requests_without_reply",
                     "host_requests_without_terminal_event",
-                    "host_reported_errors",
+                    "failed_host_items",
+                    "host_stderr_error_records",
                     "missing_verified_final",
                     "host_approval_denials",
                 )
@@ -618,6 +696,10 @@ def verify_private(data, root):
                 "A host-reported failure differs from raw events",
             )
             verify_raw_case(public, raw)
+            require(
+                public["host_stderr"] == host_stderr_summary(attempt / "host.stderr"),
+                "Host stderr evidence differs from the source log",
+            )
             answer_file = attempt / "answer.txt"
             verified_final = bool(
                 raw.get("turn_completed")

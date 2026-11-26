@@ -1,6 +1,7 @@
 """Negative controls for outcome grading, paired native state and evidence provenance."""
 
 from copy import deepcopy
+import json
 from pathlib import Path
 import sys
 
@@ -9,6 +10,31 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments import live_agent_outcomes as trial
+from tools.experiments import verify_agent_outcome_originals as originals
+
+
+def test_host_stderr_is_counted_even_when_public_calls_succeed():
+    report = Path(originals.__file__).with_name("agent_outcome_original_intermediate.json")
+    counts = originals.verify(json.loads(report.read_bytes()))
+    for profile, tool_errors, failed_items, stderr_errors, stderr_only in (
+        ("core", 43, 51, 58, 25),
+        ("full", 49, 53, 56, 28),
+    ):
+        group = counts[profile]
+        assert group["calls_by_method"]["tools/call"]["unsuccessful_replies"] == tool_errors
+        assert group["failed_host_items"] == failed_items
+        assert group["host_stderr_error_records"] == stderr_errors
+        assert group["host_stderr_errors_in_otherwise_clean_cases"] == stderr_only
+
+        # Give the acceptance check a fully successful control before isolating one host error.
+        group["outcomes"] = {"pass": 71}
+        group["unsuccessful_public_replies"] = 0
+        group["failed_host_items"] = 0
+        group["host_stderr_error_records"] = 0
+    originals.require_perfect(counts)
+    counts["core"]["host_stderr_error_records"] = 1
+    with pytest.raises(ValueError, match="host error"):
+        originals.require_perfect(counts)
 
 
 def row(task="current_scene", language="ko", **state):
