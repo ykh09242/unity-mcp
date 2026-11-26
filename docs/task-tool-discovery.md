@@ -93,6 +93,20 @@ With `include_schema=true`, `inspect_inventory` returns the advertised
 `inputSchema` and `input_schema_sha256` when that tool is visible to the
 server request. Compare them with the same tool on the host's own listing.
 `doctor --inspect-tool` reports the fingerprint from its own SDK listing.
+
+After an activation, deactivation, or reset, an inventory reader receives a
+`refresh_request` containing the standard MCP `tools/list` method and its
+parameters. Send it on the same connection. When the selection specified a
+project, the request preserves its resolved identifier in `params._meta`.
+Follow each `nextCursor` using the same parameters, then update the host's
+callable inventory. A changed selection emits `notifications/tools/list_changed`.
+Repeating the same selection can still return a refresh request.
+
+The selection result reports the server's advertisement. A host that uses a
+fixed inventory controls when it refreshes its bindings. Compare its current
+filtered names with `inspect_inventory` before calling the selected tool by
+its ordinary name. When inventory read permission is absent, the selection
+response omits the refresh request and its project metadata.
 The digest covers compact, ASCII-escaped JSON with sorted object keys.
 A matching name can have a different parameter or action contract.
 

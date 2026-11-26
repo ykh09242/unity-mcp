@@ -364,7 +364,10 @@ async def search_unity_tools(
             "then": {
                 "allOf": [_SEARCH_INPUT],
                 "properties": {
-                    **{field: {"type": "null"} for field in ("group", "tool", "operation", "arguments")},
+                    **{
+                        field: {"type": "null"}
+                        for field in ("group", "tool", "operation", "arguments")
+                    },
                     "include_schema": {"const": False},
                 },
             },
@@ -688,6 +691,7 @@ async def manage_tools(
             )
             return result
         binding = await _retry_project_binding(ctx)
+        result["refresh_request"] = _tool_list_request(binding)
         diagnostic = {"resource": f"mcpforunity://tool-diagnostics/{tool}"}
         if binding:
             diagnostic["_meta"] = binding
@@ -735,13 +739,13 @@ async def manage_tools(
         visible = await _selection_inventory(ctx)
         return {
             "activated" if enabled else "deactivated": group,
-            "tools": names,
+            "tools": names if visible is not None else None,
             "server_advertised_tools": sorted(visible.keys() & set(names))
             if visible is not None
             else None,
             "changed": changed,
             "client_inventory_status": "unconfirmed",
-            "message": REFRESH_GUIDANCE,
+            **(await _selection_refresh(ctx, visible)),
         }
 
     if action == "sync":
@@ -800,10 +804,7 @@ async def manage_tools(
             else None,
             "visible_tools": sorted(visible) if visible is not None else None,
             "client_inventory_status": "unconfirmed",
-            "message": (
-                "Server selection restored to configured defaults. Unity availability still applies. "
-                "The client's callable inventory is unconfirmed; refresh it or reconnect."
-            ),
+            **(await _selection_refresh(ctx, visible)),
         }
 
     return {"success": False, "error": f"Unknown action '{action}'"}
@@ -856,6 +857,23 @@ async def _prepare_binding(ctx, name, draft, original, operation):
         registered=func is not None,
         closed_signature=closed,
     )
+
+
+def _tool_list_request(binding: dict[str, str]) -> dict:
+    return {"method": "tools/list", "params": {"_meta": binding} if binding else {}}
+
+
+async def _selection_refresh(ctx: Context, visible) -> dict:
+    if visible is None:
+        return {
+            "message": "Selection processed. The server inventory was not observed for this caller."
+        }
+    from services.tool_discovery import REFRESH_GUIDANCE
+
+    return {
+        "refresh_request": _tool_list_request(await _retry_project_binding(ctx)),
+        "message": REFRESH_GUIDANCE,
+    }
 
 
 async def _selection_inventory(ctx: Context):

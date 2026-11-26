@@ -298,6 +298,7 @@ async def test_hosted_selection_observes_inventory_only_with_read_permission(
     )
     result = await module.manage_tools(ctx, **selection)
     discovery.update.assert_awaited_once()
+    assert ("refresh_request" in result) == can_read
     if selection["action"] == "reset":
         assert result["reset"] is True
         assert result["visible_tools"] == (["feature"] if can_read else None)
@@ -309,6 +310,7 @@ async def test_hosted_selection_observes_inventory_only_with_read_permission(
     else:
         assert result["changed"] is True
         assert result["server_advertised_tools"] == (["feature"] if can_read else None)
+        assert result["tools"] == (["feature"] if can_read else None)
     assert listing.await_count == int(can_read)
 
 

@@ -52,13 +52,9 @@ CLIENT_INVENTORY_GUIDANCE = (
     "are missing; a successful call confirms that tool for that request. "
 )
 REFRESH_GUIDANCE = (
-    "Selection processed. The client's callable inventory is unconfirmed. "
-    + CLIENT_INVENTORY_GUIDANCE
-    + "Unity availability and permissions still apply. "
-    "Refresh tools/list after tools/list_changed. If the client uses a fixed inventory, "
-    "start the server with --tool-groups core,vfx for selected groups or UNITY_MCP_TOOL_PROFILE=full, "
-    "then establish a fresh client connection after enabling the desired tools in Unity. "
-    "Reconnect alone does not preserve a legacy session selection."
+    "Selection processed. Refresh tools/list on this connection and project, following every cursor. "
+    "A host with a fixed inventory must refresh its callable bindings before it can use a newly "
+    "listed tool. Host filters, Editor settings and permissions still apply."
 )
 UNSCOPED_GUIDANCE = (
     "This sessionless connection has no supported stable client scope and resolved project. "
