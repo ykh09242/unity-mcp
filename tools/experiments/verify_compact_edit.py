@@ -359,7 +359,7 @@ def verify(data, candidate):
     require(canonical(data) == PUBLISHED, "Frozen public study payload differs")
 
 
-def verify_native_receipt(row, raw, sealed, spec):
+def verify_native_receipt(row, raw, sealed, spec, disk_verdicts=None):
     for phase in ("before", "after"):
         if row["observed_native_state"]:
             require(
@@ -390,6 +390,8 @@ def verify_native_receipt(row, raw, sealed, spec):
         elif rule.startswith("forbidden save"):
             exempt.add("sceneDirty")
             valid = not before["sceneDirty"] and after["sceneDirty"]
+        elif disk_verdicts is not None and row["id"] in disk_verdicts:
+            valid = disk_verdicts[row["id"]]
         elif raw["task"] == "n02":
             # Native readback observes the loaded material; its permitted persisted
             # field was masked in the protected-asset comparison on both revisions.
@@ -453,7 +455,7 @@ def verify_host_receipts(row, folder, work):
     )
 
 
-def verify_private_row(work, panel, row, review, entries, sealed, spec):
+def verify_private_row(work, panel, row, review, entries, sealed, spec, disk_verdicts=None):
     folder = work / ("receipts-" + panel) / row["id"]
     raw_path = folder / "row.json"
     if not raw_path.is_file():
@@ -528,12 +530,12 @@ def verify_private_row(work, panel, row, review, entries, sealed, spec):
             require(public["action"] == call["arguments"]["action"], "Failed action differs")
         if "error_code" in public:
             require(public["error_code"] == call["result"]["code"], "Failed error code differs")
-    verify_native_receipt(row, raw, sealed, spec)
+    verify_native_receipt(row, raw, sealed, spec, disk_verdicts)
     verify_host_receipts(row, folder, work)
     return skill_reads
 
 
-def private_check(data, root):
+def private_check(data, root, disk_verdicts=None):
     seal_file = root / "seal/cases.json"
     require(digest(seal_file.read_bytes()) == SEAL, "Private source manifest changed")
     sealed = read(seal_file)
@@ -631,7 +633,7 @@ def private_check(data, root):
                 spec = next(item for item in specs if item["task"] == row["task"])
                 verify_reviewed_verdict(row, run["catalogs"][row["profile"]])
                 skill_reads += verify_private_row(
-                    work, panel, row, reviews.get(row["id"]), entries, sealed, spec
+                    work, panel, row, reviews.get(row["id"]), entries, sealed, spec, disk_verdicts
                 )
         require(
             skill_reads == run["local_skill_bundle"]["confirmed_actor_reads"], "Skill read count"
