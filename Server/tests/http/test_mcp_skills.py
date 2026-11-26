@@ -156,20 +156,32 @@ async def test_packaged_skill_is_discovered_then_read_on_demand(skills_server, d
             ]
         )
         resources = entry["resources"]
-        assert len(resources) == 7
-        assert [item["uri"] for item in resources] == sorted(item["uri"] for item in resources)
-        assert SKILL_URI in {item["uri"] for item in resources}
+        skill_root = ROOT / "unity-mcp-skill"
+        prefix = SKILL_URI.removesuffix("SKILL.md")
+        canonical_uris = sorted(
+            prefix + path.relative_to(skill_root).as_posix()
+            for path in skill_root.rglob("*")
+            if path.is_file()
+        )
+        assert [item["uri"] for item in resources] == canonical_uris
+        assert {SKILL_URI, prefix + "agents/openai.yaml", prefix + "assets/unity-mcp.svg"} <= set(
+            canonical_uris
+        )
+        mime_types = {".md": "text/markdown", ".svg": "image/svg+xml", ".yaml": "application/yaml"}
         for item in resources:
             result = complete_result(
                 await skill_request(client, "resources/read", {"uri": item["uri"]})
             )
             content = result["contents"][0]
-            assert content["mimeType"] == "text/markdown"
             assert content["uri"] == item["uri"]
-            raw = content["text"].encode("utf-8")
-            relative = item["uri"].removeprefix("skill://unity-mcp-orchestrator/")
-            canonical = (ROOT / "unity-mcp-skill" / relative).read_bytes().replace(b"\r\n", b"\n")
-            assert raw == canonical
+            path = skill_root / item["uri"].removeprefix(prefix)
+            assert content["mimeType"] == mime_types[path.suffix]
+            raw = (
+                base64.b64decode(content["blob"], validate=True)
+                if path.suffix == ".svg"
+                else content["text"].encode("utf-8")
+            )
+            assert raw == path.read_bytes().replace(b"\r\n", b"\n")
             assert len(raw) == item["size"]
             assert "sha256:" + hashlib.sha256(raw).hexdigest() == item["digest"]
         assert reads == [item["uri"] for item in resources]
@@ -331,7 +343,7 @@ async def test_each_projection_honors_shared_retained_memory_refusal(
     ],
 )
 async def test_unlisted_or_unsafe_uris_never_read_files(skills_server, method, suffix):
-    # Given: only the seven immutable advertised resource URIs are served.
+    # Given: only the immutable advertised resource URIs are served.
     uri = "skill://unity-mcp-orchestrator/" + suffix
     async with skills_http(skills_server) as client:
         # When: callers provide malformed, traversal, encoded or nonmember URIs.
@@ -615,7 +627,9 @@ async def test_resource_manifest_covers_exact_utf8_and_newline_bytes(bare_skills
     from transport.skills_extension import install_skills
 
     record = packaged_record()
-    item = next(file for file in record["payload"]["files"] if file["path"] != "SKILL.md")
+    item = next(
+        file for file in record["payload"]["files"] if file["path"].startswith("references/")
+    )
     raw = "UTF-8: 한글 é\r\nsecond line\n".encode("utf-8")
     item.update(
         data=base64.b64encode(raw).decode("ascii"),
@@ -668,7 +682,9 @@ async def test_discovery_requires_every_packaged_reference_to_be_readable(
     server = bare_skills_server
     assert install_skills(server) is not None
     reference = next(
-        f["path"] for f in packaged_record()["payload"]["files"] if f["path"] != "SKILL.md"
+        f["path"]
+        for f in packaged_record()["payload"]["files"]
+        if f["path"].startswith("references/")
     )
     uri = SKILL_URI.removesuffix("SKILL.md") + reference
     server.add_transform(ResourcesAsTools(server))

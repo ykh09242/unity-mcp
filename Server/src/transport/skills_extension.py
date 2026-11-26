@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from pydantic import JsonValue
 
 from core.sdk_compatibility import is_reviewed_sdk
+from core.skill_files import skill_file_mime_type
 from models.response_limits import MAX_RESPONSE_BYTES, response_size
 
 if TYPE_CHECKING:
@@ -26,7 +27,6 @@ SKILL_URI = PREFIX + "SKILL.md"
 REPOSITORY = "https://github.com/ykh09242/unity-mcp"
 MAX_BUNDLE_BYTES = 24 * 1024 * 1024
 MAX_SKILL_BYTES = 16 * 1024 * 1024
-PATH = re.compile(r"(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.md\Z")
 
 
 def _unique_object(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
@@ -38,7 +38,9 @@ def _unique_object(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
     return result
 
 
-def _snapshot(raw: bytes) -> tuple[dict[str, str], dict[str, JsonValue], dict[str, JsonValue]]:
+def _snapshot(
+    raw: bytes,
+) -> tuple[dict[str, tuple[str, str | bytes]], dict[str, JsonValue], dict[str, JsonValue]]:
     """Validate accidental corruption and metadata before any SDK publication.
 
     The checksum is not a signature against an actor able to rewrite the package.
@@ -78,7 +80,7 @@ def _snapshot(raw: bytes) -> tuple[dict[str, str], dict[str, JsonValue], dict[st
     files = payload["files"]
     if not isinstance(files, list) or not 1 <= len(files) <= 512:
         raise ValueError("Invalid skill file count")
-    texts: dict[str, str] = {}
+    contents: dict[str, tuple[str, str | bytes]] = {}
     manifest = []
     paths: set[str] = set()
     total = 0
@@ -86,7 +88,8 @@ def _snapshot(raw: bytes) -> tuple[dict[str, str], dict[str, JsonValue], dict[st
         if not isinstance(item, dict) or set(item) != {"path", "data", "digest", "size"}:
             raise ValueError("Invalid skill file record")
         path = item["path"]
-        if not isinstance(path, str) or PATH.fullmatch(path) is None or path.casefold() in paths:
+        mime_type = skill_file_mime_type(path) if isinstance(path, str) else None
+        if mime_type is None or path.casefold() in paths:
             raise ValueError("Unsafe or duplicate skill path")
         paths.add(path.casefold())
         if not isinstance(item["data"], str) or type(item["size"]) is not int:
@@ -98,9 +101,10 @@ def _snapshot(raw: bytes) -> tuple[dict[str, str], dict[str, JsonValue], dict[st
         if item["digest"] != "sha256:" + hashlib.sha256(data).hexdigest():
             raise ValueError("Skill digest mismatch")
         uri = PREFIX + path
-        texts[uri] = data.decode("utf-8", errors="strict")
+        text = data.decode("utf-8", errors="strict")
+        contents[uri] = (mime_type, data if mime_type == "image/svg+xml" else text)
         manifest.append({"uri": uri, "digest": item["digest"], "size": len(data)})
-    if SKILL_URI not in texts:
+    if SKILL_URI not in contents:
         raise ValueError("Missing skill entry point")
     entry = {
         "uri": SKILL_URI,
@@ -121,7 +125,7 @@ def _snapshot(raw: bytes) -> tuple[dict[str, str], dict[str, JsonValue], dict[st
         for value in (listed, fetched)
     ):
         raise ValueError("Skill result exceeds shared response limits")
-    return texts, listed, fetched
+    return contents, listed, fetched
 
 
 def install_skills(
@@ -170,26 +174,27 @@ def install_skills(
         if bundle_bytes is None:
             with resources.files("services").joinpath("skills_bundle.json").open("rb") as stream:
                 bundle_bytes = stream.read(MAX_BUNDLE_BYTES + 1)
-        texts, listed, fetched = _snapshot(bundle_bytes)
+        contents, listed, fetched = _snapshot(bundle_bytes)
         # Validate the protocol projections once, before publishing any resources.
         list_result = ListSkillsResult.model_validate(listed)
         get_result = GetSkillResult.model_validate(fetched)
 
         class SkillResource(Resource):
-            text: str = Field(exclude=True, repr=False)
+            content: str | bytes = Field(exclude=True, repr=False)
 
-            async def read(self) -> str:
-                return self.text
+            async def read(self) -> str | bytes:
+                return self.content
 
         async def can_discover() -> bool:
             # Mirror FastMCP's manifest visibility without reading the files. The
             # packaged skill owns concrete resources, never a template fallback.
             async with Context(fastmcp=server):
-                for uri, text in texts.items():
+                for uri, (mime_type, content) in contents.items():
                     served = await server.get_resource(uri)
                     if not (
                         isinstance(served, SkillResource)
-                        and served.text == text
+                        and served.mime_type == mime_type
+                        and served.content == content
                         and await _may_read(server, uri)
                     ):
                         return False
@@ -220,9 +225,9 @@ def install_skills(
         extension = SkillsExtension()
         files = [
             SkillResource(
-                uri=uri, name=uri.removeprefix(PREFIX), mime_type="text/markdown", text=text
+                uri=uri, name=uri.removeprefix(PREFIX), mime_type=mime_type, content=content
             )
-            for uri, text in sorted(texts.items())
+            for uri, (mime_type, content) in sorted(contents.items())
         ]
         # Construct/validate all public bindings and resources before publication.
         extension.methods()

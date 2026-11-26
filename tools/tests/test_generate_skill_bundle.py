@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 MIRRORS = (".claude/skills/unity-mcp-skill", "unity-mcp-skill")
@@ -164,6 +165,17 @@ def test_repository_artifact_matches_both_canonical_mirrors_and_declared_pin(mon
     assert target.read_bytes() == expected
 
 
+def test_codex_picker_links_to_the_packaged_icon_and_skill():
+    payload = json.loads((ROOT / "Server/src/services/skills_bundle.json").read_bytes())["payload"]
+    files = {item["path"]: item for item in payload["files"]}
+    interface = yaml.safe_load(base64.b64decode(files["agents/openai.yaml"]["data"]))["interface"]
+    assert interface["display_name"] == "Unity MCP"
+    for key in ("icon_small", "icon_large"):
+        assert interface[key].startswith("./assets/")
+        assert interface[key].removeprefix("./") in files
+    assert "$" + payload["frontmatter"]["name"] in interface["default_prompt"].split()
+
+
 def test_server_package_explicitly_includes_the_generated_skill_asset():
     # Given/When: read the actual Python build configuration.
     import tomllib
@@ -204,6 +216,8 @@ def test_generator_refuses_lossy_or_ambiguous_frontmatter(pinned_source, monkeyp
         "encoded%2e.md",
         "query.md?x=1",
         "nul\x00.md",
+        "references/openai.yaml",
+        "assets/other.svg",
     ],
 )
 def test_generator_refuses_unsafe_committed_relative_names(pinned_source, monkeypatch, path):

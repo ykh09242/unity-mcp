@@ -9,7 +9,6 @@ import base64
 import hashlib
 import json
 from pathlib import Path
-import re
 import sys
 
 import yaml
@@ -25,12 +24,12 @@ from check_skill_pin import (
 # Use the same pre-serialization admission as the server, from this checkout.
 # Generator execution already requires the existing server development environment.
 sys.path.insert(0, str(ROOT / "Server/src"))
+from core.skill_files import skill_file_mime_type
 from models.response_limits import MAX_RESPONSE_BYTES, response_size
 
 REPOSITORY = "https://github.com/ykh09242/unity-mcp"
 NAME = "unity-mcp-orchestrator"
 TARGET = Path("Server/src/services/skills_bundle.json")
-PATH = re.compile(r"(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.md\Z")
 MAX_FRONTMATTER_BYTES = MAX_RESPONSE_BYTES - 32_768
 
 
@@ -85,7 +84,7 @@ def build_bundle(repo: Path, *, verify_git: bool = True) -> bytes:
         "SKILL.md" not in files
         or not 1 <= len(paths) <= 512
         or len({path.casefold() for path in paths}) != len(paths)
-        or any(PATH.fullmatch(path) is None for path in paths)
+        or any(skill_file_mime_type(path) is None for path in paths)
         or sum(map(len, files.values())) > 16 * 1024 * 1024
     ):
         raise ValueError("Invalid, incomplete or excessive skill file set")

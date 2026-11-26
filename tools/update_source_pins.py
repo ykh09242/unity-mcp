@@ -13,6 +13,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import sys
 import tempfile
 import tomllib
 
@@ -38,6 +39,9 @@ else:
         require,
         skill_files,
     )
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Server/src"))
+from core.skill_files import skill_file_mime_type
 
 
 DOCUMENTS = {
@@ -182,7 +186,7 @@ def validate_server_skill_bundle(
     require(
         1 <= len(raw_files) <= 512
         and len({path.casefold() for path in raw_files}) == len(raw_files)
-        and all(re.fullmatch(r"(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.md", path) for path in raw_files)
+        and all(skill_file_mime_type(path) is not None for path in raw_files)
         and sum(map(len, raw_files.values())) <= 16 * 1024 * 1024,
         "Selected skill files exceed the supported skill bundle contract",
     )
