@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from importlib import import_module
 import json
 import os
 import re
@@ -152,6 +153,26 @@ def seed_manifest():
     }
 
 
+def open_response(path: Path):
+    if os.name != "nt":
+        return path.open("rb")
+
+    # Keep the standalone fixture usable with just CPython. Unity publishes via
+    # File.Replace, which requires FILE_SHARE_DELETE even for a short-lived reader.
+    winapi = import_module("_winapi")
+    msvcrt = import_module("msvcrt")
+
+    def shared_reader(name, flags):
+        handle = winapi.CreateFile(name, winapi.GENERIC_READ, 7, 0, winapi.OPEN_EXISTING, 0, 0)
+        try:
+            return msvcrt.open_osfhandle(handle, flags)
+        except BaseException:
+            winapi.CloseHandle(handle)
+            raise
+
+    return open(path, "rb", opener=shared_reader)
+
+
 def request(lane: Path, op: str, task="", language="", seed=0, timeout=120):
     lane = Path(lane).absolute()
     lane_marker(lane)
@@ -170,7 +191,8 @@ def request(lane: Path, op: str, task="", language="", seed=0, timeout=120):
         if failure.exists():
             raise RuntimeError(failure.read_text())
         try:
-            reply = json.loads((control / "response.json").read_bytes())
+            with open_response(control / "response.json") as stream:
+                reply = json.load(stream)
             if reply["id"] == rid:
                 evidence = lane.parent / "registry-evidence.json"
                 if task == "installed_package" and reply.get("ok") and evidence.is_file():

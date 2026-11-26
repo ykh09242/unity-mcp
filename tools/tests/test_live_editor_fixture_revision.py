@@ -1,6 +1,7 @@
 """Candidate Editor lanes consume the intended commit with frozen comparison dependencies."""
 
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -11,6 +12,36 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments.live_editor_fixture import lane, registry
+
+
+def test_native_response_can_be_replaced_during_poll(tmp_path):
+    original = tmp_path / "response.json"
+    replacement = tmp_path / "response.json.tmp"
+    original.write_bytes(b'{"id":"before"}')
+    replacement.write_bytes(b'{"id":"after"}')
+    with lane.open_response(original) as pending:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            replace = ctypes.WinDLL("kernel32", use_last_error=True).ReplaceFileW
+            replace.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                wintypes.LPVOID,
+                wintypes.LPVOID,
+            ]
+            replace.restype = wintypes.BOOL
+            assert replace(str(original), str(replacement), None, 0, None, None), (
+                ctypes.get_last_error()
+            )
+        else:
+            replacement.replace(original)
+        assert json.load(pending)["id"] == "before"
+    with lane.open_response(original) as current:
+        assert json.load(current)["id"] == "after"
 
 
 def test_candidate_archive_contains_selected_commit_package(monkeypatch, tmp_path):
