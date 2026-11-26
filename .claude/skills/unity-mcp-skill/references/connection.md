@@ -15,8 +15,10 @@ directory, add the chosen ID as `family` to `open_family.arguments`. Pass
 `query` as the original text string alongside `selection`. To inspect inputs,
 call `manage_tools(action="describe", tool=name, operation=action)`. For an
 actionless tool, omit `operation`. When a result includes `describe_call`, invoke
-its `tool` with its `arguments` unchanged. Read the required and declared optional
-inputs and their schema. A concrete resource's `read_call` contains its URI and project binding.
+its `tool` with its `arguments` unchanged. Read `operation.input_fields` for the
+selected action's input shapes and `input_variants` when present. Fields in
+`other_tool_parameters` have no confirmed membership in this action.
+A concrete resource's `read_call` contains its URI and project binding.
 Use `resources/list` for installed skill URIs and `resources/templates/list`
 for templates. A local file path cannot identify a server resource.
 
@@ -48,10 +50,15 @@ Each action card contains an exact invocation selector, purpose, known required/
 
 `describe` includes the full schema by default and accepts `include_schema=true` for a single tool. It binds the selected action in a copy of the full live schema and retains its other constraints. For actionless tools such as `capture_prefab`, omit `operation`. Unknown tool/action names fail explicitly. `advertised` reports this MCP context's visibility, and `readiness="unobserved"` requires a project-specific check when relevant. Resolve selection and permissions through the existing workflow below.
 
-For uncertain inputs, call `manage_tools(action="prepare", tool=name,
-arguments=draft, query=original)`. Use the same explicit project and host
-inventory when available. Inspect `adjustments` and invoke the returned
-`prepared_call` through its own public tool if it serves the user's intent.
+For uncertain inputs, fill the inner `arguments` of the returned
+`operation.prepare_call` using the selected fields. Submit the draft on the
+same connection and project. Inspect `adjustments` and invoke the returned
+`prepared_call` through its own tool when `ready=true` and it fits the request.
+For verbatim edits, select the exact text from the request before drafting.
+Set `query` to the original and pass `exact_text` on the outer prepare call,
+for example `[{"path":["edits",0,"newText"],"expected":"Confirm!"}]` for a text edit.
+Use object keys and zero-based array indices relative to the draft. After the
+write, read the saved value and compare it with the same source literal.
 Preparation can bind the supplied original text and cap annotated page sizes.
 It checks the input schema only. Permissions, current target IDs, Unity
 availability and the resulting state are checked at invocation and readback.
@@ -118,7 +125,12 @@ Review the path groups before applying. Local modifications and additions appear
 
 ## Select The Project
 
-Read `mcpforunity://instances` when multiple projects or a stale selection make the target unclear. Prefer the returned full `Name@hash` identifier.
+Read `mcpforunity://instances` to identify the project. If the host exposes only
+tools or its resource list is empty, call `manage_tools(action="list_instances")`
+on the Unity MCP connection, omitting `unity_instance`. It reads the same
+authorized inventory. A successful empty list confirms zero visible Editors.
+On failure the inventory is unknown. Match the requested project to its full
+`Name@hash` and use `inspect_editor_state` to check its readiness.
 
 Modern tools route explicitly with `unity_instance` on every request; modern resources use `_meta.unity_instance`. Modern `set_active_instance` refuses persistent selection. A sole available Editor can be selected automatically for that request, without creating a stored default.
 

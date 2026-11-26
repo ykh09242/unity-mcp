@@ -16,8 +16,11 @@ MCP returns `next_call` for the next page. Add the chosen ID as `family` in
 `open_family.arguments`. Send the original text as the string value of `query`
 alongside `selection`. Inspect inputs with `manage_tools(action="describe", tool=name,
 operation=action)`. Omit `operation` for an actionless tool. When `describe_call`
-is present, invoke its `tool` with its `arguments` unchanged. The response lists
-required and declared optional parameters alongside the typed input schema. Concrete
+is present, invoke its `tool` with its `arguments` unchanged. Read
+`operation.input_fields` for selected field types, nesting and declared usage.
+`input_variants` describes alternative input shapes when present. Names in
+`other_tool_parameters` have no confirmed membership in the selected operation.
+The full tool schema remains available for constraints and referenced definitions. Concrete
 resources have a complete `read_call`. When the tool
 directory is unrestricted, `selectable_catalog` opens the normal selection
 catalog to find tools beyond the current advertisement.
@@ -30,15 +33,24 @@ determine which operations are available. To start with only the core group
 and server helpers, use `--tool-groups core`. `manage_tools(action="list_groups")`
 reports the startup selection and currently visible names for each group.
 
-Use `manage_tools(action="prepare", tool=name, arguments=draft, query=original)`
-before submitting uncertain inputs. Check the returned `adjustments` and call
-the exact `prepared_call` if it matches the request. The server validates the
+Fill the inner `arguments` in `operation.prepare_call` before submitting
+uncertain inputs. This calls `manage_tools(action="prepare", tool=name, arguments=draft)`
+on the same connection and project. Check `ready` and the returned `adjustments`.
+Invoke the exact `prepared_call` if it matches the request. The server validates the
 live input schema and preserves the explicit project. A project named only in
 the draft must resolve to the Editor whose inventory the request is reading.
 To prepare for another Editor, select it on the outer request. Annotated page sizes
 above the maximum can be reduced. Original text can be filled only from a
 verbatim request supplied by the caller. A successful preparation checks input
 shape. The actual public tool and a Unity readback establish the outcome.
+
+For a value the user supplied verbatim, select the intended literal before drafting.
+Pass the unchanged original in `query` and add `exact_text` to the prepare arguments.
+For example, `[{"path":["edits",0,"newText"],"expected":"Confirm!"}]` checks
+one field of a text edit. The expected string must occur in the original and
+match the value at that exact draft path. A mismatch gives `ready=false` and an
+indexed reason. After the edit, compare the stored value to the original literal.
+Use this option for copied values. Translated or newly written text has a different contract.
 
 Use `selection="ranked"` for lexical or required evidence search. Only this mode
 accepts `catalog_query`, `intent`, `observation_source` and `required_values`.
@@ -64,6 +76,12 @@ calling agent and needs no additional server-side model, embedding service or ke
 Use the read-only MCP tool `search_unity_tools` for task search. It accepts the same
 search fields as `manage_tools(action="search")` and requires read access. Discovery
 leaves tool selection and Unity state unchanged.
+
+If the host has callable Unity tools and an empty resource list, call
+`manage_tools(action="list_instances")` without a project selector. It reads
+the connection's authorized `mcpforunity://instances` inventory. A successful
+empty result means no visible Editors. A failed read leaves the inventory unknown.
+Select the matching full `Name@hash` before checking readiness.
 
 `inspect_editor_state` reads the same selected snapshot as
 `mcpforunity://editor/state`. Check freshness and the requested scene or
