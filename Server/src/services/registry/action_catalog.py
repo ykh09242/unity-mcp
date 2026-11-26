@@ -28,7 +28,12 @@ from pydantic import (
 from services.declared_action_contracts import ACTION_CONTRACTS
 from services.operation_permissions import required_permissions
 from services.reference_graph.action_options import GRAPH_ACTION_OPTIONS
-from services.registry.action_contracts import ACTION_RULES, scoped_parameters
+from services.registry.action_contracts import (
+    ACTION_RULES,
+    declared_optional_parameters,
+    required_action_parameters,
+    scoped_parameters,
+)
 from services.registry.action_guidance_types import (
     ActionGuidance,
     ActionIntent,
@@ -1177,6 +1182,13 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
             dict.fromkeys(
                 [
                     *required,
+                    *(
+                        name
+                        for name, actions in required_action_parameters(
+                            entry.get("input_schema", {})
+                        ).items()
+                        if action in actions
+                    ),
                     *(rules.required if rules else ()),
                     *(guidance.required if guidance else ()),
                 ]
@@ -1504,6 +1516,8 @@ def describe_action(
                 if "options" not in schema["required"]:
                     schema["required"].append("options")
                 options.pop("default", None)
+        if optional := declared_optional_parameters(schema, operation):
+            card["optional_parameters"] = optional
     elif not declared_actions(entry):
         card = action_card(entry, None)
     catalog = tool_capability(entry, visible_names=visible_names)
@@ -1513,5 +1527,5 @@ def describe_action(
         "operation": card,
         "maturity": catalog["maturity"],
         "action_maturity": catalog["action_maturity"],
-        "note": "The full declared schema retains conditional requirements. Catalog effects are hints. Selection, readiness and permissions are evaluated independently.",
+        "note": "Optional parameters list inputs declared for this operation. The full schema retains common inputs and conditional requirements. Effects are hints. Selection, readiness and permissions are evaluated independently.",
     }

@@ -17,11 +17,38 @@ from services.declared_action_contracts import (
 
 
 _INPUT_ACTIONS = "x-unity-mcp-input-actions"
+_REQUIRED_ACTIONS = "x-unity-mcp-required-for-actions"
+_USED_ACTIONS = "x-unity-mcp-used-by-actions"
+_INACTIVE_VALUE = "x-unity-mcp-inactive-value"
 
 
-def input_actions(*actions: str):
-    """Declare the operations that accept a non-null value for this parameter."""
-    return Field(json_schema_extra={_INPUT_ACTIONS: list(actions)})
+def input_actions(*actions: str, inactive_value=None):
+    """Declare where a parameter has an effect. An explicit neutral value remains valid."""
+    extra = {_INPUT_ACTIONS: list(actions)}
+    if inactive_value is not None:
+        extra[_INACTIVE_VALUE] = inactive_value
+    return Field(json_schema_extra=extra)
+
+
+def required_for_actions(*actions: str):
+    """Declare where omission or JSON null cannot identify a valid request."""
+    return Field(json_schema_extra={_REQUIRED_ACTIONS: list(actions)})
+
+
+def used_by_actions(*actions: str):
+    """Identify meaningful inputs without rejecting values older callers could supply."""
+    return Field(json_schema_extra={_USED_ACTIONS: list(actions)})
+
+
+def declared_optional_parameters(schema, operation):
+    required = set(schema.get("required", ()))
+    return [
+        name
+        for name, field in schema.get("properties", {}).items()
+        if name not in required
+        and isinstance(field, dict)
+        and operation in field.get(_USED_ACTIONS, field.get(_INPUT_ACTIONS, ()))
+    ]
 
 
 def scoped_parameters(schema):
@@ -32,14 +59,34 @@ def scoped_parameters(schema):
     }
 
 
+def required_action_parameters(schema):
+    return {
+        name: field[_REQUIRED_ACTIONS]
+        for name, field in schema.get("properties", {}).items()
+        if isinstance(field, dict) and isinstance(field.get(_REQUIRED_ACTIONS), list)
+    }
+
+
 def parameter_conditions(schema):
-    return [
+    properties = schema.get("properties", {})
+    permitted = [
         {
-            "if": {"required": [name], "properties": {name: {"not": {"type": "null"}}}},
+            "if": {
+                "required": [name],
+                "properties": {name: {"not": {"const": properties[name].get(_INACTIVE_VALUE)}}},
+            },
             "then": {"properties": {"action": {"enum": actions}}},
         }
         for name, actions in scoped_parameters(schema).items()
     ]
+    required = [
+        {
+            "if": {"required": ["action"], "properties": {"action": {"enum": actions}}},
+            "then": {"required": [name], "properties": {name: {"not": {"type": "null"}}}},
+        }
+        for name, actions in required_action_parameters(schema).items()
+    ]
+    return permitted + required
 
 
 @dataclass(frozen=True)
