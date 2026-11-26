@@ -21,6 +21,22 @@ def not_prepared(reason: str, **details) -> dict:
     return {"success": False, "ready": False, "scope": "input_schema", "error": reason, **details}
 
 
+def _page_maximum(name, definition):
+    # Registered tools use page_size for response pagination. Other field names
+    # must explicitly declare that meaning. Never infer a cap from prose.
+    if name != "page_size" and definition.get(PAGE_SIZE) is not True:
+        return None
+    alternatives = definition.get("anyOf", [definition])
+    if not all(isinstance(branch, dict) for branch in alternatives):
+        return None
+    numeric = [branch for branch in alternatives if branch.get("type") != "null"]
+    if len(numeric) == 1 and numeric[0].get("type") == "integer":
+        cap = numeric[0].get("maximum")
+        if type(cap) is int and cap >= 1:
+            return cap
+    return None
+
+
 def prepare_tool_call(
     name,
     schema,
@@ -32,7 +48,7 @@ def prepare_tool_call(
     registered=False,
     closed_signature=False,
 ):
-    """Only adjust fields explicitly annotated by the owner of this tool schema."""
+    """Prepare registered pagination and original-text fields within the advertised schema."""
     try:
         bounded_json(draft, max_bytes=64 * 1024, max_nodes=4096)
     except SchemaContractError as exc:
@@ -57,13 +73,8 @@ def prepare_tool_call(
                 args[field] = original
                 adjustments.append({"field": field, "source": "original_request"})
         value = args.get(field)
-        maximum = definition.get("maximum")
-        if (
-            definition.get(PAGE_SIZE) is True
-            and type(value) is int
-            and type(maximum) is int
-            and value > maximum
-        ):
+        maximum = _page_maximum(field, definition)
+        if type(value) is int and maximum is not None and value > maximum:
             args[field] = maximum
             adjustments.append({"field": field, "source": "page_maximum", "value": maximum})
 

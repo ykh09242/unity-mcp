@@ -92,6 +92,24 @@ def test_preparation_only_adjusts_registered_advisory_inputs_and_resolves_local_
 
 
 @pytest.mark.asyncio
+async def test_standard_pagination_uses_the_visible_tools_own_limit(server):
+    async with Client(server, mode="legacy") as client:
+        for name, arguments, cap in (
+            ("get_tests", {}, 200),
+            ("get_test_job", {"job_id": "example", "include_details": True}, 100),
+        ):
+            result = await client.call_tool(
+                "manage_tools",
+                {"action": "prepare", "tool": name, "arguments": {**arguments, "page_size": 900}},
+            )
+            prepared = result.structured_content
+            assert prepared["prepared_call"]["arguments"] == {**arguments, "page_size": cap}
+            assert prepared["adjustments"] == [
+                {"field": "page_size", "source": "page_maximum", "value": cap}
+            ]
+
+
+@pytest.mark.asyncio
 async def test_agent_directory_provides_followups_for_the_same_scope(server):
     async with Client(server, mode="legacy") as client:
         for name, entry in (("manage_tools", {"action": "search"}), ("search_unity_tools", {})):
