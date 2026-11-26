@@ -32,6 +32,17 @@ After updating the server, reconnect to see the Unity MCP mark beside its tool a
 
 These are connection shapes, not universal file paths. Use your client's format, preserve unrelated settings, and never commit token-bearing configuration.
 
+### Optional Codex tool approvals
+
+To have Codex ask before calling `execute_code` on your Unity Editor, add this entry to your Codex `config.toml`. It applies to both stdio and HTTP. If you registered the server under a different name, replace `unityMCP` with that name.
+
+```toml
+[mcp_servers.unityMCP.tools.execute_code]
+approval_mode = "prompt"
+```
+
+This setting applies to direct calls to `execute_code`. Other tools keep their existing approval settings. Remove the override to inherit your usual policy again, then reconnect Codex. [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
+
 ### Local HTTP
 
 Start the server. Replace the token placeholder privately with the contents of `~/.unity-mcp/auth/token-8080` for that launch and port:
