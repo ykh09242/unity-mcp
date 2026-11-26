@@ -719,15 +719,17 @@ class UnityInstanceMiddleware(Middleware):
         server = getattr(ctx, "fastmcp", None)
         name = getattr(context.message, "name", None)
         arguments = getattr(context.message, "arguments", None)
+        resolved_tool = None
         tool = None
         if server is not None and hasattr(type(server), "get_tool") and isinstance(name, str):
-            options = execution_options(ctx)
-            tool = (
-                await server.get_tool(name, version=component_version(ctx))
-                if options is not None or name == "read_response"
+            version = component_version(ctx)
+            resolved_tool = (
+                await server.get_tool(name, version=version)
+                if version is not None
                 else await server.get_tool(name)
             )
-            if tool is None:
+            tool = resolved_tool
+            if tool is None and version is None:
                 # A modern selection is project-bound and routing has not run yet.
                 # Validate the declared built-in schema without enabling execution;
                 # the SDK repeats lookup/authorization after routing below.
@@ -771,6 +773,22 @@ class UnityInstanceMiddleware(Middleware):
         receipt = None
         options = execution_options(ctx)
         selector = params.get("unity_instance")
+        if (
+            name == "manage_tools"
+            and params.get("action") == "list_instances"
+            and _trusted_builtin_callback(getattr(resolved_tool, "fn", None), name, None)
+        ):
+            # Enumerate with the caller's identity even when its last Editor has disconnected.
+            # The nested resource read still runs its own visibility and access policies.
+            if selector is not None:
+                raise ValidationError(
+                    "list_instances enumerates this connection. Omit unity_instance."
+                )
+            if options is not None:
+                raise ReceiptUnavailable("connection_inventory_has_no_receipt_project")
+            arguments.pop("unity_instance", None)
+            await self._inject_request_identity(ctx, user_id)
+            return await call_next(context)
         if (
             options is None
             and name == "read_response"

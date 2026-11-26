@@ -415,7 +415,8 @@ async def search_unity_tools(
     ),
     description=(
         "Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. "
-        "Actions: list_groups (show all groups and their status), "
+        "Actions: list_instances (list connected Editors on this connection, even without a resource browser), "
+        "list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (supply tool and optionally operation for its inputs), "
@@ -439,6 +440,7 @@ async def manage_tools(
     ctx: Context,
     action: Annotated[
         Literal[
+            "list_instances",
             "list_groups",
             "activate",
             "deactivate",
@@ -694,6 +696,14 @@ async def manage_tools(
                 "error": "Unknown tool in this catalog and the current advertised inventory. Browse catalog or refresh the client tool list.",
             }
         return _describe_binding(entries[name], definition, operation, visible)
+    if action == "list_instances":
+        from services.resource_inventory import read_inventory
+
+        if group is not None or tool is not None or query is not None or limit != 5:
+            return {"success": False, "error": "list_instances takes only its action."}
+        return await read_inventory(
+            ctx, "mcpforunity://instances", "Editor inventory", project_scoped=False
+        )
     if action == "list_groups":
         return await _list_groups(ctx)
 

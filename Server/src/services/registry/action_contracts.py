@@ -155,6 +155,7 @@ _DOMAIN_INPUTS = {
 }
 
 ACTION_RULES: dict[str, tuple[ActionRule, ...]] = {
+    "manage_tools": (ActionRule("list_instances", forbidden=("unity_instance",)),),
     **{
         tool: tuple(ActionRule(action, required) for action, required in actions.items())
         for tool, actions in _DOMAIN_INPUTS.items()

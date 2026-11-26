@@ -37,6 +37,7 @@ from transport import unity_instance_middleware
     [
         {"action": "search", "query": "prefab hierarchy"},
         {"action": "describe", "tool": "manage_tools"},
+        {"action": "list_instances"},
     ],
 )
 async def test_hosted_discovery_reads_require_read_without_changing_legacy_authority(
@@ -54,6 +55,8 @@ async def test_hosted_discovery_reads_require_read_without_changing_legacy_autho
 
     monkeypatch.setattr(service, "_validate_external", validate)
     async with app.router.lifespan_context(app):
+        if arguments["action"] == "list_instances":
+            await register_scopes()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://testserver",
@@ -75,6 +78,12 @@ async def test_hosted_discovery_reads_require_read_without_changing_legacy_autho
                 assert "error" not in content, content
                 if arguments["action"] == "describe":
                     assert content["tool"]["name"] == "manage_tools"
+                elif arguments["action"] == "list_instances":
+                    assert content["success"]
+                    assert {row["session_id"] for row in content["instances"]} == {
+                        "alice-a",
+                        "alice-other",
+                    }
                 else:
                     assert content["query"] == arguments["query"]
             else:

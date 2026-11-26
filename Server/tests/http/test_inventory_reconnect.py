@@ -7,15 +7,107 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastmcp import Client, Context, FastMCP
+from fastmcp.exceptions import AuthorizationError
+from fastmcp.server.middleware import Middleware
 
 from core.config import config
 from services.credential_lease import bind_credential_lease, CredentialLeaseError
 from services.resources.unity_instances import unity_instances
+from services.tools.manage_tools import manage_tools
 from services.tools.set_active_instance import set_active_instance
 from tests.http.test_remote_permissions import permission_service
 from tests.integration.test_helpers import DummyContext
 from tests.test_http_command_outcome import command_hub  # pylint: disable=unused-import
 from transport.unity_instance_middleware import UnityInstanceMiddleware
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_tools_only_editor_inventory_uses_the_connections_resource(command_hub, mode):
+    from transport.response_limit_middleware import ResponseLimitMiddleware
+
+    app = FastMCP("tools-only discovery")
+    app.add_middleware(ResponseLimitMiddleware())
+    app.add_middleware(UnityInstanceMiddleware())
+    app.resource("mcpforunity://instances")(unity_instances)
+    app.tool(name="manage_tools")(manage_tools)
+    await command_hub.registry.register("second", "Second", "other", "6000.3")
+    async with Client(app, mode=mode, cache=False) as client:
+        # A host may expose callable tools while omitting its resource browser.
+        tools = {item.name: item for item in await client.list_tools()}
+        assert (
+            "list_instances" in tools["manage_tools"].input_schema["properties"]["action"]["enum"]
+        )
+        result = (
+            await client.call_tool("manage_tools", {"action": "list_instances"})
+        ).structured_content
+        resource = json.loads((await client.read_resource("mcpforunity://instances"))[0].text)
+        assert result == resource and result["success"]
+        assert {row["id"] for row in result["instances"]} == {"Fixture@hash", "Second@other"}
+        scoped = await client.call_tool(
+            "manage_tools",
+            {"action": "list_instances", "unity_instance": "Fixture@hash"},
+            raise_on_error=False,
+        )
+        assert scoped.is_error and "Second@other" not in str(scoped.content)
+        await command_hub.registry.unregister("session")
+        await command_hub.registry.unregister("second")
+        empty = (
+            await client.call_tool("manage_tools", {"action": "list_instances"})
+        ).structured_content
+        assert empty["success"] and empty["instance_count"] == 0 and empty["instances"] == []
+    assert command_hub.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_versioned_inventory_uses_the_callback_selected_by_the_sdk(command_hub, mode):
+    app = FastMCP("versioned discovery")
+    middleware = UnityInstanceMiddleware()
+    app.add_middleware(middleware)
+    app.resource("mcpforunity://instances")(unity_instances)
+    app.tool(name="manage_tools", version="1.0")(manage_tools)
+
+    @app.tool(name="manage_tools", version="2.0")
+    async def identify_version() -> str:
+        return "2.0"
+
+    async with Client(app, mode=mode, cache=False) as client:
+        inventory = await client.call_tool(
+            "manage_tools", {"action": "list_instances"}, version="1.0"
+        )
+        assert [row["id"] for row in inventory.structured_content["instances"]] == ["Fixture@hash"]
+        unknown = await client.call_tool(
+            "manage_tools", {"action": "list_instances"}, version="3.0", raise_on_error=False
+        )
+        assert unknown.is_error and "Fixture@hash" not in str(unknown.content)
+    assert command_hub.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["hidden", "read_denied"])
+async def test_editor_inventory_tool_preserves_resource_policy(command_hub, policy):
+    class ResourcePolicy(Middleware):
+        async def on_list_resources(self, context, call_next):
+            entries = await call_next(context)
+            return [] if policy == "hidden" else entries
+
+        async def on_read_resource(self, context, call_next):
+            if policy == "read_denied":
+                raise AuthorizationError("Editor inventory denied")
+            return await call_next(context)
+
+    app = FastMCP("restricted discovery")
+    app.add_middleware(UnityInstanceMiddleware())
+    app.add_middleware(ResourcePolicy())
+    app.resource("mcpforunity://instances")(unity_instances)
+    app.tool(name="manage_tools")(manage_tools)
+    async with Client(app, mode="legacy", cache=False) as client:
+        reply = await client.call_tool(
+            "manage_tools", {"action": "list_instances"}, raise_on_error=False
+        )
+        assert reply.is_error and "Fixture@hash" not in str(reply.content)
+    assert command_hub.sent == []
 
 
 @pytest.mark.asyncio
@@ -70,6 +162,7 @@ async def test_read_instances_on_a_stateful_client_with_an_offline_selection(
     app.add_middleware(middleware)
     app.resource("mcpforunity://instances")(unity_instances)
     app.tool(name="set_active_instance")(set_active_instance)
+    app.tool(name="manage_tools")(manage_tools)
 
     @app.resource("mcpforunity://selected-project")
     async def selected_project(ctx: Context) -> str:
@@ -84,6 +177,8 @@ async def test_read_instances_on_a_stateful_client_with_an_offline_selection(
         await command_hub.registry.register("second", "Second", "other", "6000.3")
         result = await client.read_resource("mcpforunity://instances")
         assert [row["id"] for row in json.loads(result[0].text)["instances"]] == ["Second@other"]
+        discovered = await client.call_tool("manage_tools", {"action": "list_instances"})
+        assert discovered.structured_content == json.loads(result[0].text)
         wait_for_change.assert_not_awaited()
         scoped = await client.read_resource("mcpforunity://selected-project")
         assert scoped[0].text == "Fixture@hash"

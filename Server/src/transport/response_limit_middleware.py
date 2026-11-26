@@ -26,7 +26,7 @@ from models.response_limits import (
     response_limit_error,
 )
 from services.tools.response_work import needs_response_worker, response_work
-from transport.protocol import internal_resource_read_target
+from transport.protocol import internal_resource_read_scope
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
 from transport.stdio_response_delivery import stdio_delivery
 from transport.test_job_tasks import CreateWaitTaskResult
@@ -135,7 +135,7 @@ class ResponseLimitMiddleware(ResponseCatalogLimits):
         if (
             enclosing_owner is not None
             and context.method == "resources/read"
-            and internal_resource_read_target(context.fastmcp_context, str(context.message.uri))
+            and internal_resource_read_scope(context.fastmcp_context, str(context.message.uri))
             is not None
         ):
             # A nested read runs the resource middleware under the outer wire ID.

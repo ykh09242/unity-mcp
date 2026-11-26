@@ -29,10 +29,14 @@ async def unavailable_inventories(ctx: Context, bindings: dict[str, str]) -> set
     return unavailable
 
 
-async def read_inventory(ctx: Context, uri: str, label: str) -> dict:
-    instance = await get_unity_instance_from_context(ctx)
-    if not isinstance(instance, str) or not instance:
-        raise ToolError(f"Select a Unity instance to read the {label}")
+async def read_inventory(
+    ctx: Context, uri: str, label: str, *, project_scoped: bool = True
+) -> dict:
+    instance = None
+    if project_scoped:
+        instance = await get_unity_instance_from_context(ctx)
+        if not isinstance(instance, str) or not instance:
+            raise ToolError(f"Select a Unity instance to read the {label}")
     if await unavailable_inventories(ctx, {label: uri}):
         raise AuthorizationError(f"{label.capitalize()} is unavailable")
     with internal_resource_read(ctx.fastmcp, uri, instance):
