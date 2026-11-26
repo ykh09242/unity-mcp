@@ -61,6 +61,19 @@ _ManageQuery = Annotated[
         json_schema_extra={ORIGINAL_REQUEST: {"action": "search"}},
     ),
 ]
+_EXACT_TEXT_DESCRIPTION = (
+    "For user-specified exact text, add exact_text and the unchanged original query alongside "
+    "arguments on prepare. Use an array of {path, expected} objects. Each path is an array of "
+    "exact keys or zero-based array indices within arguments. Copy expected verbatim from query."
+)
+
+
+def _prepare_exact_text_example() -> dict[str, Any]:
+    literal = "Ready."
+    return {
+        "query": f'Set the label to "{literal}"',
+        "exact_text": [{"path": ["items", 0, "label"], "expected": literal}],
+    }
 
 
 def _one_search_value(*names):
@@ -524,8 +537,12 @@ async def manage_tools(
     ] = None,
     exact_text: Annotated[
         list[ExactTextAssertion] | None,
-        Field(min_length=1, max_length=16),
-        "Prepare only: for user-specified exact text, check literals selected independently from the unchanged query against argument values. Requires query.",
+        Field(
+            min_length=1,
+            max_length=16,
+            description=_EXACT_TEXT_DESCRIPTION,
+            examples=[_prepare_exact_text_example()["exact_text"]],
+        ),
     ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
@@ -723,6 +740,10 @@ async def manage_tools(
                     "arguments": {"action": operation} if operation is not None else {},
                     **project,
                 },
+            }
+            card["prepare_exact_text"] = {
+                "description": _EXACT_TEXT_DESCRIPTION,
+                "example": _prepare_exact_text_example(),
             }
             card["input_contract"] += (
                 " Fill the target arguments inside prepare_call.arguments.arguments with the "

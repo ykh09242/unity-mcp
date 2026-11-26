@@ -16,6 +16,59 @@ def _script_edit(content):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize(
+    ("tool", "operation"), [("manage_ui", "patch_source"), ("manage_gameobject", "modify")]
+)
+async def test_prepare_accepts_the_example_shared_by_first_list_and_selected_operation(
+    server, mode, tool, operation
+):
+    async with Client(server, mode=mode) as client:
+        tools = {item.name: item for item in await client.list_tools()}
+        advertised = tools["manage_tools"].input_schema["properties"]["exact_text"]
+        described = await client.call_tool(
+            "manage_tools", {"action": "describe", "tool": tool, "operation": operation}
+        )
+        card = described.structured_content["operation"]
+        assert advertised.get("examples") and card.get("prepare_exact_text"), (
+            list(advertised),
+            list(card),
+        )
+        guide = card["prepare_exact_text"]
+        assert guide["description"] == advertised["description"]
+        example = guide["example"]
+        assert example["exact_text"] in advertised["examples"]
+
+        template = card["prepare_call"]
+        assert set(template) == {"tool", "arguments"}
+        assert {"query", "exact_text"}.isdisjoint(template["arguments"])
+        sample = example["exact_text"][0]
+        literal = sample["expected"]
+        if tool == "manage_ui":
+            path = ["source_changes", "tooltip"]
+            draft = {
+                "path": "Assets/UI/Example.uxml",
+                "source_selector": "#next",
+                "source_changes": {"tooltip": literal},
+            }
+        else:
+            path = ["name"]
+            draft = {"target": "PreviousName", "name": literal}
+        request = {
+            **template["arguments"],
+            **example,
+            "arguments": {**template["arguments"]["arguments"], **draft},
+            "exact_text": [{**sample, "path": path}],
+        }
+
+        response = await client.call_tool(template["tool"], request)
+
+    result = response.structured_content
+    assert result["ready"] is True and result["exact_text_checked"] == 1
+    assert result["prepared_call"] == {"tool": tool, "arguments": request["arguments"]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 @pytest.mark.parametrize("reuse_draft_as_expected", [False, True])
 async def test_prepare_rejects_added_punctuation_even_if_the_draft_is_reused_as_expected(
     server, mode, reuse_draft_as_expected
@@ -147,6 +200,7 @@ async def test_prepare_rejects_malformed_exact_text_arguments_at_the_sdk_boundar
         [],
         valid,
         [valid] * 17,
+        [{"field": "name", "text": literal}],
         [{"expected": literal}],
         [{**valid, "expected": ""}],
         [{**valid, "expected": "x" * 513}],
