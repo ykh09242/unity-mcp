@@ -12,6 +12,8 @@ from unittest.mock import patch
 from fastmcp import Client, FastMCP
 
 from core.config import config
+from services.registry import DEFAULT_ENABLED_GROUPS, get_group_tool_names
+from services.registry.capability_catalog import CAPABILITIES
 from services.resources import register_all_resources
 from services.tools import register_all_tools
 from transport.legacy import unity_connection
@@ -249,17 +251,23 @@ async def assert_public_agent_contract(
     fixture_bindings = set().union(
         *(request.expected | request.wrong_effect for request in suite.requests)
     )
-    hidden_tools = {"manage_scene"} if profile == "core" else set()
-    visible_bindings = {
-        binding for binding in fixture_bindings if binding.partition(".")[0] not in hidden_tools
-    }
     catalog_exclusions = exclusions.catalog_only if exclusions else frozenset()
-    if exclusions:
-        visible_bindings.difference_update(exclusions.inventory)
-    eligible_bindings = visible_bindings - catalog_exclusions
 
     async with agent_catalog(profile, fixture_bindings) as catalog:
         client, before = catalog.client, catalog.inventory
+        core_groups = DEFAULT_ENABLED_GROUPS | {feature.group for feature in CAPABILITIES}
+        hidden_tools = {
+            name
+            for group, names in get_group_tool_names().items()
+            if profile == "core" and group not in core_groups
+            for name in names
+        }
+        visible_bindings = {
+            binding for binding in fixture_bindings if binding.partition(".")[0] not in hidden_tools
+        }
+        if exclusions:
+            visible_bindings.difference_update(exclusions.inventory)
+        eligible_bindings = visible_bindings - catalog_exclusions
         assert before.actions & fixture_bindings == visible_bindings, profile
         for request in suite.requests:
             browse = AgentBrowse(request.query)

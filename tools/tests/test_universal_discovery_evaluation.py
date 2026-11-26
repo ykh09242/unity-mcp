@@ -33,17 +33,6 @@ SCENE_FIXTURES = {
 }
 _UNDECLARED_BINDINGS = frozenset({"manage_shader.modify"})
 _SHADER_GRAPH_TEMPLATE = "mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}"
-_FULL_PROFILE_TOOLS = {
-    "inspect_shader_graph",
-    "manage_camera",
-    "manage_cameras",
-    "manage_cinemachine",
-    "manage_gameobject",
-    "manage_prefabs",
-    "manage_scene",
-    "manage_shader",
-    "prefab_stage",
-}
 
 
 @pytest.mark.parametrize("fixture", SUITES, ids=lambda path: path.stem)
@@ -54,20 +43,13 @@ async def test_agent_catalog_exposes_profile_bindings_for_original_multilingual_
 ):
     suite = load_suite(fixture)
     assert suite.sha256 == SUITES[fixture]
-    unavailable = _UNDECLARED_BINDINGS
     catalog_only = frozenset()
     if profile == "core":
-        unavailable |= frozenset(
-            binding
-            for request in suite.requests
-            for binding in request.expected | request.wrong_effect
-            if binding.partition(".")[0] in _FULL_PROFILE_TOOLS
-        )
         # Discovery honors the parent shader toggle even though MCP lists the template.
         catalog_only = frozenset({_SHADER_GRAPH_TEMPLATE})
 
     await assert_public_agent_contract(
-        profile, suite, exclusions=BindingExclusions(unavailable, catalog_only)
+        profile, suite, exclusions=BindingExclusions(_UNDECLARED_BINDINGS, catalog_only)
     )
 
 
