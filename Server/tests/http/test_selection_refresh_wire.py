@@ -127,12 +127,16 @@ async def test_result_refresh_uses_the_request_editor_and_respects_its_toggles(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "auto"])
 async def test_prepare_compares_draft_selectors_on_the_current_request_router(
-    catalog_server, monkeypatch
+    catalog_server, monkeypatch, mode
 ):
     server, registry, _, _ = catalog_server
     routing = next(item for item in server.middleware if isinstance(item, UnityInstanceMiddleware))
     monkeypatch.delattr(routing, "_inject_unity_instance")
+    monkeypatch.setattr(
+        routing, "_maybe_autoselect_instance", AsyncMock(return_value="First@shared-amber")
+    )
     await registry.register("one", "First", "shared-amber", "6000")
     await registry.register("two", "Second", "shared-blue", "6001")
 
@@ -140,7 +144,7 @@ async def test_prepare_compares_draft_selectors_on_the_current_request_router(
     def target_probe(unity_instance: str):
         raise AssertionError("prepare must not dispatch the target")
 
-    async with run_server_async(server) as url, Client(url, mode="legacy", cache=False) as client:
+    async with run_server_async(server) as url, Client(url, mode=mode, cache=False) as client:
 
         async def prepare(outer, inner):
             return (
@@ -149,7 +153,7 @@ async def test_prepare_compares_draft_selectors_on_the_current_request_router(
                     {
                         "action": "prepare",
                         "tool": "target_probe",
-                        "unity_instance": outer,
+                        **({"unity_instance": outer} if outer is not None else {}),
                         "arguments": {"unity_instance": inner},
                     },
                 )
@@ -160,3 +164,12 @@ async def test_prepare_compares_draft_selectors_on_the_current_request_router(
             assert result["prepared_call"]["arguments"] == {"unity_instance": "Second@shared-blue"}
         for inner in ("shared-a", "missing", "shared", None):
             assert not (await prepare("Second@shared-blue", inner))["ready"]
+
+        # A draft may explicitly name the project whose catalog this request is reading.
+        for inner in ("First@shared-amber", "shared-a"):
+            result = await prepare(None, inner)
+            assert result["prepared_call"]["arguments"] == {"unity_instance": "First@shared-amber"}
+        for inner in ("Second@shared-blue", "missing", "shared", None):
+            assert not (await prepare(None, inner))["ready"]
+        await registry.unregister("one")
+        assert not (await prepare(None, "First@shared-amber"))["ready"]

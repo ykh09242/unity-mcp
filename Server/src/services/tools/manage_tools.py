@@ -847,13 +847,18 @@ async def _prepare_binding(ctx, name, draft, original, operation):
         for p in inspect.signature(func).parameters.values()
     )
     project = (await _retry_project_binding(ctx)).get("unity_instance")
-    if project is not None and "unity_instance" in draft and draft["unity_instance"] != project:
+    if "unity_instance" in draft and (project is None or draft["unity_instance"] != project):
         from transport.unity_instance_middleware import UnityInstanceMiddleware
 
         router = next(
             (m for m in ctx.fastmcp.middleware if isinstance(m, UnityInstanceMiddleware)), None
         )
         if router is not None:
+            # A nested selector may bind the same Editor whose inventory we just read.
+            # Resolve it even on an exact match when the outer call omitted the selector.
+            project = project or await ctx.get_state("unity_instance")
+            if not isinstance(project, str) or not project:
+                return not_prepared("Select the intended project on the prepare request.")
             try:
                 target = await router._resolve_instance_value(
                     draft["unity_instance"], ctx, allow_reconnect=False

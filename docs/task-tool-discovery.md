@@ -20,7 +20,9 @@ catalog to find tools beyond the current advertisement.
 Use `manage_tools(action="prepare", tool=name, arguments=draft, query=original)`
 before submitting uncertain inputs. Check the returned `adjustments` and call
 the exact `prepared_call` if it matches the request. The server validates the
-live input schema and preserves the explicit project. Annotated page sizes
+live input schema and preserves the explicit project. A project named only in
+the draft must resolve to the Editor whose inventory the request is reading.
+To prepare for another Editor, select it on the outer request. Annotated page sizes
 above the maximum can be reduced. Original text can be filled only from a
 verbatim request supplied by the caller. A successful preparation checks input
 shape. The actual public tool and a Unity readback establish the outcome.
