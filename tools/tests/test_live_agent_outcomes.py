@@ -3,6 +3,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -11,6 +12,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments import live_agent_outcomes as trial
 from tools.experiments import verify_agent_outcome_originals as originals
+
+
+@pytest.mark.parametrize(
+    "script",
+    (
+        "agent_outcome_wire.py",
+        "verify_agent_outcome_originals.py",
+        "verify_agent_outcome_holdout.py",
+        "verify_agent_outcome_holdout_confirmation.py",
+    ),
+)
+def test_published_evidence_verifies_from_an_empty_directory(tmp_path, script):
+    verifier = Path(originals.__file__).with_name(script)
+    subprocess.run([sys.executable, "-I", "-B", verifier], cwd=tmp_path, check=True, timeout=60)
 
 
 def test_host_stderr_is_counted_even_when_public_calls_succeed():
