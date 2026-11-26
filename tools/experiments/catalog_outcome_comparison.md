@@ -1,5 +1,7 @@
 # Repeating the 71 original requests after the catalog changes
 
+A later run repeats these originals with isolated terrain settings and tests additional languages and tool families. [Host-neutral release evaluation](agent_outcome_validation.md)
+
 ## Final shipping package
 
 The shipping package `e3c0c6450b39cf8c5523dfa8bec22f25991f559d` completed **121/142** original requests, compared with **122/142** at baseline and **123/142** on the intermediate package. The shipping package pins server `5f0466871529c7d209133cb342f357c505c6b87b`, which updates the startup instructions for clients with fixed tool inventories. Each of the 142 fresh actor sessions started once with the original prompt, seed, model, six-minute limit and catalog. All produced independent native snapshots before and after the turn. The run retained every first attempt and 136 final answers.
