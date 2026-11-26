@@ -741,6 +741,8 @@ def create_mcp_server(
         ),
         **({"request_state_security": scene_inputs.policy} if scene_inputs is not None else {}),
     )
+    # FastMCP 4.2.6 exposes the SDK's display title only on its protocol server.
+    mcp._mcp_server.title = "Unity MCP"
     mcp._unity_session_state_store = state_store
     mcp._scene_load_inputs = scene_inputs
     mcp._scene_load_inputs_requested = os.environ.get("UNITY_MCP_SCENE_LOAD_INPUTS") == "1"

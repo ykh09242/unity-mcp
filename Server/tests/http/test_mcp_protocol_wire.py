@@ -129,6 +129,7 @@ def test_modern_discovery_is_self_contained(protocol_http, omit_client_info):
     assert "tools" in result["capabilities"]
     info = result["_meta"]["io.modelcontextprotocol/serverInfo"]
     assert info["name"] == "mcp-for-unity-server"
+    assert info["title"] == "Unity MCP"
     assert info["version"]
     _assert_server_icons(info)
     assert type(result["ttlMs"]) is int and result["ttlMs"] >= 0
@@ -382,6 +383,7 @@ def test_explicit_legacy_initialize_and_tool_listing_remain_compatible(protocol_
     result = _message(initialized)["result"]
     assert result["protocolVersion"] == LEGACY_VERSION
     assert result["serverInfo"]["name"] == "mcp-for-unity-server"
+    assert result["serverInfo"]["title"] == "Unity MCP"
     _assert_server_icons(result["serverInfo"])
     assert "resultType" not in result
     headers = {"MCP-Protocol-Version": LEGACY_VERSION}

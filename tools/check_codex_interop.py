@@ -641,6 +641,10 @@ async def exercise(
         status_pagination.append(await exercise_status_pages(client, directory, thread=thread))
     inventory = await loaded_inventory(client, thread, paginated=paginated)
     server = mapping(inventory["data"][0])
+    require(
+        mapping(server.get("serverInfo")).get("title") == "Unity MCP",
+        "Missing server display title",
+    )
     (directory / "inventory.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
     tools = mapping(server.get("tools"))
     names = {mapping(tool).get("name") for tool in tools.values()}
