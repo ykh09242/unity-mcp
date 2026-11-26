@@ -49,6 +49,18 @@ async def test_preparation_keeps_validation_failures_and_host_filter_explicit(se
     async with Client(server, mode="legacy") as client:
         for name, draft, extra in (
             ("search_unity_tools", {"catalog_query": "scene"}, {}),
+            (
+                "search_unity_tools",
+                {"selection": "agent", "query": "scene", "catalog_query": "scene"},
+                {},
+            ),
+            ("manage_tools", {"action": "search", "query": " \t"}, {}),
+            ("manage_tools", {"action": "search", "query": "camera", "group": "core"}, {}),
+            ("manage_tools", {"action": "search", "query": "camera", "tool": "something"}, {}),
+            ("manage_tools", {"action": "search", "query": "camera", "arguments": {}}, {}),
+            ("manage_tools", {"action": "search", "query": "camera", "include_schema": True}, {}),
+            ("manage_tools", {"action": "search", "query": "camera", "operation": "edit"}, {}),
+            ("search_unity_tools", {"query": "scene", "offset": 1}, {}),
             ("inspect_serialized_object", {"instance_id": 0}, {}),
             ("inspect_serialized_object", {"instance_id": 1, "mode": "value", "page_size": 80}, {}),
             ("inspect_serialized_object", {"instance_id": 1, "page_size": -2}, {}),
@@ -89,6 +101,47 @@ def test_preparation_only_adjusts_registered_advisory_inputs_and_resolves_local_
         assert prepare_tool_call("example", schema, args, registered=registered)["ready"] is False
     remote = {"type": "object", "properties": {"id": {"$ref": "https://invalid.example/schema"}}}
     assert prepare_tool_call("example", remote, {"id": 1})["ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_action_inputs_inherit_the_native_contract_in_both_public_bindings(server):
+    async with Client(server, mode="legacy") as client:
+        for name in ("manage_scene", "scene_lifecycle"):
+            binding = {"action": "prepare", "tool": name, "operation": "set_active_scene"}
+            base = {"scene_path": "Assets/Scenes/Example.unity"}
+            invalid = await client.call_tool(
+                "manage_tools",
+                {**binding, "arguments": {**base, "scene_handle": 7}},
+                raise_on_error=False,
+            )
+            denied = invalid.structured_content or json.loads(invalid.content[0].text)
+            assert denied["ready"] is False and "prepared_call" not in denied
+            description = await client.call_tool(
+                "manage_tools",
+                {"action": "describe", "tool": name, "operation": "set_active_scene"},
+            )
+            assert set(description.structured_content["operation"]["forbidden_parameters"]) >= {
+                "scene_handle",
+                "verify",
+            }
+            catalog = await client.call_tool(
+                "manage_tools", {"action": "catalog", "tool": name, "limit": 20}
+            )
+            card = next(
+                row
+                for row in catalog.structured_content["actions"]
+                if row["action"] == "set_active_scene"
+            )
+            assert "scene_handle" in card["forbidden_parameters"]
+            valid = await client.call_tool("manage_tools", {**binding, "arguments": base})
+            assert valid.structured_content["prepared_call"]["arguments"] == {
+                **base,
+                "action": "set_active_scene",
+            }
+            valid = await client.call_tool(
+                "manage_tools", {**binding, "operation": "save", "arguments": {"scene_handle": 7}}
+            )
+            assert valid.structured_content["ready"] is True
 
 
 @pytest.mark.asyncio

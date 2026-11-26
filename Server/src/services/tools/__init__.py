@@ -11,7 +11,11 @@ from core.telemetry_decorator import telemetry_tool
 from core.logging_decorator import log_execution
 from utils.module_discovery import discover_modules
 from services.registry import get_registered_tools, TOOL_GROUPS
-from services.registry.action_contracts import ACTION_RULES, action_input_schema
+from services.registry.action_contracts import (
+    ACTION_RULES,
+    action_input_schema,
+    parameter_conditions,
+)
 from services.registry.routing_schema import with_unity_instance
 from services.registry.response_schema import direct_object_output_schema
 from services.registry.operation_invocation import wrap_tool
@@ -84,7 +88,11 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         registered.output_schema = direct_object_output_schema(registered.output_schema)
         if tool_name in ACTION_RULES:
             registered.parameters = action_input_schema(tool_name, registered.parameters)
-        if conditions := tool_info.get("input_conditions"):
+        conditions = [
+            *tool_info.get("input_conditions", ()),
+            *parameter_conditions(registered.parameters),
+        ]
+        if conditions:
             registered.parameters = {
                 **registered.parameters,
                 "allOf": [*registered.parameters.get("allOf", ()), *conditions],

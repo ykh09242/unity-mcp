@@ -28,7 +28,7 @@ from pydantic import (
 from services.declared_action_contracts import ACTION_CONTRACTS
 from services.operation_permissions import required_permissions
 from services.reference_graph.action_options import GRAPH_ACTION_OPTIONS
-from services.registry.action_contracts import ACTION_RULES
+from services.registry.action_contracts import ACTION_RULES, scoped_parameters
 from services.registry.action_guidance_types import (
     ActionGuidance,
     ActionIntent,
@@ -1182,7 +1182,20 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
                 ]
             )
         ),
-        "forbidden_parameters": list(rules.forbidden) if rules else [],
+        "forbidden_parameters": list(
+            dict.fromkeys(
+                [
+                    *(rules.forbidden if rules else ()),
+                    *(
+                        name
+                        for name, actions in scoped_parameters(
+                            entry.get("input_schema", {})
+                        ).items()
+                        if action is not None and action not in actions
+                    ),
+                ]
+            )
+        ),
         **({"alias_of": contract.alias_of} if contract and contract.alias_of else {}),
         **(
             {"success_data_schema": rules.success_data_schema()}

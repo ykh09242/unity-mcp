@@ -36,7 +36,7 @@ from services.registry.call_preparation import (
     not_prepared,
     prepare_tool_call,
 )
-from services.registry.task_search import RequiredValues, RouteSurfaces
+from services.registry.task_search import RANKED_SEARCH_FIELDS, RequiredValues, RouteSurfaces
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -69,9 +69,23 @@ def _one_search_value(*names):
 
 
 _SEARCH_INPUT = {
+    "properties": {"query": {"pattern": r"\S"}, "catalog_query": {"pattern": r"\S"}},
+    "not": {
+        "required": ["host_tool_names", "host_tool_evidence"],
+        "properties": {
+            "host_tool_names": {"not": {"type": "null"}},
+            "host_tool_evidence": {"not": {"type": "null"}},
+        },
+    },
     "if": {"required": ["selection"], "properties": {"selection": {"const": "agent"}}},
-    "then": _one_search_value("query", "family"),
-    "else": _one_search_value("query", "observation_source", "required_values"),
+    "then": {
+        **_one_search_value("query", "family"),
+        "properties": {name: {"type": "null"} for name in RANKED_SEARCH_FIELDS},
+    },
+    "else": {
+        **_one_search_value("query", "observation_source", "required_values"),
+        "properties": {"family": {"type": "null"}, "offset": {"const": 0}},
+    },
 }
 _CatalogQuery = Annotated[
     str | None,
@@ -188,7 +202,6 @@ async def search_unity_tools(
 ) -> dict[str, Any]:
     from services.registry.task_search import (
         AGENT_SEARCH_FIELDS,
-        RANKED_SEARCH_FIELDS,
         SearchRequest,
         search_catalog,
     )
@@ -269,11 +282,6 @@ async def search_unity_tools(
     entries, visible = await _catalog_inventory(
         ctx, get_registered_tools(), getattr(ctx.fastmcp, "_tool_discovery", None)
     )
-    if selection == "agent":
-        entries = {
-            name: {**entry, "input_schema": visible[name].parameters} if name in visible else entry
-            for name, entry in entries.items()
-        }
     # Resolve the caller's inventory on its MCP context before browsing declarations.
     outcome = await asyncio.to_thread(
         search_catalog,
@@ -351,7 +359,16 @@ async def search_unity_tools(
     unity_target=None,
     group=None,
     input_conditions=(
-        {"if": {"properties": {"action": {"const": "search"}}}, "then": _SEARCH_INPUT},
+        {
+            "if": {"properties": {"action": {"const": "search"}}},
+            "then": {
+                "allOf": [_SEARCH_INPUT],
+                "properties": {
+                    **{field: {"type": "null"} for field in ("group", "tool", "operation", "arguments")},
+                    "include_schema": {"const": False},
+                },
+            },
+        },
         {
             "if": {"properties": {"action": {"const": "prepare"}}},
             "then": {
@@ -819,7 +836,10 @@ async def _prepare_binding(ctx, name, draft, original, operation):
         )
         if descriptor.get("success") is False:
             return not_prepared(descriptor["error"])
-        schema = descriptor["tool"]["inputSchema"]
+        target = descriptor["tool"]
+        schema = target.get("inputSchema", target.get("input_schema"))
+        if not isinstance(schema, dict):
+            return not_prepared("The selected operation has no advertised input schema.")
     func = entry.get("func") if entry else None
     closed = func is not None and all(
         p.kind is not inspect.Parameter.VAR_KEYWORD
@@ -898,7 +918,9 @@ async def _catalog_inventory(ctx, declarations, discovery):
     registered = discovery.definitions if discovery is not None else visible
     entries = {entry["name"]: entry for entry in declarations if entry["name"] in registered}
     for name, item in visible.items():
-        if name not in entries:
+        if name in entries:
+            entries[name] = {**entries[name], "input_schema": item.parameters}
+        else:
             entries[name] = {
                 "name": name,
                 "group": None,

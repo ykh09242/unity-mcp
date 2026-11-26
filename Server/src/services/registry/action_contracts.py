@@ -4,6 +4,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import Field
+
 from services.action_inputs import INPUT_ACTION_REQUIRED, REFLECTION_REQUIRED, TERRAIN_REQUIRED
 from services.declared_action_contracts import (
     ACTION_CONTRACTS,
@@ -12,6 +14,32 @@ from services.declared_action_contracts import (
     PREFAB_FIELD_PATTERNS,
     PREFAB_PAGING_DEFAULTS,
 )
+
+
+_INPUT_ACTIONS = "x-unity-mcp-input-actions"
+
+
+def input_actions(*actions: str):
+    """Declare the operations that accept a non-null value for this parameter."""
+    return Field(json_schema_extra={_INPUT_ACTIONS: list(actions)})
+
+
+def scoped_parameters(schema):
+    return {
+        name: field[_INPUT_ACTIONS]
+        for name, field in schema.get("properties", {}).items()
+        if isinstance(field, dict) and isinstance(field.get(_INPUT_ACTIONS), list)
+    }
+
+
+def parameter_conditions(schema):
+    return [
+        {
+            "if": {"required": [name], "properties": {name: {"not": {"type": "null"}}}},
+            "then": {"properties": {"action": {"enum": actions}}},
+        }
+        for name, actions in scoped_parameters(schema).items()
+    ]
 
 
 @dataclass(frozen=True)

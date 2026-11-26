@@ -4,6 +4,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from services.registry.capability_adapter import capability_command
+from services.registry.action_contracts import input_actions
 from services.registry import mcp_for_unity_tool
 from services.registry.action_catalog import ACTION_OBSERVATIONS_META, action_observations
 from services.tools import get_unity_instance_from_context
@@ -13,6 +14,10 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.preflight import preflight
 from services.tools.pagination import page_integer
 from services.tools.reference_diagnostics import reference_page, reference_path
+
+
+_VERIFY_ACTIONS = ("load", "save")
+_SCENE_HANDLE_ACTIONS = ("validate", "save")
 
 
 @mcp_for_unity_tool(
@@ -160,17 +165,19 @@ async def manage_scene(
     | None = None,
     verify: Annotated[
         bool | None,
+        input_actions(*_VERIFY_ACTIONS),
         "load/save only: observe the exact affected scene with one100-object/10ms validation slice",
     ] = None,
     scene_handle: Annotated[
         int | None,
+        input_actions(*_SCENE_HANDLE_ACTIONS),
         "validate/save: exact scene_handle from get_loaded_scenes. For save, all source selectors must match one loaded scene; omit them to save the active scene.",
     ] = None,
 ) -> dict[str, Any]:
-    if verify is not None and (type(verify) is not bool or action not in {"load", "save"}):
+    if verify is not None and (type(verify) is not bool or action not in _VERIFY_ACTIONS):
         return {"success": False, "message": "verify requires load/save and a boolean value."}
     if scene_handle is not None and (
-        type(scene_handle) is not int or action not in {"validate", "save"}
+        type(scene_handle) is not int or action not in _SCENE_HANDLE_ACTIONS
     ):
         return {
             "success": False,
