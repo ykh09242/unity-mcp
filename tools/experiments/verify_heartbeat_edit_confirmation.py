@@ -14,6 +14,7 @@ if not __package__:
 
 from tools.experiments import verify_compact_edit_confirmation as prior
 from tools.experiments import verify_compact_edit_followup as matched
+from tools.experiments.verify_actor_workspace import verify_actor_workspace
 from tools.experiments.verify_agent_outcome_holdout import canonical, require, summary
 from tools.experiments.verify_compact_edit import read
 
@@ -24,6 +25,11 @@ def verify(data, archive, pins, published, *, previous_digest=prior.PUBLISHED):
     # The frozen archive digest covers the previous product pins and all per-slot evidence.
     verdicts = matched.verify_matched_run(data, archive, pins, previous_digest, "followup")
     run = data["runs"]["followup"]
+    verify_actor_workspace(
+        run.get("actor_workspace"),
+        {name: panel["cases"] for name, panel in run["panels"].items()},
+        actor=run["actor"],
+    )
     for panel in run["panels"].values():
         for row in panel["cases"]:
             counts = row["host_tool_calls"]
@@ -61,6 +67,12 @@ def verify_private(data, root, verdicts):
     matched.verify_private(data, root, verdicts)
     work = root / "followup"
     run = data["runs"]["followup"]
+    verify_actor_workspace(
+        run.get("actor_workspace"),
+        {name: panel["cases"] for name, panel in run["panels"].items()},
+        actor=run["actor"],
+        work=work,
+    )
     require(read(work / "actor-version.json") == run["actor"], "Installed actor differs")
     require(
         verified_archives(work, run["product_pins"])

@@ -9,6 +9,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.experiments import verify_compact_edit as edit
+from tools.experiments.verify_actor_workspace import verify_actor_workspace
 from tools.experiments.verify_agent_outcome_holdout import canonical, require, summary
 from tools.experiments.verify_agent_outcome_holdout_confirmation import STRICT_ZERO
 from tools.experiments.verify_compact_edit_confirmation import host_tool_calls
@@ -63,6 +64,9 @@ STUDIES = {
 def verify_private(data, request, root):
     work = root / "followup"
     language = request["language"]
+    verify_actor_workspace(
+        data.get("actor_workspace"), {language: data["cases"]}, actor=data["actor"], work=work
+    )
     require(edit.digest((root / "seal/cases.json").read_bytes()) == data["seal_sha256"], "Seal")
     require(
         verified_archives(work, data["product_pins"]) == data["verified_product_archives"],
@@ -145,6 +149,20 @@ def main():
     )
     require(data["actor"] == primary["runs"]["followup"]["actor"], "Actor differs")
     rows = data["cases"]
+    workspace = data.get("actor_workspace")
+    primary_workspace = primary["runs"]["followup"].get("actor_workspace")
+    verify_actor_workspace(workspace, {request["language"]: rows}, actor=data["actor"])
+    if workspace is not None or primary_workspace is not None:
+        require(
+            workspace is not None
+            and primary_workspace is not None
+            and all(
+                workspace[key] == primary_workspace.get(key)
+                for key in ("workspace", "sandbox_mode", "backend")
+            )
+            and workspace["proof_sha256"] != primary_workspace.get("proof_sha256"),
+            "The supplement requires a separate project with the primary actor workspace policy",
+        )
     require(sorted(row["profile"] for row in rows) == ["core", "full"], "Paired profiles")
     for row in rows:
         require(
