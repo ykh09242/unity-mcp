@@ -105,6 +105,7 @@ def _source_patch_apply(params, data):
             "check": "Check the apply result_hash and reimport outcome, then read the same source path to confirm the requested values. A failed import can follow a successful save.",
         },
         copy_arguments=("source_changes",) if sum(map(len, changes.values())) > 4096 else (),
+        editor_executes=True,
     )
 
 

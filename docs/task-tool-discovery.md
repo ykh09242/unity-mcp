@@ -76,6 +76,10 @@ and proposed changes with the user's request. For a requested write, submit
 large fields to copy exactly from the preview request. The apply operation
 checks the source digest or Editor plan token before changing state. Read back
 the requested saved or live result. A preview on its own leaves the target intact.
+For an Editor-owned apply, `follow_up.execution` identifies the Editor, the
+MCP call and whether it needs access to the client's filesystem. The host
+decides whether to admit the call. Report a denied apply from its observed
+outcome and a preview-only result when the call has not been submitted.
 
 For sparse edits, submit only fields that the user requested changing.
 Read protected values before and after when preservation needs verification.

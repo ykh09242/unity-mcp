@@ -239,7 +239,7 @@ def _scene_plan_apply(params, data):
     arguments = {"action": action, "preview_id": token}
     if params.get("undo_name") and params["undo_name"] != "MCP Scene Edits":
         arguments["undo_name"] = params["undo_name"]
-    return PreviewApply(arguments, {"check": check})
+    return PreviewApply(arguments, {"check": check}, editor_executes=True)
 
 
 @mcp_for_unity_tool(

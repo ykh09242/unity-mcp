@@ -21,6 +21,8 @@ class PreviewApply:
     verify: dict
     # Exact large inputs that can be copied from the original public preview call.
     copy_arguments: tuple[str, ...] = ()
+    # Declared by the handler that owns the apply operation, including its aliases.
+    editor_executes: bool = False
 
 
 PreviewContract = Callable[[dict, dict], PreviewApply | None]
@@ -201,9 +203,17 @@ async def with_preview_continuation(
         return value
     follow_up = {
         "action": "apply_if_requested",
-        "condition": "Submit the write if the user requested this change, the preview matches, and the host permits it.",
+        "condition": "For a requested edit matching this preview, submit the apply call through the host's normal approval flow. Honor explicit restrictions and use the call result to report the outcome.",
         "verify": proposal.verify,
     }
+    if proposal.editor_executes:
+        follow_up["execution"] = {
+            "via": "tools/call",
+            "executor": "unity_editor",
+            "request_unity_instance": instance,
+            "client_filesystem_access": "not_required",
+            "host_approval": "not_observed",
+        }
     call = {"tool": public_name, "arguments": arguments}
     if proposal.copy_arguments:
         for field in proposal.copy_arguments:
@@ -214,4 +224,10 @@ async def with_preview_continuation(
         follow_up["copy_from_preview_arguments"] = list(proposal.copy_arguments)
     else:
         follow_up["next_call"] = call
-    return {**value, "data": {**data, "follow_up": follow_up}}
+    result = {**value, "data": {**data, "follow_up": follow_up}}
+    if proposal.editor_executes and isinstance(value.get("message"), str):
+        result["message"] = (
+            value["message"].rstrip()
+            + " See data.follow_up for the apply call in the selected Unity Editor."
+        )
+    return result

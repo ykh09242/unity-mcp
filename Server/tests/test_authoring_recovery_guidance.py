@@ -129,7 +129,11 @@ async def test_preview_continuation_uses_native_plan_once_without_repeating_payl
             }
         ],
     }
-    value = {"success": True, "data": {"preview_id": plan, "expires_in_seconds": 600.0, **evidence}}
+    value = {
+        "success": True,
+        "message": "Preview ready.",
+        "data": {"preview_id": plan, "expires_in_seconds": 600.0, **evidence},
+    }
     allowed = AsyncMock(return_value=True)
     monkeypatch.setattr(preview, "remote_operation_allowed", allowed)
     monkeypatch.setattr(preview.config, "require_explicit_target", True)
@@ -142,7 +146,16 @@ async def test_preview_continuation_uses_native_plan_once_without_repeating_payl
         args["undo_name"] = params["undo_name"]
     allowed.assert_awaited_once_with(name, args, ctx=ctx)
     follow = result["data"]["follow_up"]
+    assert result["message"].startswith(value["message"])
+    assert "data.follow_up" in result["message"]
     assert follow["next_call"] == {"tool": name, "arguments": {**args, "unity_instance": instance}}
+    assert follow["execution"] == {
+        "via": "tools/call",
+        "executor": "unity_editor",
+        "request_unity_instance": instance,
+        "client_filesystem_access": "not_required",
+        "host_approval": "not_observed",
+    }
     assert follow["verify"]["check"]
     for rejected in (
         {"success": False, "data": value["data"]},
@@ -275,6 +288,7 @@ async def test_unseen_family_publishes_its_contract_through_a_new_alias(monkeypa
         ),
     )
     result = await invoke(ctx=ctx, action="plan")
+    assert "execution" not in result["data"]["follow_up"]
     assert result["data"]["follow_up"]["next_call"] == {
         "tool": feature.name,
         "arguments": {"action": "publish", "revision": "revision-5", "unity_instance": instance},
@@ -370,6 +384,8 @@ async def test_source_write_template_preserves_large_values_and_rejects_mismatch
         binding=PreviewBinding.capture(schema),
     )
     follow = outcome["data"]["follow_up"]
+    assert follow["execution"]["executor"] == "unity_editor"
+    assert follow["execution"]["request_unity_instance"] == instance
     assert "next_call" not in follow
     assert follow["copy_from_preview_arguments"] == ["source_changes"]
     assert "source_changes" not in follow["call_template"]["arguments"]

@@ -72,6 +72,7 @@ def _prefab_plan_apply(params, data):
     return PreviewApply(
         {"action": "apply_preview", "preview_id": token},
         {"check": "Confirm saved, prefab_path and verification in the apply response."},
+        editor_executes=True,
     )
 
 
