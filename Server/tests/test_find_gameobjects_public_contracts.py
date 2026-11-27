@@ -73,12 +73,22 @@ def test_registered_scoped_gameobject_search_contract(mode, tmp_path):
                 assert requests[-1][2]["cursor"] == "a" * 32 and requests[-1][2]["max_depth"] == 0
                 assert await call({**args, "projection": ["name", "active", "handle"]}) == reply
                 assert requests[-1][2]["projection"] == ["name", "active", "handle"]
+                for filters in ({}, {"conditions": []}):
+                    before = len(requests)
+                    assert await call({"scene_scope": "all_loaded", "projection": ["name"], **filters}) == reply
+                    assert requests[before:] == [("Owned@fixture", "find_gameobjects", {
+                        "searchMethod": "by_name", "includeInactive": False, "pageSize": 50,
+                        "scene_scope": "all_loaded", "projection": ["name"], "max_depth": 64, **filters,
+                    })]
                 exact = {"scene_scope": "exact", "scene_path": "Assets/Additive/Shop.unity", "search_term": "Door", "projection": ["handle"]}
                 reply["data"]["resultScene"] = {"path": exact["scene_path"], "handle": 17}
                 assert await call(exact) == reply
                 assert requests[-1][2]["scene_path"] == exact["scene_path"]
                 assert requests[-1][2]["scene_scope"] == "exact"
                 for invalid in (
+                    {"scene_scope": "legacy", "conditions": []},
+                    {"scene_scope": "active", "conditions": [], "search_method": "by_id"},
+                    {"scene_scope": "active", "search_term": ""},
                     {"scene_scope": "exact", "search_term": "Door"},
                     {**exact, "scene_scope": "all_loaded"},
                     {**exact, "scene_path": "Shop.unity"},
@@ -96,7 +106,7 @@ def test_registered_scoped_gameobject_search_contract(mode, tmp_path):
                 invalid_projection = await client.call_tool("find_gameobjects", {**args, "projection": ["name", "name"]}, raise_on_error=False)
                 assert invalid_projection.is_error or json.loads(invalid_projection.content[0].text)["success"] is False
                 assert len(requests) == before and module.preflight.await_count == gates
-                for options in ({"page_size": "2"}, {"page_size": 0}, {"page_size": 501}, {"page_size": True}, {"page_size": 1.5}, {"max_depth": False}, {"max_depth": 129}, {"cursor": 0}, {"cursor": "g" * 32}, {"conditions": []}, {"conditions": [{"search_method":"by_name", "search_term":"x", "extra":True}]}, {"search_term": "\U0001f600" * 257}):
+                for options in ({"page_size": "2"}, {"page_size": 0}, {"page_size": 501}, {"page_size": True}, {"page_size": 1.5}, {"max_depth": False}, {"max_depth": 129}, {"cursor": 0}, {"cursor": "g" * 32}, {"conditions": [{}]}, {"conditions": [{"search_method":"by_name", "search_term":"x", "extra":True}]}, {"search_term": "\U0001f600" * 257}):
                     before = len(requests)
                     gates = module.preflight.await_count
                     result = await client.call_tool("find_gameobjects", {**args, **options}, raise_on_error=False)
