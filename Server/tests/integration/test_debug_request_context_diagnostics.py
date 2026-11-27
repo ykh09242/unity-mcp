@@ -32,6 +32,27 @@ async def test_debug_request_context_includes_server_diagnostics(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_diagnostics_report_request_route_separately_from_client_and_session():
+    from types import SimpleNamespace
+    from services.tools.debug_request_context import debug_request_context
+
+    class RoutedContext:
+        request_context = SimpleNamespace(meta={"local_filesystem": "read-only"})
+        session_id = None
+        client_id = None
+
+        async def get_state(self, key):
+            return "Isolated@1234" if key == "unity_instance" else None
+
+    data = (await debug_request_context(RoutedContext()))["data"]
+    assert data["request_context"]["meta"] == {"local_filesystem": "read-only"}
+    assert data["session_state"]["active_instance"] is None
+    assert data["editor_route"]["unity_instance"] == "Isolated@1234"
+    assert data["editor_route"]["edit_authorization"] == "not_tested"
+    assert "server process" in data["server"]["cwd_scope"]
+
+
+@pytest.mark.asyncio
 async def test_debug_request_context_redacts_secret_argv(monkeypatch):
     """Any tenant can call this tool on a remote-hosted server, so the service token that
     the server was started with must not come back in the diagnostics."""

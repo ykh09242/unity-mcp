@@ -123,6 +123,62 @@ def server(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_prepare_reports_the_concrete_editor_operation_without_granting_it(server, mode):
+    async with Client(server, mode=mode) as client:
+        for name, draft, grant in (
+            (
+                "ui_source",
+                {
+                    "action": "patch_source",
+                    "path": "Assets/Demo.uxml",
+                    "source_selector": "#caption",
+                    "source_changes": {"tooltip": "x"},
+                },
+                "read",
+            ),
+            (
+                "ui_source",
+                {
+                    "action": "patch_source",
+                    "path": "Assets/Demo.uxml",
+                    "source_selector": "#caption",
+                    "source_changes": {"tooltip": "x"},
+                    "preview": False,
+                    "expected_source_hash": "a" * 64,
+                },
+                "edit",
+            ),
+            ("scene_inspect", {"action": "get_active"}, "read"),
+            ("get_tests", {}, "read"),
+            (
+                "unity_docs",
+                {
+                    "action": "get_package_doc",
+                    "package": "com.unity.ugui",
+                    "page": "index",
+                    "pkg_version": "2.0",
+                },
+                "read",
+            ),
+            ("manage_tools", {"action": "read_skill"}, "read"),
+        ):
+            prepared = (
+                await client.call_tool(
+                    "manage_tools", {"action": "prepare", "tool": name, "arguments": draft}
+                )
+            ).structured_content
+            assert prepared["ready"] and prepared["prepared_call"]["arguments"] == draft
+            assert prepared["execution"] == {
+                "via": "tools/call",
+                "handler": "mcp_server",
+                "request_unity_instance": None,
+                "authorization": "checked_on_invocation",
+                "required_server_permissions": [grant],
+            }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
 async def test_prepared_search_is_directly_callable_on_its_original_entry_point(server, mode):
     original = "  ¿Dónde está el editor de escenas?  "

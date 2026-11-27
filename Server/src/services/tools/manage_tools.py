@@ -1141,7 +1141,7 @@ async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=
             except ValueError as exc:
                 return not_prepared(str(exc))
             draft = {**draft, "unity_instance": target}
-    return prepare_tool_call(
+    result = prepare_tool_call(
         name,
         schema,
         draft,
@@ -1152,6 +1152,33 @@ async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=
         closed_signature=closed,
         exact_text=exact_text,
     )
+    if not result["ready"] or not entry:
+        return result
+    # The registry's unity_target controls availability. It does not establish
+    # where the selected action will run or whether it writes a client file.
+    discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
+    registered = discovery.definitions.get(name) if discovery else None
+    handler = getattr(registered, "fn", None)
+    if handler is None or getattr(definition, "fn", None) is not handler:
+        return result
+    from services.operation_permissions import OperationPermissionError, required_permissions
+
+    arguments = result["prepared_call"]["arguments"]
+    execution = {
+        "via": "tools/call",
+        "handler": "mcp_server",
+        "request_unity_instance": arguments.get("unity_instance")
+        or await ctx.get_state("unity_instance"),
+        "authorization": "checked_on_invocation",
+    }
+    try:
+        grants = required_permissions(name, arguments)
+    except (OperationPermissionError, ValueError):
+        pass  # A schema-valid draft may still need runtime classification.
+    else:
+        execution["required_server_permissions"] = sorted(grant.value for grant in grants)
+    result["execution"] = execution
+    return result
 
 
 def _tool_list_request(binding: dict[str, str]) -> dict:

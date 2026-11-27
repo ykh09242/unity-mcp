@@ -1,7 +1,7 @@
 ---
 title: debug_request_context
 sidebar_label: debug_request_context
-description: "Return the current FastMCP request context details (client_id, session_id, and meta dump)."
+description: "Inspect the client request metadata, server process and routed Unity Editor."
 ---
 
 # `debug_request_context`
@@ -14,7 +14,7 @@ description: "Return the current FastMCP request context details (client_id, ses
 
 ## Description
 
-Return the current FastMCP request context details (client_id, session_id, and meta dump).
+Inspect the client request metadata, server process and routed Unity Editor. The diagnostic does not test write access.
 
 ## Parameters
 

@@ -9,6 +9,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
+from services.tools import get_unity_instance_from_context
 from transport.unity_instance_middleware import get_unity_instance_middleware
 from transport.plugin_hub import PluginHub
 
@@ -49,7 +50,7 @@ def _redact_argv(argv: list[str]) -> list[str]:
 @mcp_for_unity_tool(
     unity_target=None,
     group=None,
-    description="Return the current FastMCP request context details (client_id, session_id, and meta dump).",
+    description="Inspect the client request metadata, server process and routed Unity Editor. The diagnostic does not test write access.",
     annotations=ToolAnnotations(
         title="Debug Request Context",
         readOnlyHint=True,
@@ -89,6 +90,7 @@ async def debug_request_context(ctx: Context) -> dict[str, Any]:
     # anyway (it exposed every connected client's selection).
     middleware = get_unity_instance_middleware()
     active_instance = await middleware.get_active_instance(ctx)
+    routed_instance = await get_unity_instance_from_context(ctx)
 
     # Debugging PluginHub state
     plugin_hub_configured = PluginHub.is_configured()
@@ -105,12 +107,19 @@ async def debug_request_context(ctx: Context) -> dict[str, Any]:
                     "to change its source; preserve intentional manual version pins."
                 ),
                 "cwd": os.getcwd(),
+                "cwd_scope": "MCP server process working directory",
                 "argv": _redact_argv(sys.argv),
             },
             "request_context": {
                 "client_id": rc_client_id,
                 "session_id": rc_session_id,
                 "meta": meta_dump,
+                "meta_source": "Incoming MCP request. Client settings describe the client environment.",
+            },
+            "editor_route": {
+                "unity_instance": routed_instance,
+                "edit_authorization": "not_tested",
+                "scope": "This diagnostic observes routing. Each Editor operation checks its own permissions.",
             },
             "direct_properties": {
                 "session_id": ctx_session_id,

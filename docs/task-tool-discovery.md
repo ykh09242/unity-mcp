@@ -50,6 +50,15 @@ accepts. A rejected preparation can return `action_field_conflicts` with the
 submitted field name and the actions that accept it. Keep the operation the user
 requested and check the selected action's `input_fields` before changing a draft.
 
+For a registered server operation, a prepared call identifies its MCP handler,
+the Editor routed on this request and the server permissions its arguments require. A read-only
+preview and an application of the same edit can require different permissions.
+The prepared call has not executed. The client and the Editor evaluate the
+actual invocation. `debug_request_context` reports the current request's
+`editor_route` separately from the server's working directory and the incoming
+client metadata. A denial should be attributed to the operation and authority
+that returned it.
+
 For a value the user supplied verbatim, select its boundaries in the original
 request before drafting. Keep punctuation and spaces inside the value. Use the
 surrounding sentence and any delimiters to decide whether adjacent punctuation

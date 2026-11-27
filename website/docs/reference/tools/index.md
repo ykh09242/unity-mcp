@@ -48,7 +48,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`asset_inspect`](./core/asset_inspect.md)** — Search assets or inspect their metadata and components.
 - **[`batch_execute`](./core/batch_execute.md)** — Execute multiple native MCP commands in one request.
 - **[`create_script`](./core/create_script.md)** — Create a new C# script at the given project path.
-- **[`debug_request_context`](./core/debug_request_context.md)** — Return the current FastMCP request context details (client_id, session_id, and meta dump).
+- **[`debug_request_context`](./core/debug_request_context.md)** — Inspect the client request metadata, server process and routed Unity Editor.
 - **[`delete_script`](./core/delete_script.md)** — Delete a C# script by URI or Assets-relative path.
 - **[`execute_custom_tool`](./core/execute_custom_tool.md)** — Execute a project-scoped custom tool registered by Unity.
 - **[`execute_menu_item`](./core/execute_menu_item.md)** — Find an unknown menu path with list_menu_declarations or read mcpforunity://menu-items.
