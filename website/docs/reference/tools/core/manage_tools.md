@@ -1,7 +1,7 @@
 ---
 title: manage_tools
 sidebar_label: manage_tools
-description: "Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups."
+description: "Find Unity tools and resources."
 ---
 
 # `manage_tools`
@@ -14,7 +14,7 @@ description: "Find Unity tools, actions and readable resources for a task; inspe
 
 ## Description
 
-Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. Actions: list_instances (list connected Editors on this connection, even without a resource browser), list_groups (show all groups and their status), activate/deactivate (select exactly one group or tool), sync (refresh availability from Unity Editor's toggle states), reset (restore configured profile), describe (supply tool alone to list its actions, then select one for its inputs), prepare (check a draft against a visible tool's input schema and return call arguments without execution), catalog (browse by group or tool), search (discover routes for a task in any language), inspect_inventory (compare server advertisement with this host's exact-name evidence). For exhaustive browsing, pass sibling arguments "selection": "agent" and "query": the original text string. To open a family, set "family" to its returned ID in open_family.arguments. Follow next_offset. For lexical or required evidence searches, use selection=ranked. catalog_query, intent, observation_source and required_values are ranked only. Selection changes server tools/list; it does not confirm the client's callable inventory. Use sync after toggling tools in the Unity Editor GUI.
+Find Unity tools and resources. Open the MCP guide with manage_tools(action="catalog",group="skills") and follow its read_call on this connection. Actions: list_instances (list connected Editors on this connection, even without a resource browser), list_groups (show all groups and their status), activate/deactivate (select exactly one group or tool), sync (refresh availability from Unity Editor's toggle states), reset (restore configured profile), describe (supply tool alone to list its actions, then select one for its inputs), prepare (check a draft against a visible tool's input schema and return call arguments without execution), catalog (browse by group or tool), search (discover routes for a task in any language), inspect_inventory (compare server advertisement with this host's exact-name evidence). For exhaustive browsing, pass sibling arguments "selection": "agent" and "query": the original text string. To open a family, set "family" to its returned ID in open_family.arguments. Follow next_offset. For lexical or required evidence searches, use selection=ranked. catalog_query, intent, observation_source and required_values are ranked only. Selection changes server tools/list; it does not confirm the client's callable inventory. Use sync after toggling tools in the Unity Editor GUI.
 
 ## Parameters
 

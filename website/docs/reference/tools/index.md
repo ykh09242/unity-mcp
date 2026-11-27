@@ -79,7 +79,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_script`](./core/manage_script.md)** — Compatibility router for legacy script operations.
 - **[`manage_script_capabilities`](./core/manage_script_capabilities.md)** — Get manage_script capabilities (supported ops, limits, and guards).
 - **[`manage_terrain`](./core/manage_terrain.md)** — Inspect and edit existing TerrainData with bounded region/index requests. get_info lists identities/resolutions/layers/prototypes; get_region/set_region use heights, alphamaps, holes (true=surface) or details with exact [y][x] arrays.
-- **[`manage_tools`](./core/manage_tools.md)** — Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups.
+- **[`manage_tools`](./core/manage_tools.md)** — Find Unity tools and resources.
 - **[`prefab_inspect`](./core/prefab_inspect.md)** — Inspect prefab metadata or a bounded hierarchy page.
 - **[`read_console`](./core/read_console.md)** — Gets messages from or clears the Unity Editor console.
 - **[`read_response`](./core/read_response.md)** — Reads one fixed 256 KiB base64 page of a retained oversized MCP response.

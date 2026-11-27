@@ -1,5 +1,7 @@
 """Exercise search advice and candidate selection through real MCP messages."""
 
+import json
+
 import pytest
 from fastmcp import Client
 
@@ -17,6 +19,27 @@ def search_server(monkeypatch):
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "1")
     monkeypatch.setenv("DISABLE_TELEMETRY", "1")
     return create_mcp_server(False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+async def test_initialize_search_example_is_callable_as_published(search_server, mode):
+    instructions = search_server.instructions
+    example = instructions.split("search_unity_tools with arguments ", 1)[1]
+    args, _ = json.JSONDecoder().raw_decode(example)
+    assert args == {"query": "<original text>", "selection": "agent"}
+    args["query"] = "Inspect a saved asset file"
+    async with Client(search_server, mode=mode) as client:
+        for selection in ("agent", "ranked"):
+            args["selection"] = selection
+            found = await client.call_tool("search_unity_tools", args)
+            assert found.structured_content.get("success") is not False
+        invalid = await client.call_tool(
+            "manage_tools",
+            {"action": "prepare", "tool": "search_unity_tools", "arguments": {"query": args}},
+            raise_on_error=False,
+        )
+        assert invalid.is_error and invalid.structured_content["ready"] is False
 
 
 @pytest.mark.asyncio

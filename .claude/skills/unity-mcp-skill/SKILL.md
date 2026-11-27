@@ -1,6 +1,6 @@
 ---
 name: unity-mcp-orchestrator
-description: Inspect and edit a connected Unity Editor through Unity MCP tools and resources, including scene objects, assets, scripts and test jobs. Use for live Editor work, not ordinary repository-only code edits.
+description: Inspect and edit a connected Unity Editor. To open the MCP guide, call manage_tools(action="catalog",group="skills") and follow its read_call on the same connection. Use for scene objects, assets, scripts and test jobs.
 ---
 
 # Unity MCP Operator

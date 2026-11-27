@@ -223,12 +223,18 @@ def install_skills(
                 )
 
         extension = SkillsExtension()
-        files = [
-            SkillResource(
-                uri=uri, name=uri.removeprefix(PREFIX), mime_type=mime_type, content=content
+        files = []
+        for uri, (mime_type, content) in sorted(contents.items()):
+            root = get_result.skill if uri == get_result.skill.uri else None
+            files.append(
+                SkillResource(
+                    uri=uri,
+                    name=root.frontmatter.name if root else uri.removeprefix(PREFIX),
+                    description=root.frontmatter.description if root else None,
+                    mime_type=mime_type,
+                    content=content,
+                )
             )
-            for uri, (mime_type, content) in sorted(contents.items())
-        ]
         # Construct/validate all public bindings and resources before publication.
         extension.methods()
     except (

@@ -537,8 +537,9 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 
 Target and discover
 - Find Editors via mcpforunity://instances or manage_tools(action="list_instances"). Sessionless tools use unity_instance=Name@hash, resources use _meta.unity_instance.
+- For the MCP guide use manage_tools(action="catalog",group="skills"). Follow its read_call here. Open local skills through the host.
 - Keep names and asset paths verbatim. Link files only from a verified shared project root. Read listed URIs or expand observed templates.
-- Search by meaning with search_unity_tools({{"selection":"agent","query":"<original text>"}}). Follow next_call (next_offset), set open_family.arguments.family and compare operations. Inspect manage_tools(action="describe",tool=name,operation=action).
+- Search by meaning. Call search_unity_tools with arguments {{"query":"<original text>","selection":"agent"}}. Follow next_call (next_offset), set open_family.arguments.family and compare operations. Inspect manage_tools(action="describe",tool=name,operation=action).
 - Use manage_tools(action="catalog") for reads. Fill operation.prepare_call from input_fields. Invoke prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
 - Check manage_tools(action="list_groups").discovery, client/project scope, Editor toggles and consent. Activate and refresh tools/list. Fixed hosts may need a user reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
 
@@ -553,7 +554,6 @@ Edit and verify
 - For unfamiliar C# calls check source or unity_reflect for qualified types, member signatures, static/instance access and parameter types. Recheck after symbol errors.
 - Report checks, setup, scope and gaps. Use runner results for native test counts. Name isolated probes, substituted dependencies and user interactions. Verify cleanup after async effects settle.
 - For verbatim edits distinguish the value's punctuation from the surrounding sentence. Use query and exact_text on prepare. Compare preview and saved text to the original span. Save only the target. Preserve forward-slash paths and line endings. Applying script_apply_edits(options.preview=true) requires same-host/workspace provenance, complete candidate, fresh original hash and exact UTF-8 bytes. Verify raw bytes/get_sha, diffs and file events before refresh.
-- Browse manage_tools(action="catalog",group="skills") for published read_call URIs. Open host-local skills through the host. Keep IDs/cursors for details.
 """
 
 

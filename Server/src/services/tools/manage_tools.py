@@ -437,7 +437,8 @@ async def search_unity_tools(
         },
     ),
     description=(
-        "Find Unity tools, actions and readable resources for a task; inspect schemas or manage visible groups. "
+        'Find Unity tools and resources. Open the MCP guide with manage_tools(action="catalog",group="skills") '
+        "and follow its read_call on this connection. "
         "Actions: list_instances (list connected Editors on this connection, even without a resource browser), "
         "list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "

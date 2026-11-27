@@ -136,6 +136,12 @@ async def test_catalog_skill_read_matches_packaged_document(skills_server):
         assert not result.get("isError", False)
         page = result["structuredContent"]
         document = next(row for row in page["skills"] if row["uri"] == SKILL_URI)
+        metadata = packaged_record()["payload"]["frontmatter"]
+        listing = complete_result(await skill_request(client, "resources/list", {}))
+        listed = next(row for row in listing["resources"] if row["uri"] == document["uri"])
+        for descriptor in (document, listed):
+            assert descriptor["name"] == metadata["name"]
+            assert descriptor["description"] == metadata["description"]
         call = document["read_call"]
         contents = complete_result(await skill_request(client, call["method"], call["params"]))[
             "contents"
