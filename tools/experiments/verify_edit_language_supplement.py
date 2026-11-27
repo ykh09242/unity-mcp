@@ -16,6 +16,7 @@ from tools.experiments.verify_compact_edit_followup import disk_valid, read_pair
 from tools.experiments.verify_heartbeat_edit_confirmation import (
     ACTION_CONTRACT,
     CONNECTION_GUIDE,
+    CONNECTION_OBSERVATION,
     EDITOR_TARGET,
     PREVIEW_CONTINUATION,
     STRUCTURED_SEARCH,
@@ -41,6 +42,10 @@ STUDIES = {
     "1bb23207f5854999a5ba1904f7161bc53da6a0e421df7694dbcf7285a80ffcd3": (
         "preview_continuation_confirmation_results.json",
         PREVIEW_CONTINUATION,
+    ),
+    "637bed99326117e4581b452bd473867be4f94e7f305d7e39ca7067cfda9e39a6": (
+        "connection_observation_confirmation_results.json",
+        CONNECTION_OBSERVATION,
     ),
 }
 
