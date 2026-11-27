@@ -1,4 +1,4 @@
-"""Verify matched hosted Unity edits against the November 27 confirmation."""
+"""Verify a published matched Unity edit study against its frozen predecessor."""
 
 import argparse
 import hashlib
@@ -20,12 +20,9 @@ from tools.experiments.verify_compact_edit import read
 DIRECTORY = Path(__file__).resolve().parent
 
 
-def verify(data, archive, pins, published):
-    require(
-        archive["runs"]["followup"]["product_pins"] == prior.FROZEN_PINS,
-        "Comparison must be the previously measured package",
-    )
-    verdicts = matched.verify_matched_run(data, archive, pins, prior.PUBLISHED, "followup")
+def verify(data, archive, pins, published, *, previous_digest=prior.PUBLISHED):
+    # The frozen archive digest covers the previous product pins and all per-slot evidence.
+    verdicts = matched.verify_matched_run(data, archive, pins, previous_digest, "followup")
     run = data["runs"]["followup"]
     for panel in run["panels"].values():
         for row in panel["cases"]:
@@ -36,7 +33,7 @@ def verify(data, archive, pins, published):
                 and sum(counts.values()) == row["host_item_types"].get("mcp_tool_call", 0),
                 "Host tool denominator differs",
             )
-    require(canonical(data) == published, "Frozen heartbeat edit payload differs")
+    require(canonical(data) == published, "Frozen edit confirmation payload differs")
     return verdicts
 
 
@@ -100,8 +97,12 @@ def main():
     parser.add_argument("--require-perfect", action="store_true")
     args = parser.parse_args()
     data = read(args.report)
-    archive = read(DIRECTORY / "compact_edit_confirmation_results.json")
-    verdicts = verify(data, archive, FROZEN_PINS, PUBLISHED)
+    published = canonical(data)
+    require(published in STUDIES, "Unknown edit confirmation payload")
+    archive_name, previous_digest, pins = STUDIES[published]
+    verdicts = verify(
+        data, read(DIRECTORY / archive_name), pins, published, previous_digest=previous_digest
+    )
     if args.private_root:
         verify_private(data, args.private_root, verdicts)
     totals = {
@@ -118,6 +119,18 @@ FROZEN_PINS = {
     "skill": "5875fd66f318b16564e5e8c9760d652e445bf780",
 }
 PUBLISHED = "e3cdeb5b34d85fd1fc1413a19f586e3bd760e23bad3adf263c704f0ca1353725"
+STUDIES = {
+    PUBLISHED: ("compact_edit_confirmation_results.json", prior.PUBLISHED, FROZEN_PINS),
+    "8f8b5a294014304475a6c13d075339a7f90a631f2dc3f139a75543e46f3745d6": (
+        "heartbeat_edit_confirmation_results.json",
+        PUBLISHED,
+        {
+            "package": "79fc892df8d4ea35e49c206fa4bfd7886b68d9fb",
+            "runtime": "bf92d33d3853cc1128ece25beddce5fb0b5dfbe3",
+            "skill": "dad211b9228fc4f81a291a100e46f88cf5e24ac0",
+        },
+    ),
+}
 
 if __name__ == "__main__":
     main()
