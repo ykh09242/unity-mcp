@@ -984,13 +984,18 @@ def declared_actions(entry: CatalogEntry) -> list[str]:
     parameter = inspect.signature(function, eval_str=True).parameters.get("action")
     if parameter is None:
         return []
+    action_type = parameter.annotation
+    if isinstance(action_type, str):
+        # The SDK's injected signature can retain postponed annotations even
+        # when inspect.signature receives eval_str=True.
+        action_type = inspect.get_annotations(function, eval_str=True).get("action", action_type)
 
     def literals(annotation) -> list[str]:
         if get_origin(annotation) is Literal:
             return [value for value in get_args(annotation) if isinstance(value, str)]
         return [value for argument in get_args(annotation) for value in literals(argument)]
 
-    return list(dict.fromkeys(literals(parameter.annotation)))
+    return list(dict.fromkeys(literals(action_type)))
 
 
 def guidance_for(name: str) -> ToolGuidance:

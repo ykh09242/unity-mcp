@@ -1,9 +1,10 @@
 """The public MCP and offline CLI use the same complete discovery catalog."""
 
 import json
+from typing import Annotated, Literal
 
 from click.testing import CliRunner
-from fastmcp import Client, FastMCP
+from fastmcp import Client, Context, FastMCP
 from jsonschema import Draft202012Validator
 import pytest
 
@@ -572,6 +573,21 @@ def test_every_action_card_binds_a_real_schema_property(server):
                 validator = Draft202012Validator(schema["properties"]["action"])
                 assert validator.is_valid(action), (entry["name"], action)
                 assert not validator.is_valid("unknown-action")
+
+
+def test_offline_actions_survive_sdk_context_injection_into_a_postponed_signature():
+    from services.registry.action_catalog import declared_actions
+
+    async def example(
+        ctx: Context, action: "Annotated[Literal['inspect', 'adjust'], 'Sample operation']"
+    ) -> str:
+        return action
+
+    server = FastMCP("postponed-action-annotations")
+    server.tool(example)
+
+    entry = {"name": "example", "func": example}
+    assert declared_actions(entry) == ["inspect", "adjust"]
 
 
 def test_cli_browses_offline_and_preserves_pagination(monkeypatch):
