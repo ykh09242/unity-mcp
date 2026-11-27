@@ -70,11 +70,7 @@ def _page_maximum(name, definition, arguments):
     return None
 
 
-def _exact_text_error(
-    args: dict[str, JsonValue], assertion: ExactTextAssertion, original: str
-) -> str | None:
-    if assertion.expected not in original:
-        return "expected_not_in_query"
+def _exact_text_error(args: dict[str, JsonValue], assertion: ExactTextAssertion) -> str | None:
     value: JsonValue = args
     for segment in assertion.path:
         match value, segment:
@@ -164,11 +160,23 @@ def prepare_tool_call(
         if not original:
             return not_prepared("Supply the original request verbatim in query with exact_text.")
         errors = []
+        ranges = []
         for index, assertion in enumerate(exact_text):
-            reason = _exact_text_error(args, assertion, original)
+            literal = assertion.expected
+            start = original.find(literal)
+            reason = "expected_not_in_query" if start < 0 else _exact_text_error(args, assertion)
             if reason is not None:
                 errors.append({"index": index, "reason": reason})
+            elif original.find(literal, start + 1) == -1:
+                ranges.append({"start": start, "end": start + len(literal)})
+            else:
+                ranges.append(None)
         if errors:
             return not_prepared("Exact text check failed.", exact_text_errors=errors)
         result["exact_text_checked"] = len(exact_text)
+        result["exact_text_evidence"] = {
+            "scope": "caller_selected_text",
+            "offset_unit": "unicode_code_points",
+            "source_ranges": ranges,
+        }
     return result

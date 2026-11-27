@@ -319,6 +319,7 @@ async def test_prepare_keeps_the_callers_choice_when_literal_boundaries_are_ambi
     server, selected
 ):
     draft = _script_edit(selected)
+    original = "🧭 Replace the line with Entry closed. Keep the other lines."
     async with Client(server) as client:
         response = await client.call_tool(
             "manage_tools",
@@ -326,12 +327,34 @@ async def test_prepare_keeps_the_callers_choice_when_literal_boundaries_are_ambi
                 "action": "prepare",
                 "tool": "apply_text_edits",
                 "arguments": draft,
-                "query": "Replace the line with Entry closed. Keep the other lines.",
+                "query": original,
                 "exact_text": [{"path": ["edits", 0, "newText"], "expected": selected}],
             },
         )
 
     assert response.structured_content["prepared_call"]["arguments"] == draft
+    evidence = response.structured_content["exact_text_evidence"]
+    assert evidence["scope"] == "caller_selected_text"
+    assert evidence["offset_unit"] == "unicode_code_points"
+    (span,) = evidence["source_ranges"]
+    assert original[span["start"] : span["end"]] == selected
+
+
+@pytest.mark.asyncio
+async def test_prepare_does_not_assign_one_source_range_to_overlapping_matches(server):
+    async with Client(server) as client:
+        response = await client.call_tool(
+            "manage_tools",
+            {
+                "action": "prepare",
+                "tool": "apply_text_edits",
+                "arguments": _script_edit("aa"),
+                "query": "aaa",
+                "exact_text": [{"path": ["edits", 0, "newText"], "expected": "aa"}],
+            },
+        )
+    assert response.structured_content["ready"] is True
+    assert response.structured_content["exact_text_evidence"]["source_ranges"] == [None]
 
 
 @pytest.mark.asyncio
