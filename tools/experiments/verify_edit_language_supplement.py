@@ -17,6 +17,7 @@ from tools.experiments.verify_heartbeat_edit_confirmation import (
     ACTION_CONTRACT,
     CONNECTION_GUIDE,
     EDITOR_TARGET,
+    PREVIEW_CONTINUATION,
     STRUCTURED_SEARCH,
     verified_archives,
 )
@@ -36,6 +37,10 @@ STUDIES = {
     "08f16d22899f9088883d558a5f833cc56bde05f674b67979dd15ebc96c0852ff": (
         "action_contract_confirmation_results.json",
         ACTION_CONTRACT,
+    ),
+    "1bb23207f5854999a5ba1904f7161bc53da6a0e421df7694dbcf7285a80ffcd3": (
+        "preview_continuation_confirmation_results.json",
+        PREVIEW_CONTINUATION,
     ),
 }
 

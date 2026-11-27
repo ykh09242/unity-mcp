@@ -1,0 +1,523 @@
+{
+  "schema": 1,
+  "primary_sha256": "df69472b5dfa147ead8b155f263b288704a93470b07b61a10c7fc4f48617a37c",
+  "request_sha256": "adbccbff5d05d76ee9f636e65c2ffea8870426f05b011edc27dc389d256dc679",
+  "seal_sha256": "45b6ea1d67ec992cf4e00906095ed47874aa44c8b9e482757c17877024d5dd01",
+  "languages": {
+    "h02": "de",
+    "h04": "ru",
+    "h06": "vi",
+    "h08": "fr",
+    "r01": "vi",
+    "r03": "ru",
+    "n01": "sv",
+    "n02": "it",
+    "n03": "ja",
+    "n04": "pl",
+    "n05": "es",
+    "n06": "tr",
+    "k01": "ko"
+  },
+  "product_pins": {
+    "package": "71efe67fef429fcbf7725bd9a4c6427381eb69a6",
+    "runtime": "4ae402b310ff58edfdcc5e5c2cdd370aa7250376",
+    "skill": "27438f9a68fc6d26295ab5cebbfdcac851cb18d4"
+  },
+  "actor": {
+    "version": "codex-cli 0.172.0",
+    "sha256": "3f42b12274b353ecb3ec555e6c8d0a43f6c6cb29c3a546179bc12dee4855deb6",
+    "model": "gpt-6.2-sol",
+    "reasoning_effort": "medium",
+    "host": "ordinary-codex-exec"
+  },
+  "unity_version": "6000.0.69f1",
+  "catalog_sizes": {
+    "core": 61,
+    "full": 91
+  },
+  "verified_product_archives": {
+    "package": {
+      "files": 1600,
+      "sha256": "51eaae07b928d612967b35ad98f5a2fd91fcb9999cf77c3d8c8e4ff8b7b989aa"
+    },
+    "runtime": {
+      "files": 1432,
+      "sha256": "3e5433e003e5cd24b33b4dae3c4b7033a8295272f71ab42cd9c5821fbce04d1f"
+    }
+  },
+  "native_control": {
+    "before": {
+      "value": "See the log",
+      "asset_sha256": "202257c9fbc33929527cca8acc57de3f43c6d85be36074680126e71a7406e3ac",
+      "meta_sha256": "0813afe0e713af627e19131cfca03e319f27136c282cf643a7d3941b5796f43c",
+      "protected_bytes_sha256": "14a82420e7d2e1cf3a259a9eb9815a4fc9f68b7715ddd75adbcfd167b1db320c"
+    },
+    "after": {
+      "value": "인계 기록을 열까요?",
+      "asset_sha256": "d7debd6fb6cfc10631ff135b66403f78449f60e9789d5e8e7438ead889bfc245",
+      "meta_sha256": "0813afe0e713af627e19131cfca03e319f27136c282cf643a7d3941b5796f43c",
+      "protected_bytes_sha256": "14a82420e7d2e1cf3a259a9eb9815a4fc9f68b7715ddd75adbcfd167b1db320c"
+    }
+  },
+  "shared_preferences": {
+    "owned_editor_stopped": true,
+    "shared_prefs": "5ab447bb3881745f00a37d8290018c33a1d238d17391edd6bbcd99c9267b6ffb",
+    "count": 130
+  },
+  "cases": [
+    {
+      "id": "9b4353bfa9a00be7",
+      "profile": "core",
+      "task": "r03",
+      "effect": "edit",
+      "original_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "answer_sha256": "ad0134482bfac58c2b25f9b25afac44d547b523f50ad0c0083960d5dd0bf35f0",
+      "delivery_status": "completed",
+      "seconds": 66.526,
+      "receipt_sha256": "ca21990d4243265d00583423c3d9cf9aa47735ca795757a84cbe199fb2ae8a5b",
+      "fingerprint": "a8220bc562aa32cfdfcc963c7cbbc3cd910ad4b49a22e3371e294a94acc18bf1",
+      "before_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "See the log"
+      },
+      "after_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "인계 기록을 열까요?"
+      },
+      "before_sha256": "d464ed42d95535719e826fcc1ddb9199baef3f0d6b69c14f2cc8f4af1affa57e",
+      "after_sha256": "401beaed60848796080a25140a0057f5a6b11732286200a07da357aacb47ba74",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "ed6d9f25370d4d6c656094435a1b3382d773d43d71e393d2115c6c4fb5a02832",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "33f5b7faca230e061b64a876066cce4e4053c7df20601b5ca6656570a5d924cd",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "6aba0ccfa9b64a2d25cbd2cbab2f868113b8b8958607c834bcb3a5b073d20714"
+        },
+        {
+          "index": 1,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "91dc6f598628ba59d4764e13fe2250aa3cb4edd28f53574bf04caf521149f5aa"
+        },
+        {
+          "index": 2,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "dbe421a93687171b47f58ed481b7ad5445c4a28dbee1449647137aaab626f323"
+        },
+        {
+          "index": 3,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "3d723348997c3fb9469d70da1040dbfa56c17265925353c99b449ecaa3abbae6"
+        },
+        {
+          "index": 4,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "1a528332882abe75eb81fa262141e332fc91eeb01aaf76671c81136e17280a80"
+        },
+        {
+          "index": 5,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "67dbb3a667db940fc64b5b143c3086a05006fd49c3d246e5e11d5b4c925e0731"
+        },
+        {
+          "index": 6,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "8cebf39e4cbb6b077fccfae9263bdcb9863f9f0a63ab87d8547dc2c5c6eaae64"
+        },
+        {
+          "index": 7,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "d980f227391d07becee6f6c547a7aa8bb9444f9e995f202ecb34e688d25eb51a"
+        },
+        {
+          "index": 8,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "a1fa62cebd630c0db7c944ee5e923aaf78e88639f7621242b46877667ad10a95"
+        },
+        {
+          "index": 9,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "58345c567cb251cd4606ace212dac2e83714430fd7a5505bdac706bfbd9705f6"
+        },
+        {
+          "index": 10,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "6edeb15a12597adbecc6d779a6d2e8032efabb35371ce21105835395ac3e069e"
+        },
+        {
+          "index": 11,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "18100e814e1d1c5abba71b75cfdf2d924da8a1e7609a0390acf4ea2a04a5bb56"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "1e508ba12ecfbcd5a0cd965918218658216dd3e961709bf6ba5836c85799cfa6",
+        "4e4b3e3f2a5ea99b8566eaeff5efbde166a2bd00c908e6681c34b1867ace7e02",
+        "51a0f6cfe5b921e30124638d6fe8b32d2abe9ee2c05d496861fc1e691051d7e7",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "a8220bc562aa32cfdfcc963c7cbbc3cd910ad4b49a22e3371e294a94acc18bf1",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 0,
+            "sha256": "6aba0ccfa9b64a2d25cbd2cbab2f868113b8b8958607c834bcb3a5b073d20714"
+          },
+          {
+            "index": 7,
+            "sha256": "d980f227391d07becee6f6c547a7aa8bb9444f9e995f202ecb34e688d25eb51a"
+          },
+          {
+            "index": 10,
+            "sha256": "6edeb15a12597adbecc6d779a6d2e8032efabb35371ce21105835395ac3e069e"
+          },
+          {
+            "index": 11,
+            "sha256": "18100e814e1d1c5abba71b75cfdf2d924da8a1e7609a0390acf4ea2a04a5bb56"
+          }
+        ]
+      },
+      "actor_first_list_delta": {
+        "count": 61,
+        "added": [],
+        "absent": []
+      },
+      "host_item_types": {
+        "agent_message": 3,
+        "mcp_tool_call": 12
+      },
+      "other_integrations": [],
+      "host_routes": [
+        "unityMCP/manage_tools",
+        "unityMCP/ui_source"
+      ],
+      "host_file_changes": [],
+      "before_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "after_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "host_tool_calls": {
+        "completed": 12
+      },
+      "skill_document_reads": [
+        1,
+        8
+      ],
+      "discovery_use": {
+        "list_instances": 1,
+        "describe": 1,
+        "prepare": 2,
+        "prepare_with_exact_text": 1
+      },
+      "disk": {
+        "before": {
+          "value": "See the log",
+          "asset_sha256": "202257c9fbc33929527cca8acc57de3f43c6d85be36074680126e71a7406e3ac",
+          "meta_sha256": "0813afe0e713af627e19131cfca03e319f27136c282cf643a7d3941b5796f43c",
+          "protected_bytes_sha256": "14a82420e7d2e1cf3a259a9eb9815a4fc9f68b7715ddd75adbcfd167b1db320c"
+        },
+        "after": {
+          "value": "인계 기록을 열까요?",
+          "asset_sha256": "d7debd6fb6cfc10631ff135b66403f78449f60e9789d5e8e7438ead889bfc245",
+          "meta_sha256": "0813afe0e713af627e19131cfca03e319f27136c282cf643a7d3941b5796f43c",
+          "protected_bytes_sha256": "14a82420e7d2e1cf3a259a9eb9815a4fc9f68b7715ddd75adbcfd167b1db320c"
+        }
+      },
+      "language_case": "k01"
+    },
+    {
+      "id": "8316239466907bb5",
+      "profile": "full",
+      "task": "r03",
+      "effect": "edit",
+      "original_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "answer_sha256": "dca8501af3ef269fad0c3abfb30338bf9e75ec226c4d2537809e4153b4749923",
+      "delivery_status": "completed",
+      "seconds": 64.686,
+      "receipt_sha256": "bc8f407d534f673b12fa13aace446de57f2f9fcb1d11ec9b1136d27c085f7bfc",
+      "fingerprint": "0c67efdd12be84034d8e43306b16cf5f37c4369f892d2c9e9f3c20b596e720a3",
+      "before_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "See the log"
+      },
+      "after_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "인계 기록을 열까요?"
+      },
+      "before_sha256": "f2cab091fd98249ebb6a726a64b30031c47552f4130577852480a89dc4b3afce",
+      "after_sha256": "5e434c6049b8bf42c967357e8e4b987c60a173dd151fddd5465bbe5000d623d4",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "74c37a1e16c475830c53ef5ea49d5fa6aad0745661e4dd8e0b2989f3f6820e60",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "3c98818be19bb9f5cd9e20e9f651830a7a5d913ce34ace751f4cf8083eba883d",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "5dd16cce355acb17cda5a82047b46114bc7861c309362de4b95c34e4c12fc2ff"
+        },
+        {
+          "index": 1,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "62740b9abe71334ea6ca9fa9048773aec8c362ca7c3fcde81c3f13ef7dbf2d73"
+        },
+        {
+          "index": 2,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "50dd853849ade5fddb57bf23979793713ff3a78384c8d5de28fbf4f96449cbcc"
+        },
+        {
+          "index": 3,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "72fad31f9674da16f9f979807f1bb636aab6c5dfd5e5ea6047e0794fe3d24db7"
+        },
+        {
+          "index": 4,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4ab67ae5011ea13edb18ab902b26563ac6f145bc751de63553c4bea52fbb8504"
+        },
+        {
+          "index": 5,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "8e6943aca648e46ab1eaa12cd2030ebab7dd20251667075f3c810ce65d434e8f"
+        },
+        {
+          "index": 6,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "b41b3913e7098550d87305f0aac7d43e89b4102b97914a85080fae246583aaa9"
+        },
+        {
+          "index": 7,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "115107dcbb112d069aac18f73de22c993760af43ea72238d7f001e26299a0760"
+        },
+        {
+          "index": 8,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "9227eb3c25311fc9aeb3a7f8f7d660f73b168fbb952302d17884ded4bcdbd8be"
+        },
+        {
+          "index": 9,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "16d2769b6711c69540982cbe95dfa6504d0429912ca83f526a24c47b5e8cd93c"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "e0b07a2368596803ba00fa6389fec931c01414a9fa588ec5deba2951769abc0b",
+        "e21a2c5378e1637e45738af92e69fe6be426dc7d4cc0eaed1214b7d9fc720cff",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "fc2bff0ee5f74b7f941d53fe4c25b14bc309013b99229867424fd56634575707"
+      ],
+      "review": {
+        "fingerprint": "0c67efdd12be84034d8e43306b16cf5f37c4369f892d2c9e9f3c20b596e720a3",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 2,
+            "sha256": "50dd853849ade5fddb57bf23979793713ff3a78384c8d5de28fbf4f96449cbcc"
+          },
+          {
+            "index": 7,
+            "sha256": "115107dcbb112d069aac18f73de22c993760af43ea72238d7f001e26299a0760"
+          },
+          {
+            "index": 8,
+            "sha256": "9227eb3c25311fc9aeb3a7f8f7d660f73b168fbb952302d17884ded4bcdbd8be"
+          },
+          {
+            "index": 9,
+            "sha256": "16d2769b6711c69540982cbe95dfa6504d0429912ca83f526a24c47b5e8cd93c"
+          }
+        ]
+      },
+      "actor_first_list_delta": {
+        "count": 91,
+        "added": [],
+        "absent": []
+      },
+      "host_item_types": {
+        "agent_message": 3,
+        "mcp_tool_call": 10
+      },
+      "other_integrations": [],
+      "host_routes": [
+        "unityMCP/manage_tools",
+        "unityMCP/ui_source"
+      ],
+      "host_file_changes": [],
+      "before_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "after_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "host_tool_calls": {
+        "completed": 10
+      },
+      "skill_document_reads": [
+        0,
+        5
+      ],
+      "discovery_use": {
+        "list_instances": 1,
+        "describe": 1,
+        "prepare": 1,
+        "prepare_with_exact_text": 1
+      },
+      "disk": {
+        "before": {
+          "value": "See the log",
+          "asset_sha256": "202257c9fbc33929527cca8acc57de3f43c6d85be36074680126e71a7406e3ac",
+          "meta_sha256": "0813afe0e713af627e19131cfca03e319f27136c282cf643a7d3941b5796f43c",
+          "protected_bytes_sha256": "14a82420e7d2e1cf3a259a9eb9815a4fc9f68b7715ddd75adbcfd167b1db320c"
+        },
+        "after": {
+          "value": "인계 기록을 열까요?",
+          "asset_sha256": "d7debd6fb6cfc10631ff135b66403f78449f60e9789d5e8e7438ead889bfc245",
+          "meta_sha256": "0813afe0e713af627e19131cfca03e319f27136c282cf643a7d3941b5796f43c",
+          "protected_bytes_sha256": "14a82420e7d2e1cf3a259a9eb9815a4fc9f68b7715ddd75adbcfd167b1db320c"
+        }
+      },
+      "language_case": "k01"
+    }
+  ]
+}

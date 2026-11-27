@@ -126,6 +126,7 @@ EDITOR_TARGET = "41cce2d17f0d28a78dc043b8472fc7dcea3ae6498bf0722fe2439c8f038e748
 CONNECTION_GUIDE = "97a8010ea2eca05d485a7aa11ab0a64318660fe3182014dd688ba8198d1b45e1"
 STRUCTURED_SEARCH = "af08d11b9b7aae4c8d0d45dec1bcbead3053499eb566f04258d9d9fb27568814"
 ACTION_CONTRACT = "c45b292c8ef906242f676725fb69b215e5ac617810ffc34e304ecf30fd194137"
+PREVIEW_CONTINUATION = "df69472b5dfa147ead8b155f263b288704a93470b07b61a10c7fc4f48617a37c"
 STUDIES = {
     PUBLISHED: ("compact_edit_confirmation_results.json", prior.PUBLISHED, FROZEN_PINS),
     EDITOR_CATALOG: (
@@ -188,6 +189,15 @@ STUDIES = {
         {
             "package": "fb6f96ef3c137e1bb7538f45b578c4434cd1681e",
             "runtime": "ec717c6329f7c09812360802b6ad59f5fab7c3a2",
+            "skill": "27438f9a68fc6d26295ab5cebbfdcac851cb18d4",
+        },
+    ),
+    PREVIEW_CONTINUATION: (
+        "action_contract_confirmation_results.json",
+        ACTION_CONTRACT,
+        {
+            "package": "71efe67fef429fcbf7725bd9a4c6427381eb69a6",
+            "runtime": "4ae402b310ff58edfdcc5e5c2cdd370aa7250376",
             "skill": "27438f9a68fc6d26295ab5cebbfdcac851cb18d4",
         },
     ),
