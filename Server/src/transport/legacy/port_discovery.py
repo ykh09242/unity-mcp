@@ -14,6 +14,7 @@ What changed and why:
 from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
+from importlib import import_module
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ from pathlib import Path
 import socket
 import struct
 import time
+from typing import TextIO
 
 from models.models import UnityInstanceInfo
 
@@ -30,6 +32,27 @@ logger = logging.getLogger("mcp-for-unity-server")
 _discovery_check: ContextVar[Callable[[], float | None] | None] = ContextVar(
     "discovery_check", default=None
 )
+
+
+def open_status_snapshot(path: Path) -> TextIO:
+    """Keep reading one heartbeat version while the Editor replaces its directory entry."""
+    if os.name != "nt":
+        return path.open("r", encoding="utf-8")
+
+    winapi = import_module("_winapi")
+    msvcrt = import_module("msvcrt")
+
+    def open_shared(name: str, flags: int) -> int:
+        # FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE. No delete
+        # access is requested for the reader itself.
+        handle = winapi.CreateFile(name, winapi.GENERIC_READ, 7, 0, winapi.OPEN_EXISTING, 0, 0)
+        try:
+            return msvcrt.open_osfhandle(handle, flags)
+        except BaseException:
+            winapi.CloseHandle(handle)
+            raise
+
+    return open(path, "r", encoding="utf-8", opener=open_shared)
 
 
 def selector_port(value: str, instances: list) -> int | None:
@@ -40,6 +63,27 @@ def selector_port(value: str, instances: list) -> int | None:
         return None
     digits = value.lstrip("0") or "0"
     return int(digits) if len(digits) <= 5 else None
+
+
+class ConflictingProjectIdentity(ConnectionError):
+    """Current listener observations bind one exact selector to different project roots."""
+
+
+def exact_project_instance(
+    identifier: str, instances: list[UnityInstanceInfo]
+) -> UnityInstanceInfo | None:
+    """Select the newest viable endpoint only when the exact ID names one project path."""
+    selected = None
+    for instance in instances:
+        if instance.id != identifier:
+            continue
+        if selected is None:
+            selected = instance
+        elif instance.path != selected.path:
+            raise ConflictingProjectIdentity(
+                f"Multiple Unity project paths advertise the same instance ID '{identifier}'."
+            )
+    return selected
 
 
 def match_bare_selector(value: str, instances: list, *, stdio: bool):
@@ -277,7 +321,7 @@ class PortDiscovery:
             )
             if not status_files:
                 return None
-            with status_files[0].open("r", encoding="utf-8") as f:
+            with open_status_snapshot(status_files[0]) as f:
                 return json.load(f)
         except Exception:
             return None
@@ -389,8 +433,10 @@ class PortDiscovery:
         for path in base.glob("unity-mcp-status-*.json"):
             check_discovery()
             try:
-                modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
-                with path.open("r", encoding="utf-8") as stream:
+                with open_status_snapshot(path) as stream:
+                    modified = datetime.fromtimestamp(
+                        os.fstat(stream.fileno()).st_mtime, timezone.utc
+                    )
                     data = json.load(stream)
                 if isinstance(data, dict):
                     entries.append((path, data, modified))
@@ -420,7 +466,7 @@ class PortDiscovery:
             and entry[1]["unity_port"] in target_ports
         ]
         instances = PortDiscovery._discover_status_entries(competing_entries)
-        return next((instance for instance in instances if instance.id == instance_id), None)
+        return exact_project_instance(instance_id, instances)
 
     @staticmethod
     def _discover_status_entries(

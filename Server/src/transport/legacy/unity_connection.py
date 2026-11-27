@@ -18,10 +18,13 @@ import logging
 import os
 from pathlib import Path
 from transport.legacy.port_discovery import (
+    ConflictingProjectIdentity,
     PortDiscovery,
     checked_lock,
     discovery_checks,
+    exact_project_instance,
     match_bare_selector,
+    open_status_snapshot,
 )
 import random
 import re
@@ -325,14 +328,7 @@ def read_status_file(target_hash: str | None = None) -> dict | None:
             status_files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
         if not status_files:
             return None
-        if target_hash:
-            for status_path in status_files:
-                if status_path.stem.endswith(target_hash):
-                    with status_path.open("r", encoding="utf-8") as f:
-                        return json.load(f)
-            return None
-        # Untargeted legacy connections use the most recent status.
-        with status_files[0].open("r", encoding="utf-8") as f:
+        with open_status_snapshot(status_files[0]) as f:
             return json.load(f)
     except FileNotFoundError:
         logger.debug("Unity status file disappeared before it could be read")
@@ -1480,12 +1476,15 @@ class UnityConnectionPool:
                 }
             logger.debug("Retired an idle Unity connection absent from discovery")
 
-    def discover_all_instances(self, force_refresh: bool = False) -> list[UnityInstanceInfo]:
+    def discover_all_instances(
+        self, force_refresh: bool = False, *, confirm_sole: bool = True
+    ) -> list[UnityInstanceInfo]:
         """
         Discover all running Unity Editor instances.
 
         Args:
             force_refresh: If True, bypass cache and scan immediately
+            confirm_sole: Check a transition to a sole Editor before callers can auto-select it.
 
         Returns:
             List of UnityInstanceInfo objects
@@ -1509,11 +1508,35 @@ class UnityConnectionPool:
             logger.debug("Scanning for Unity instances...")
             instances = PortDiscovery.discover_all_unity_instances()
             selection.check()
+            if (
+                confirm_sole
+                and len(instances) == 1
+                and self._known_instances.keys() - {instances[0].id}
+            ):
+                # A full listing can immediately become an unbound selection.
+                # Recheck a new singleton once before giving it that authority.
+                instances = PortDiscovery.discover_all_unity_instances()
+                selection.check()
 
             # Update cache
             with selection.lock(self._pool_lock):
-                self._known_instances = {inst.id: inst for inst in instances}
-                self._last_full_scan = time.monotonic()
+                known = {}
+                conflicting = set()
+                for instance in instances:
+                    newest = known.setdefault(instance.id, instance)
+                    if newest is not instance and newest.path != instance.path:
+                        conflicting.add(instance.id)
+                for identifier in conflicting:
+                    del known[identifier]
+                # A heartbeat rewrite can hide only one of several Editors. A
+                # reduced inventory must not certify its survivors as sole targets
+                # for later calls until a second scan confirms the disappearance.
+                removed = not self._known_instances.keys() <= known.keys()
+                self._known_instances = known
+                # An ID-keyed cache cannot represent every responding port when
+                # duplicate status variants exist. Keep unbound selection ambiguous.
+                cacheable = not removed and len(known) == len(instances)
+                self._last_full_scan = time.monotonic() if cacheable else None
                 self._target_refreshes.clear()
                 now_monotonic = time.monotonic()
                 for instance_id in self._connections:
@@ -1562,10 +1585,11 @@ class UnityConnectionPool:
         previous = self._known_instances.get(identifier)
         instances = self._discover_instance_candidates(identifier, force_refresh=True)
         if (
-            instances
+            exact_project_instance(identifier, instances) is not None
             or previous is None
             or previous.status != "running"
             or not previous.listener_generation
+            or any(instance.port == previous.port for instance in instances)
         ):
             return instances
 
@@ -1575,16 +1599,17 @@ class UnityConnectionPool:
         selection = _connection_selection.get() or _ConnectionSelection(None)
         selection.cancelled.wait(selection.wait_timeout())
         selection.check()
-        return self._discover_instance_candidates(
-            identifier, force_refresh=True, live_target_only=True
+        recovered = self._discover_instance_candidates(
+            identifier, force_refresh=True, live_project_path=previous.path
         )
+        return recovered or instances
 
     def _discover_instance_candidates(
         self,
         instance_identifier: str | None,
         force_refresh: bool,
         *,
-        live_target_only: bool = False,
+        live_project_path: str | None = None,
     ) -> list[UnityInstanceInfo]:
         if config.http_remote_hosted:
             raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
@@ -1606,10 +1631,26 @@ class UnityConnectionPool:
                     and now - refreshed < self._scan_interval
                 ):
                     return [self._known_instances[identifier]]
-                target = PortDiscovery.discover_unity_instance(identifier)
+                try:
+                    target = PortDiscovery.discover_unity_instance(identifier)
+                except ConflictingProjectIdentity:
+                    # The fresh observation invalidates both earlier forms of
+                    # positive metadata. In-flight commands retain their owners.
+                    with selection.lock(self._pool_lock):
+                        self._known_instances = {
+                            key: item
+                            for key, item in self._known_instances.items()
+                            if key != identifier
+                        }
+                        self._target_refreshes.pop(identifier, None)
+                        self._last_full_scan = None
+                    raise
                 selection.check()
-                if live_target_only and (
-                    target is None or target.status != "running" or not target.listener_generation
+                if live_project_path is not None and (
+                    target is None
+                    or target.path != live_project_path
+                    or target.status != "running"
+                    or not target.listener_generation
                 ):
                     return []
                 if target is not None:
@@ -1639,8 +1680,10 @@ class UnityConnectionPool:
                         # A partial refresh cannot certify a global inventory.
                         self._last_full_scan = None
                     return [target]
-        # Ambiguous, noncanonical, missing and displaced selectors keep the
-        # existing global discovery and helpful selection errors.
+            # Only this exact ID can satisfy the caller, regardless of the
+            # number of neighbors reported by the full fallback.
+            return self.discover_all_instances(force_refresh=force_refresh, confirm_sole=False)
+        # Noncanonical selectors and unbound callers need the complete inventory.
         return self.discover_all_instances(force_refresh=force_refresh)
 
     def _resolve_instance_id(
@@ -1690,9 +1733,9 @@ class UnityConnectionPool:
             raise _StdioTargetUnavailable("Unity instance selector is empty")
 
         # Try exact ID match first
-        for inst in instances:
-            if inst.id == identifier:
-                return inst
+        exact = exact_project_instance(identifier, instances)
+        if exact is not None:
+            return exact
 
         # Only an exact match above can satisfy a full ID. A stale ID must not
         # become a different project's name, hash prefix, port or path.

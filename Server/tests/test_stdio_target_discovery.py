@@ -166,12 +166,69 @@ def test_fresh_reload_is_retained_and_next_refresh_probes_again(target_environme
     assert pool._known_instances["Main@deadbeef"].status == "running"
 
 
+def test_temporary_heartbeat_gap_does_not_cache_a_healthy_editor_as_absent(
+    target_environment, monkeypatch
+):
+    pool, write, probes, _, _ = target_environment
+    generation = "a" * 32
+    monkeypatch.setattr(
+        PortDiscovery, "_try_probe_unity_mcp", lambda port: probes.append(port) or generation
+    )
+    path = write("Main", "deadbeef", 6400, listener_generation=generation)
+    assert [row.id for row in pool.discover_all_instances()] == ["Main@deadbeef"]
+    # An older publisher truncates the heartbeat before writing new JSON.
+    # The listener stays healthy and the lookup must never use the old address.
+    heartbeat = path.read_bytes()
+    path.write_bytes(b"{")
+    assert pool.discover_all_instances(force_refresh=True) == []
+    path.write_bytes(heartbeat)
+    assert [row.id for row in pool.discover_all_instances()] == ["Main@deadbeef"]
+    # A confirmed empty inventory still uses the normal bounded negative cache.
+    path.unlink()
+    assert pool.discover_all_instances(force_refresh=True) == []
+    assert pool.discover_all_instances() == []
+    scans = len(probes)
+    assert pool.discover_all_instances() == [] and len(probes) == scans
+
+
 def test_parallel_exact_target_calls_share_refresh(target_environment):
     pool, _, probes, _, _ = target_environment
     with ThreadPoolExecutor(max_workers=3) as executor:
         connections = list(executor.map(pool.get_connection, ["Main@deadbeef"] * 3))
     assert all(conn is connections[0] for conn in connections)
     assert probes == [6400]
+
+
+def test_partial_inventory_does_not_certify_a_cached_sole_editor(target_environment):
+    pool, write, probes, _, available = target_environment
+    available.add(6401)
+    main_path = write("Main", "deadbeef", 6400)
+    heartbeat = main_path.read_bytes()
+    assert {row.name for row in pool.discover_all_instances()} == {"Main", "Other"}
+    main_path.write_bytes(b"{")
+    assert [row.name for row in pool.discover_all_instances(force_refresh=True)] == ["Other"]
+    main_path.write_bytes(heartbeat)
+    with pytest.raises(ConnectionError, match="Multiple Unity instances"):
+        pool.resolve_instance()
+    main_path.unlink()
+    assert [row.name for row in pool.discover_all_instances(force_refresh=True)] == ["Other"]
+    assert pool.resolve_instance().name == "Other"
+    scans = len(probes)
+    assert pool.resolve_instance().name == "Other" and len(probes) == scans
+
+
+def test_unbound_request_confirms_the_first_shrunken_singleton_before_selecting(
+    target_environment, monkeypatch
+):
+    pool, _, _, _, available = target_environment
+    available.add(6401)
+    both = pool.discover_all_instances()
+    other = next(row for row in both if row.name == "Other")
+    snapshots = iter([[other], both])
+    monkeypatch.setattr(PortDiscovery, "discover_all_unity_instances", lambda: next(snapshots))
+    with pytest.raises(ConnectionError, match="Multiple Unity instances"):
+        pool.resolve_instance(force_refresh=True)
+    assert list(snapshots) == [] and pool._connections == {}
 
 
 def test_stopped_launch_remains_visible_during_reload_only_while_port_is_offline(
@@ -279,6 +336,43 @@ def test_duplicate_target_statuses_keep_newest_viable_port(target_environment, t
     assert sorted(probes) == [6400, 6402]
 
 
+@pytest.mark.parametrize("other_root", [False, True])
+def test_duplicate_exact_identity_has_consistent_full_and_target_selection(
+    target_environment, tmp_path, monkeypatch, other_root
+):
+    pool, write, _, _, _ = target_environment
+    launches = {6400: "a" * 32, 6402: "b" * 32}
+    monkeypatch.setattr(PortDiscovery, "_try_probe_unity_mcp", launches.get)
+    project = "Main@deadbeef"
+    latest = write(
+        "Main",
+        "deadbeef",
+        6402,
+        offset=1,
+        listener_generation=launches[6402],
+        project_path="/Owned/Copy/Main/Assets" if other_root else "/Owned/Main/Assets",
+    )
+    latest.rename(tmp_path / "unity-mcp-status-deadbeef.json.json")
+    write("Main", "deadbeef", 6400, listener_generation=launches[6400])
+    assert [row.port for row in pool.discover_all_instances(force_refresh=True)] == [6402, 6400]
+    with pytest.raises(ConnectionError, match="Multiple Unity instances"):
+        pool.resolve_instance()
+    if other_root:
+        with pytest.raises(ConnectionError, match="Multiple Unity project paths"):
+            pool.resolve_instance(project)
+        assert project not in pool._known_instances
+        with monkeypatch.context() as first_scan:
+            first_scan.setattr(PortDiscovery, "discover_unity_instance", lambda _: None)
+            with pytest.raises(ConnectionError, match="Multiple Unity project paths"):
+                pool._observe_exact_instance(project)
+    else:
+        assert pool._known_instances[project].port == 6402
+        assert pool.resolve_instance(project).port == 6402
+        assert pool.resolve_instance(project, force_refresh=True).port == 6402
+    with pytest.raises(ConnectionError, match="Multiple Unity instances"):
+        pool.resolve_instance()
+
+
 def test_exact_target_real_pong_does_not_override_newer_port_identity(monkeypatch, tmp_path):
     monkeypatch.setenv("UNITY_MCP_STATUS_DIR", str(tmp_path))
     # This test checks which identity owns a responding port. Allow the real peer
@@ -325,6 +419,33 @@ def test_exact_target_real_pong_does_not_override_newer_port_identity(monkeypatc
             assert PortDiscovery.discover_unity_instance("Main@deadbeef") is None
             server.result(timeout=watchdog_timeout())
     assert len(received) == 2
+
+
+@pytest.mark.parametrize("cached_inventory", [False, True])
+def test_conflicting_exact_observation_revokes_any_previous_positive_cache(
+    target_environment, tmp_path, monkeypatch, cached_inventory
+):
+    pool, write, _, _, _ = target_environment
+    generations = {6400: "a" * 32, 6402: "b" * 32}
+    monkeypatch.setattr(PortDiscovery, "_try_probe_unity_mcp", generations.get)
+    original = write("Main", "deadbeef", 6400, listener_generation=generations[6400])
+    original.rename(tmp_path / "unity-mcp-status-deadbeef.json.json")
+    identifier = "Main@deadbeef"
+    assert pool.resolve_instance(identifier).port == 6400
+    if cached_inventory:
+        assert [row.port for row in pool.discover_all_instances(force_refresh=True)] == [6400]
+    write(
+        "Main",
+        "deadbeef",
+        6402,
+        project_path="/Other/Main/Assets",
+        listener_generation=generations[6402],
+    )
+    with pytest.raises(ConnectionError, match="Multiple Unity project paths"):
+        pool._observe_exact_instance(identifier)
+    with pytest.raises(ConnectionError, match="Multiple Unity project paths"):
+        pool.resolve_instance(identifier)
+    assert identifier not in pool._known_instances and pool._last_full_scan is None
 
 
 @pytest.mark.asyncio

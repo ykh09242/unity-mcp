@@ -135,19 +135,33 @@ async def test_known_exact_selector_rechecks_empty_inventory_without_sending_com
 
 
 @pytest.mark.asyncio
-async def test_known_exact_selector_stays_missing_when_inventory_has_another_editor(
-    local_discovery, monkeypatch
+@pytest.mark.parametrize("outcome", ["recover", "missing", "other_root", "displaced"])
+async def test_known_exact_selector_rechecks_its_own_project_with_a_remaining_neighbor(
+    local_discovery, monkeypatch, outcome
 ):
     pool, target, middleware, ctx = local_discovery
     target.status, target.listener_generation = "running", "a" * 32
-    other = SimpleNamespace(id="Other@cafebabe", port=6401)
-    observed = iter([target, None])
+    other = SimpleNamespace(
+        id="Other@cafebabe", port=target.port if outcome == "displaced" else 6401
+    )
+    replacement = SimpleNamespace(**vars(target))
+    if outcome == "other_root":
+        replacement.path = "/Another/Main/Assets"
+    observations = [target, None]
+    if outcome != "displaced":
+        observations.append(None if outcome == "missing" else replacement)
+    observed = iter(observations)
     monkeypatch.setattr(PortDiscovery, "discover_unity_instance", lambda _: next(observed))
     monkeypatch.setattr(PortDiscovery, "discover_all_unity_instances", lambda: [other])
     assert await middleware._resolve_instance_value(target.id, ctx) == target.id
-    with pytest.raises(ValueError, match="Available: Other@cafebabe"):
-        await middleware._resolve_instance_value(target.id, ctx)
-    assert set(pool._known_instances) == {other.id}
+    if outcome == "recover":
+        assert await middleware._resolve_instance_value(target.id, ctx) == target.id
+        assert set(pool._known_instances) == {target.id, other.id}
+    else:
+        with pytest.raises(ValueError, match="Available: Other@cafebabe"):
+            await middleware._resolve_instance_value(target.id, ctx)
+        assert set(pool._known_instances) == {other.id}
+    assert list(observed) == []
     assert pool._connections == {} and ctx.state == {}
 
 
