@@ -1,6 +1,5 @@
 """Bounded local task matching over declarations; never an admission mechanism."""
 
-import unicodedata
 from collections import Counter
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -45,6 +44,8 @@ from services.registry.action_catalog import (
     tool_description,
 )
 from services.registry.open_shader_graph_observation import OPEN_GRAPH_OBSERVATION
+from services.registry.search_text import normalize_search_text as _normalized
+from services.registry.search_text import search_words as _words
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 from services.registry.capability_catalog import (
     CAMERA_INVENTORY_TOOL,
@@ -353,22 +354,6 @@ def _group_routes(
                 group_key, {"representative": bindings[0], "alternatives": bindings[1:]}
             )
     return list(grouped.values())
-
-
-def _normalized(value: str) -> str:
-    # Case folding can produce decomposed sequences, including Greek accents.
-    folded = unicodedata.normalize("NFKC", value).casefold()
-    return unicodedata.normalize("NFKC", folded)
-
-
-def _words(value: str) -> set[str]:
-    # Keep combining marks with their letters across scripts. Separators (including
-    # identifier underscores) form boundaries without language-specific word rules.
-    characters = (
-        character if unicodedata.category(character)[0] in "LNM" else " "
-        for character in _normalized(value)
-    )
-    return set("".join(characters).split())
 
 
 def _term_evidence(words: set[str], *fields: tuple[str, int]) -> dict[str, int]:

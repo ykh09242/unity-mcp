@@ -6,12 +6,59 @@ from unittest.mock import AsyncMock
 from fastmcp import Client, Context, FastMCP
 from fastmcp.exceptions import AuthorizationError
 from fastmcp.server.middleware import Middleware
+from jsonschema import Draft202012Validator
 import pytest
 
 from services.resource_inventory import register_catalog_observation
 
 from .test_action_catalog_entrypoints import server as server
 from .test_http_command_outcome import command_hub  # pylint: disable=unused-import
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_scoped_skill_query_filters_listed_metadata_before_pagination(server, mode):
+    reads = []
+
+    def document() -> str:
+        reads.append(True)
+        return "workflows private marker"
+
+    descriptors = (
+        ("skill://example/a.md", "Asset setup"),
+        ("skill://example/b.md", "Unicode Workflows"),
+        ("skill://example/c.md", "Editor setup"),
+        ("skill://example/workflows.md", "Release notes"),
+    )
+    for uri, description in descriptors:
+        server.resource(uri, description=description)(document)
+
+    async with Client(server, mode=mode) as client:
+        schema = next(t.input_schema for t in await client.list_tools() if t.name == "manage_tools")
+        arguments = {"action": "catalog", "group": "skills", "query": "workflows", "limit": 1}
+        Draft202012Validator(schema).validate(arguments)
+        pages = [
+            (
+                await client.call_tool("manage_tools", {**arguments, "offset": offset})
+            ).structured_content
+            for offset in range(3)
+        ]
+        private = (
+            await client.call_tool("manage_tools", {**arguments, "query": "private marker"})
+        ).structured_content
+
+    assert [[item["uri"] for item in page["skills"]] for page in pages] == [
+        [descriptors[1][0]],
+        [descriptors[3][0]],
+        [],
+    ]
+    assert [(page["total"], page["offset"], page["next_offset"]) for page in pages] == [
+        (2, 0, 1),
+        (2, 1, None),
+        (2, 2, None),
+    ]
+    assert private["skills"] == [] and private["total"] == 0
+    assert reads == []
 
 
 @pytest.mark.asyncio

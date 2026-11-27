@@ -1,6 +1,7 @@
 """Complete action discovery is independent of query wording and editor access."""
 
 import inspect
+import unicodedata
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -68,6 +69,91 @@ def test_group_pages_are_stable_and_keep_unadvertised_tools(entries):
     assert first["next_offset"] == 3
     assert all(tool["advertised"] is False for tool in first["tools"])
     assert first["scope"] == "mcp_context"
+
+
+@pytest.fixture
+def filterable_tool_entries():
+    visible = {
+        "name": "example_visible",
+        "group": "core",
+        "description": "Boîte catalog\n- inspect_sample: Inspect un échantillon.\n- summarize: Report status.",
+        "kwargs": {"annotations": {"readOnlyHint": True}},
+        "input_schema": {
+            "properties": {
+                "action": {"enum": ["inspect_sample", "summarize"]},
+                "project_id": {"description": "schemaonly placeholder"},
+            }
+        },
+    }
+    return [
+        visible,
+        {**visible, "name": "example_hidden"},
+        {**visible, "group": "ui", "name": "example_other"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("request_fields", "key", "identifier", "expected"),
+    [
+        ({"group": "core", "query": "ＢＯÎＴＥ"}, "tools", "name", ["example_visible"]),
+        ({"group": "core", "query": "schemaonly"}, "tools", "name", []),
+        (
+            {"tool": "example_visible", "query": unicodedata.normalize("NFD", "ÉCHANTILLON")},
+            "actions",
+            "action",
+            ["inspect_sample"],
+        ),
+        (
+            {"group": "core", "query": "INSPECT SAMPLE", "intent": "observe"},
+            "actions",
+            "action",
+            ["inspect_sample"],
+        ),
+        (
+            {"tool": "example_visible", "query": "sample", "operation": "summarize"},
+            "actions",
+            "action",
+            [],
+        ),
+    ],
+)
+def test_scoped_query_combines_visible_metadata_and_selectors(
+    filterable_tool_entries, request_fields, key, identifier, expected
+):
+    request = action_catalog.CatalogRequest(**request_fields)
+    page = action_catalog.browse_catalog(
+        request, filterable_tool_entries, visible_names={"example_visible", "example_other"}
+    )
+
+    assert [row[identifier] for row in page[key]] == expected
+    assert page["total"] == len(expected) and page["next_offset"] is None
+
+
+@pytest.mark.parametrize(
+    ("group", "query", "identifier", "expected"),
+    [
+        ("resources", "ＢＯÎＴＥ", "uri", "mcpforunity://example/first"),
+        ("resource_templates", "配色", "uri_template", "mcpforunity://example/palettes/{color}"),
+    ],
+)
+def test_other_resource_scopes_filter_descriptor_metadata(group, query, identifier, expected):
+    descriptors = [
+        {"name": "First", "uri": "mcpforunity://example/first", "description": "Boîte"},
+        {"name": "Second", "uri": "mcpforunity://example/second", "description": "Notes"},
+        {
+            "name": "Palette",
+            "uri": "mcpforunity://example/palettes/{color}",
+            "description": "配色",
+            "schema_required": ("color",),
+        },
+        {"name": "Notes", "uri": "mcpforunity://example/notes/{item}", "description": "Notes"},
+    ]
+    page = action_catalog.browse_catalog(
+        action_catalog.CatalogRequest(group=group, query=query, limit=1), [], resources=descriptors
+    )
+
+    assert [row[identifier] for row in page[group]] == [expected]
+    assert page["total"] == 1 and page["next_offset"] is None
 
 
 def test_scene_inventory_and_activation_expose_distinct_action_contracts(entries):

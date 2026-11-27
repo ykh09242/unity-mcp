@@ -48,10 +48,12 @@ from services.registry.action_guidance_types import (
     ObservationSource as ObservationSource,
     ObservationValue as ObservationValue,
 )
+from services.registry.call_preparation import MAX_ORIGINAL_REQUEST_LENGTH
 from services.registry.capability_catalog import CAPABILITIES, READ_ONLY_EFFECTS, CapabilityEffects
 from services.registry.editor_action_guidance import EDITOR_ACTIONS
 from services.registry.integration_action_guidance import INTEGRATION_ACTIONS
 from services.registry.open_shader_graph_observation import OPEN_GRAPH_OBSERVATION
+from services.registry.search_text import search_words
 from services.registry.tool_registry import TOOL_GROUPS, ToolMaturity
 
 
@@ -61,6 +63,8 @@ class CatalogEntry(TypedDict):
     description: str | None
     kwargs: dict[str, ToolAnnotations | dict[str, JsonValue]]
     maturity: NotRequired[ToolMaturity]
+    title: NotRequired[str | None]
+    wire_only: NotRequired[bool]
     func: NotRequired[Callable]
     input_schema: NotRequired[dict]
 
@@ -992,6 +996,8 @@ def declared_actions(entry: CatalogEntry) -> list[str]:
         return [value for value in selectors if direct is None or value in direct]
     if direct is not None:
         return direct
+    if entry.get("wire_only"):
+        return []
     capability = _CAPABILITIES.get(entry["name"])
     if capability is not None:
         return list(capability.actions)
@@ -1058,8 +1064,9 @@ def action_guidance(
     entry: CatalogEntry, action: str | None, *, inherit: bool = True
 ) -> ActionGuidance | None:
     """Use reviewed action evidence or the tool's own wire schema alternative."""
+    metadata = entry.get("kwargs", {}).get("meta") or {}
     if action is None:
-        observation = (entry.get("kwargs", {}).get("meta") or {}).get(OBSERVATION_META)
+        observation = metadata.get(OBSERVATION_META)
         if observation:
             return ActionGuidance(
                 tool_description(entry),
@@ -1067,19 +1074,26 @@ def action_guidance(
                 observation=observation,
             )
         return None
-    guidance = TOOL_GUIDANCE.get(entry["name"])
-    if guidance and action in guidance.actions:
-        return guidance.actions[action]
-    contract = ACTION_CONTRACTS.get(entry["name"], {}).get(action)
-    if contract:
-        return ActionGuidance(
-            contract.purpose,
-            effects=READ_ONLY_EFFECTS if contract.read_only else CapabilityEffects(),
-            intent="observe" if contract.read_only else "edit",
-        )
-    owner = operation_owner(entry["name"], action)
-    source = TOOL_GUIDANCE.get(owner) if inherit and owner != entry["name"] else None
-    shared = source.actions.get(action) if source else None
+    observation = None
+    shared = None
+    if entry.get("wire_only"):
+        action_observations = metadata.get(ACTION_OBSERVATIONS_META)
+        if isinstance(action_observations, dict):
+            observation = action_observations.get(action)
+    else:
+        guidance = TOOL_GUIDANCE.get(entry["name"])
+        if guidance and action in guidance.actions:
+            return guidance.actions[action]
+        contract = ACTION_CONTRACTS.get(entry["name"], {}).get(action)
+        if contract:
+            return ActionGuidance(
+                contract.purpose,
+                effects=READ_ONLY_EFFECTS if contract.read_only else CapabilityEffects(),
+                intent="observe" if contract.read_only else "edit",
+            )
+        owner = operation_owner(entry["name"], action)
+        source = TOOL_GUIDANCE.get(owner) if inherit and owner != entry["name"] else None
+        shared = source.actions.get(action) if source else None
     schema = entry.get("input_schema", {})
     variants = [
         variant
@@ -1109,36 +1123,40 @@ def action_guidance(
     elif shared and shared.required:
         admitted = schema.get("properties", getattr(_CAPABILITIES[entry["name"]], "parameters", ()))
         required = tuple(name for name in shared.required if name in admitted)
-    if variants or purpose or shared:
+    if variants or purpose or shared or observation:
         return ActionGuidance(
             purpose,
             required,
             evidence_limit=shared.evidence_limit if shared else "",
             intent=shared.intent if shared else None,
+            observation=observation,
         )
     return None
 
 
 def tool_description(entry: CatalogEntry) -> str:
-    capability = _CAPABILITIES.get(entry["name"])
+    capability = None if entry.get("wire_only") else _CAPABILITIES.get(entry["name"])
     return entry.get("description") or (capability.description if capability else "")
 
 
 def tool_capability(entry: CatalogEntry, *, visible_names: set[str] | None = None) -> CatalogTool:
     """Shared metadata for lexical search, browsing and exact descriptions."""
     name = entry["name"]
-    capability = _CAPABILITIES.get(name)
-    guidance = guidance_for(name)
+    wire_only = entry.get("wire_only", False)
+    capability = None if wire_only else _CAPABILITIES.get(name)
+    guidance = ToolGuidance() if wire_only else guidance_for(name)
     annotations = ToolAnnotations.model_validate(entry.get("kwargs", {}).get("annotations") or {})
     return {
         "name": name,
         "group": entry.get("group"),
-        "title": (annotations.title or (capability.title if capability else name))[:256],
+        "title": (
+            entry.get("title") or annotations.title or (capability.title if capability else name)
+        )[:256],
         "description": tool_description(entry)[:1200],
         "aliases": [capability.source] if capability else [],
         "actions": declared_actions(entry),
         "maturity": entry.get("maturity", "stable"),
-        "action_maturity": action_maturity(name),
+        "action_maturity": {} if wire_only else action_maturity(name),
         "advertised": name in visible_names if visible_names is not None else None,
         "readiness": "unobserved",
         "requirements": list(guidance.requirements),
@@ -1166,6 +1184,14 @@ def action_intent(guidance: ActionGuidance | None, tool: CatalogTool) -> ActionI
     return "observe" if read_only is True else None
 
 
+def _action_purpose(
+    action: str | None, guidance: ActionGuidance | None, tool_description: str
+) -> str:
+    if guidance and guidance.purpose:
+        return guidance.purpose
+    return action.replace("_", " ") if action else tool_description
+
+
 def action_card(entry: CatalogEntry, action: str | None) -> dict:
     """Describe one declared operation, retaining conservative tool-wide effects."""
     declared = declared_actions(entry) or [None]
@@ -1173,10 +1199,14 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
         raise ValueError(f"Unknown action {action!r} for {entry['name']}.")
     tool = tool_capability(entry)
     guidance = action_guidance(entry, action)
-    rules = next(
-        (rule for rule in ACTION_RULES.get(entry["name"], ()) if rule.action == action), None
+    registered_name = None if entry.get("wire_only") else entry["name"]
+    registered_rules = ACTION_RULES.get(registered_name, ()) if registered_name is not None else ()
+    rules = next((rule for rule in registered_rules if rule.action == action), None)
+    contract = (
+        ACTION_CONTRACTS.get(registered_name, {}).get(action)
+        if registered_name is not None
+        else None
     )
-    contract = ACTION_CONTRACTS.get(entry["name"], {}).get(action)
     required = _required_tool_parameters(entry, action_bound=action is not None)
     effects = tool["effects"]
     if guidance and guidance.effects:
@@ -1187,7 +1217,7 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
             "openWorldHint": guidance.effects.open_world,
         }
     graph_options = (
-        GRAPH_ACTION_OPTIONS[action] if entry["name"] == "manage_reference_graph" else None
+        GRAPH_ACTION_OPTIONS[action] if registered_name == "manage_reference_graph" else None
     )
     if graph_options and (graph_options.required or graph_options.exactly_one):
         required.append("options")
@@ -1195,9 +1225,7 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
         "tool": entry["name"],
         "action": action,
         "intent": action_intent(guidance, tool),
-        "purpose": guidance.purpose
-        if guidance and guidance.purpose
-        else (action.replace("_", " ") if action else tool["description"]),
+        "purpose": _action_purpose(action, guidance, tool["description"]),
         "purpose_source": "declared"
         if (guidance and guidance.purpose) or action is None
         else "identifier",
@@ -1224,7 +1252,7 @@ def action_card(entry: CatalogEntry, action: str | None) -> dict:
             )
         ),
         "forbidden_parameters": forbidden_action_parameters(
-            entry["name"], action, entry.get("input_schema", {})
+            registered_name, action, entry.get("input_schema", {})
         ),
         **({"alias_of": contract.alias_of} if contract and contract.alias_of else {}),
         **(
@@ -1265,11 +1293,14 @@ class CatalogRequest(BaseModel):
     group: StrictStr | None = Field(default=None, min_length=1, max_length=128)
     tool: StrictStr | None = Field(default=None, min_length=1, max_length=128)
     operation: StrictStr | None = Field(default=None, min_length=1, max_length=128)
+    query: StrictStr | None = Field(
+        default=None, min_length=1, max_length=MAX_ORIGINAL_REQUEST_LENGTH
+    )
     intent: ActionIntent | None = None
     offset: StrictInt = Field(default=0, ge=0)
     limit: StrictInt = Field(default=20, ge=1, le=20)
 
-    @field_validator("group", "tool", "operation")
+    @field_validator("group", "tool", "operation", "query")
     @classmethod
     def nonempty_selector(cls, value: str | None) -> str | None:
         if value is not None:
@@ -1286,6 +1317,8 @@ class CatalogRequest(BaseModel):
             raise ValueError("Select a tool or tool group to browse actions by intent.")
         if self.group is not None and self.tool is not None:
             raise ValueError("Select one catalog group or tool.")
+        if self.query is not None and self.group is None and self.tool is None:
+            raise ValueError("Select a catalog group or tool to filter by query.")
         if self.group is None and self.tool is None and self.offset:
             raise ValueError("The complete group index uses offset 0.")
         return self
@@ -1405,6 +1438,13 @@ def catalog_navigation(
     }
 
 
+def _matches_catalog_query(query_words: set[str] | None, *fields: str | None) -> bool:
+    return query_words is None or (
+        bool(query_words)
+        and query_words <= search_words(" ".join(field for field in fields if field))
+    )
+
+
 def browse_catalog(
     request: CatalogRequest,
     entries: list[CatalogEntry],
@@ -1412,8 +1452,11 @@ def browse_catalog(
     visible_names: set[str] | None = None,
     resources: list[CatalogResource] | None = None,
 ) -> dict:
-    """Traverse all declarations without a query, ranking, connection or mutation."""
+    """Browse catalog declarations and optionally filter public metadata within a scope."""
     ordered = sorted(entries, key=lambda entry: entry["name"])
+    query_words = search_words(request.query) if request.query is not None else None
+    if query_words is not None and visible_names is not None:
+        ordered = [entry for entry in ordered if entry["name"] in visible_names]
     response = {
         "scope": "mcp_context" if visible_names is not None else "local_catalog",
         "selection": "agent",
@@ -1433,7 +1476,13 @@ def browse_catalog(
         for entry in selected:
             summary = tool_capability(entry, visible_names=visible_names)
             for operation in request.select_operations(summary["actions"]):
-                if action_intent(action_guidance(entry, operation), summary) == request.intent:
+                guidance = action_guidance(entry, operation)
+                if action_intent(guidance, summary) == request.intent and _matches_catalog_query(
+                    query_words,
+                    entry["name"],
+                    operation,
+                    _action_purpose(operation, guidance, summary["description"]),
+                ):
                     candidates.append((entry, operation, summary["advertised"]))
         response.update(view="intent_actions", group=request.group, intent=request.intent)
         rows = [
@@ -1445,7 +1494,11 @@ def browse_catalog(
         total = len(candidates)
         key = "actions"
     elif request.group == "resources":
-        available = concrete_resources(resources or [])
+        available = [
+            item
+            for item in concrete_resources(resources or [])
+            if _matches_catalog_query(query_words, item["name"], item["uri"], item["description"])
+        ]
         response.update(view="resources", group="resources")
         response["resource_templates"] = _resource_template_branch(
             len(resource_templates(resources or []))
@@ -1464,7 +1517,11 @@ def browse_catalog(
         ]
         key = "resources"
     elif request.group == "skills":
-        available = concrete_resources(resources or [], scheme="skill")
+        available = [
+            item
+            for item in concrete_resources(resources or [], scheme="skill")
+            if _matches_catalog_query(query_words, item["name"], item["uri"], item["description"])
+        ]
         response.update(view="skills", group="skills")
         total = len(available)
         rows = [
@@ -1478,7 +1535,13 @@ def browse_catalog(
         ]
         key = "skills"
     elif request.group == "resource_templates":
-        templates = resource_templates(resources or [])
+        templates = [
+            item
+            for item in resource_templates(resources or [])
+            if _matches_catalog_query(
+                query_words, item["name"], item["uri_template"], item["description"]
+            )
+        ]
         response.update(view="resource_templates", group="resource_templates")
         response["input_contract"] = RESOURCE_TEMPLATE_EXPANSION
         total = len(templates)
@@ -1500,6 +1563,20 @@ def browse_catalog(
         # Retain action-specific constraints anywhere in the declared description.
         response["tool"]["description"] = tool_description(entry)
         actions = request.select_operations(declared_actions(entry))
+        if query_words is not None:
+            summary = response["tool"]
+            actions = [
+                action
+                for action in actions
+                if _matches_catalog_query(
+                    query_words,
+                    entry["name"],
+                    action,
+                    _action_purpose(
+                        action, action_guidance(entry, action), summary["description"][:1200]
+                    ),
+                )
+            ]
         total = len(actions)
         rows = [
             action_card(entry, action)
@@ -1511,11 +1588,30 @@ def browse_catalog(
         if not selected and request.group not in TOOL_GROUPS:
             raise ValueError(f"Unknown group {request.group!r}.")
         response.update(view="tools", group=request.group)
-        total = len(selected)
-        rows = [
-            tool_capability(entry, visible_names=visible_names)
-            for entry in selected[request.offset : request.offset + request.limit]
-        ]
+        if query_words is not None:
+            capabilities = [
+                tool_capability(entry, visible_names=visible_names) for entry in selected
+            ]
+            filtered = [
+                summary
+                for summary in capabilities
+                if _matches_catalog_query(
+                    query_words,
+                    summary["name"],
+                    summary["title"],
+                    summary["description"],
+                    *summary["aliases"],
+                    *summary["actions"],
+                )
+            ]
+            total = len(filtered)
+            rows = filtered[request.offset : request.offset + request.limit]
+        else:
+            total = len(selected)
+            rows = [
+                tool_capability(entry, visible_names=visible_names)
+                for entry in selected[request.offset : request.offset + request.limit]
+            ]
         key = "tools"
     else:
         response["view"] = "groups"

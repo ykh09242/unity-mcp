@@ -167,10 +167,11 @@ def search(
 @tool.command("catalog")
 @click.option(
     "--group",
-    help="Select a tool group, resources for fixed URIs, or resource_templates for parameterized Unity observations.",
+    help="Select a tool group, resources, resource_templates or skills.",
 )
 @click.option("--tool", "tool_name", help="List actions of one exact tool.")
 @click.option("--operation", help="Select one declared action of --tool.")
+@click.option("--query", help="Filter public catalog metadata within --group or --tool.")
 @click.option("--offset", type=click.IntRange(min=0), default=0, show_default=True)
 @click.option("--limit", type=click.IntRange(1, 20), default=20, show_default=True)
 @click.option(
@@ -182,6 +183,7 @@ def catalog(
     group: str | None,
     tool_name: str | None,
     operation: str | None,
+    query: str | None,
     offset: int,
     limit: int,
     intent: str | None,
@@ -205,6 +207,7 @@ def catalog(
             group=group,
             tool=tool_name,
             operation=operation,
+            query=query,
             offset=offset,
             limit=limit,
             intent=intent,

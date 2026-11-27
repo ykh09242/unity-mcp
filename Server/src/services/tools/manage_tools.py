@@ -17,6 +17,7 @@ import logging
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
+from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 from transport.protocol import internal_catalog, internal_resource_catalog, is_sessionless
@@ -33,6 +34,7 @@ from services.registry import (
 from services.registry.action_catalog import (
     RESOURCE_TEMPLATE_EXPANSION,
     ActionIntent,
+    CatalogEntry,
     CatalogResource,
     ObservationSource,
 )
@@ -50,6 +52,7 @@ from services.registry.call_preparation import (
     prepared_execution,
     prepare_tool_call,
 )
+from services.registry.preview_continuation import PreviewBinding
 from services.registry.task_search import RANKED_SEARCH_FIELDS, RequiredValues, RouteSurfaces
 from services.registry.search_arguments import SEARCH_INPUT
 
@@ -84,7 +87,7 @@ _SearchQuery = Annotated[
 _ManageQuery = Annotated[
     _SearchQuery,
     Field(
-        description="Original request for search, unscoped catalog search or prepare. Keep names, paths and text verbatim.",
+        description="Original request for search, unscoped catalog search or prepare. With a catalog group or tool, filter its public metadata by matching all query terms. Keep names, paths and text verbatim.",
         json_schema_extra={ORIGINAL_REQUEST: {"action": "search"}},
     ),
 ]
@@ -469,7 +472,12 @@ async def search_unity_tools(
                     {"properties": {"action": {"const": "search"}}},
                     {
                         "required": ["query"],
-                        "properties": {"action": {"const": "catalog"}, "query": {"type": "string"}},
+                        "properties": {
+                            "action": {"const": "catalog"},
+                            "query": {"type": "string"},
+                            "group": {"type": "null"},
+                            "tool": {"type": "null"},
+                        },
                     },
                 ]
             },
@@ -481,6 +489,43 @@ async def search_unity_tools(
                         for field in ("group", "tool", "operation", "arguments")
                     },
                     "include_schema": {"const": False},
+                },
+            },
+        },
+        {
+            "if": {
+                "required": ["query"],
+                "properties": {"action": {"const": "catalog"}, "query": {"type": "string"}},
+                "anyOf": [
+                    {"required": [selector], "properties": {selector: {"type": "string"}}}
+                    for selector in ("group", "tool")
+                ],
+            },
+            "then": {
+                "not": {
+                    "required": ["group", "tool"],
+                    "properties": {selector: {"type": "string"} for selector in ("group", "tool")},
+                },
+                "properties": {
+                    "query": {"pattern": r"\S"},
+                    "group": {"pattern": r"\S", "maxLength": 128},
+                    "tool": {"pattern": r"\S", "maxLength": 128},
+                    "selection": {"const": "ranked"},
+                    "include_schema": {"const": False},
+                    **{
+                        field: {"type": "null"}
+                        for field in (
+                            "arguments",
+                            "catalog_query",
+                            "exact_text",
+                            "family",
+                            "host_tool_evidence",
+                            "host_tool_names",
+                            "observation_source",
+                            "required_values",
+                            "route_surfaces",
+                        )
+                    },
                 },
             },
         },
@@ -538,7 +583,7 @@ async def search_unity_tools(
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (supply tool alone to list its actions, then select one for its inputs), "
         "prepare (return schema-checked arguments and current public permission evidence without executing the call), "
-        "catalog (browse by group or tool, or search by query alone), "
+        "catalog (browse or filter by group or tool, or search by query alone), "
         "search (discover routes for a task in any language), "
         "inspect_inventory (compare server advertisement with this host's exact-name evidence). "
         + _SEARCH_DESCRIPTION
@@ -801,16 +846,12 @@ async def manage_tools(
     if action == "catalog":
         from services.registry.action_catalog import CatalogRequest, browse_catalog
 
-        if query is not None:
-            return {
-                "success": False,
-                "error": "Supply a catalog group or tool selector, or search by query without a selector.",
-            }
         try:
             request = CatalogRequest(
                 group=group,
                 tool=tool,
                 operation=operation,
+                query=query,
                 offset=offset,
                 limit=limit,
                 intent=intent,
@@ -832,7 +873,16 @@ async def manage_tools(
                         "arguments": {"action": "read_skill", "skill_uri": item["uri"], **project},
                     }
                 return page
-            entries, visible = await _catalog_inventory(ctx, entries, discovery)
+            if request.query is not None and not request.includes_resources:
+                visible = await _selection_inventory(ctx)
+                if visible is None:
+                    return {
+                        "success": False,
+                        "error": "The current MCP tool inventory is unavailable.",
+                    }
+                entries = _public_catalog_entries(discovery, visible)
+            else:
+                entries, visible = await _catalog_inventory(ctx, entries, discovery)
             resources = await _catalog_resources(ctx) if request.includes_resources else []
             page = browse_catalog(
                 request, list(entries.values()), visible_names=set(visible), resources=resources
@@ -1310,6 +1360,25 @@ def _catalog_entries(declarations, discovery, visible):
                 "kwargs": {"annotations": item.annotations},
                 "input_schema": item.parameters,
             }
+    return entries
+
+
+def _public_catalog_entries(discovery, visible: dict[str, Tool]) -> dict[str, CatalogEntry]:
+    """Use advertised descriptors; retain group membership for established registrations."""
+    entries: dict[str, CatalogEntry] = {}
+    for name, item in visible.items():
+        descriptor = item.to_mcp_tool()
+        original = discovery.definitions.get(name) if discovery is not None else None
+        same_registration = original is not None and PreviewBinding.capture(original).matches(item)
+        entries[name] = {
+            "name": name,
+            "group": discovery.groups.get(name) if same_registration else None,
+            "title": descriptor.title,
+            "description": descriptor.description,
+            "kwargs": {"annotations": descriptor.annotations or {}, "meta": descriptor.meta or {}},
+            "input_schema": descriptor.input_schema,
+            "wire_only": True,
+        }
     return entries
 
 

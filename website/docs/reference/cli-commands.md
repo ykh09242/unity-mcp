@@ -4392,9 +4392,10 @@ Browse the complete offline catalog for agent semantic selection. Start with the
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --group | text | optional | nargs=1 | — | — | Select a tool group, resources for fixed URIs, or resource_templates for parameterized Unity observations. |
+| --group | text | optional | nargs=1 | — | — | Select a tool group, resources, resource_templates or skills. |
 | --tool | text | optional | nargs=1 | — | — | List actions of one exact tool. |
 | --operation | text | optional | nargs=1 | — | — | Select one declared action of --tool. |
+| --query | text | optional | nargs=1 | — | — | Filter public catalog metadata within --group or --tool. |
 | --offset | integer range: [0..None] | optional | nargs=1 | 0 | — |  |
 | --limit | integer range: [1..20] | optional | nargs=1 | 20 | — |  |
 | --intent | choice: observe, interact, edit | optional | nargs=1 | — | — | Browse classified actions of the selected tool or group. |

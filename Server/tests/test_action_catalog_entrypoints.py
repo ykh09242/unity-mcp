@@ -216,7 +216,7 @@ async def test_catalog_and_describe_preserve_inventory_and_schema(server, mode):
     "arguments",
     [
         {"action": "catalog", "group": "core", "tool": "manage_shader"},
-        {"action": "catalog", "query": "shader", "group": "core"},
+        {"action": "catalog", "query": "shader", "group": "core", "selection": "agent"},
         {"action": "catalog", "operation": "read"},
         {"action": "catalog", "tool": "unknown"},
         {"action": "catalog", "offset": 1},
@@ -229,11 +229,118 @@ async def test_catalog_and_describe_preserve_inventory_and_schema(server, mode):
 async def test_bad_selection_fails_without_activation(server, arguments):
     async with Client(server, mode="legacy") as client:
         before = {tool.name for tool in await client.list_tools()}
-        result = (await client.call_tool("manage_tools", arguments)).structured_content
-        assert result["success"] is False
+        call = await client.call_tool("manage_tools", arguments, raise_on_error=False)
+        result = call.structured_content or {}
+        assert call.is_error or result["success"] is False
         if arguments["action"] == "describe":
             assert arguments["tool"] not in before and "next_call" not in result
         assert {tool.name for tool in await client.list_tools()} == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_scoped_tool_filter_respects_advertised_inventory_policy(server, mode):
+    from fastmcp.server.middleware import Middleware
+
+    @server.tool
+    def example_visible() -> str:
+        """Report a sample measurement."""
+        return "observed"
+
+    @server.tool
+    def example_hidden() -> str:
+        """Report a sample measurement."""
+        raise AssertionError("Inventory filtering must not invoke a tool")
+
+    class InventoryPolicy(Middleware):
+        async def on_list_tools(self, context, call_next):
+            return [tool for tool in await call_next(context) if tool.name != "example_hidden"]
+
+    server.add_middleware(InventoryPolicy())
+    async with Client(server, mode=mode) as client:
+        for name, advertised in (("example_visible", True), ("example_hidden", False)):
+            page = (
+                await client.call_tool(
+                    "manage_tools", {"action": "catalog", "tool": name, "query": "sample"}
+                )
+            ).structured_content
+            if advertised:
+                assert page["total"] == 1 and page["tool"]["name"] == name
+            else:
+                assert page["success"] is False and "actions" not in page
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_scoped_filter_uses_current_wire_metadata_without_same_name_guidance(server, mode):
+    from typing import Literal
+
+    from fastmcp.server.middleware import Middleware
+    from fastmcp.tools import Tool
+    from mcp.types import ToolAnnotations
+    from services.registry.action_catalog import ACTION_OBSERVATIONS_META
+
+    def replacement(action: Literal["get_hierarchy"], sample_key: str) -> str:
+        """Read a measurement sample."""
+        raise AssertionError("Catalog must remain read-only")
+
+    observation = {"source": "editor_live", "values": ["sample_value"]}
+    replacement_tool = Tool.from_function(
+        replacement,
+        name="prefab_inspect",
+        title="Sample telemetry",
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+        meta={ACTION_OBSERVATIONS_META: {"get_hierarchy": observation}},
+    )
+    target = "scene_inspect"
+
+    class WireProjection(Middleware):
+        async def on_list_tools(self, context, call_next):
+            return [
+                replacement_tool
+                if item.name == "prefab_inspect"
+                else item.model_copy(
+                    update={
+                        "title": "Visible Observatory",
+                        "description": "Published Telemetry",
+                        "annotations": ToolAnnotations(readOnlyHint=False, destructiveHint=False),
+                    }
+                )
+                if item.name == target
+                else item
+                for item in await call_next(context)
+            ]
+
+    server.add_middleware(WireProjection())
+    async with Client(server, mode=mode) as client:
+        tools = {item.name: item for item in await client.list_tools()}
+        assert tools[target].description == "Published Telemetry"
+        assert tools["prefab_inspect"].title == "Sample telemetry"
+
+        group = {"action": "catalog", "group": server._tool_discovery.groups[target]}
+        found = (
+            await client.call_tool("manage_tools", {**group, "query": "observatory telemetry"})
+        ).structured_content
+        original_title = (
+            await client.call_tool("manage_tools", {**group, "query": "inspect scenes hierarchies"})
+        ).structured_content
+        action = (
+            await client.call_tool(
+                "manage_tools",
+                {"action": "catalog", "tool": "prefab_inspect", "query": "get hierarchy"},
+            )
+        ).structured_content
+
+    assert [row["name"] for row in found["tools"]] == [target]
+    assert found["tools"][0]["description"] == "Published Telemetry"
+    assert found["tools"][0]["effects"]["readOnlyHint"] is False
+    assert target not in {row["name"] for row in original_title["tools"]}
+    assert action["tool"]["title"] == "Sample telemetry"
+    assert action["tool"]["group"] is None
+    assert action["actions"][0]["purpose"] == "get hierarchy"
+    assert action["actions"][0]["required_parameters"] == ["sample_key"]
+    assert action["actions"][0]["effects"]["readOnlyHint"] is False
+    assert action["actions"][0]["observation"] == observation
 
 
 def test_catalog_permission_is_read_only():
@@ -508,6 +615,24 @@ def test_cli_browses_offline_and_preserves_pagination(monkeypatch):
     )
     assert exact.exit_code == 0, exact.output
     assert [row["action"] for row in json.loads(exact.stdout)["actions"]] == ["inspect_graph"]
+
+    scoped = CliRunner().invoke(
+        cli,
+        [
+            "--no-project-context",
+            "tool",
+            "catalog",
+            "--tool",
+            "manage_shader",
+            "--query",
+            "ＩＮＳＰＥＣＴ_ＧＲＡＰＨ",
+        ],
+    )
+    assert scoped.exit_code == 0, scoped.output
+    assert [row["action"] for row in json.loads(scoped.stdout)["actions"]] == [
+        "inspect_graph",
+        "inspect_open_graph",
+    ]
 
 
 @pytest.mark.parametrize(
