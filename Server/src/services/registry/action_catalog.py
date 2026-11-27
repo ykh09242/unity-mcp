@@ -51,6 +51,11 @@ from services.registry.action_guidance_types import (
 from services.registry.call_preparation import MAX_ORIGINAL_REQUEST_LENGTH
 from services.registry.capability_catalog import CAPABILITIES, READ_ONLY_EFFECTS, CapabilityEffects
 from services.registry.editor_action_guidance import EDITOR_ACTIONS
+from services.registry.input_choices import (
+    advertised_input_choices,
+    local_definition,
+    selector_values,
+)
 from services.registry.integration_action_guidance import INTEGRATION_ACTIONS
 from services.registry.open_shader_graph_observation import OPEN_GRAPH_OBSERVATION
 from services.registry.search_text import search_words
@@ -937,33 +942,6 @@ def action_maturity(name: str) -> dict[str, ToolMaturity]:
     }
 
 
-def _selector_values(field, definitions, seen=frozenset()) -> list[str] | None:
-    """Enumerate bounded string selectors, including nullable local schema references."""
-    if field is False:
-        return []
-    if not isinstance(field, dict) or id(field) in seen:
-        return None
-    if "const" in field:
-        value = field["const"]
-        return [value] if isinstance(value, str) else []
-    if "enum" in field:
-        return [value for value in field["enum"] if isinstance(value, str)]
-    kind = field.get("type")
-    if kind is not None and "string" not in (kind if isinstance(kind, list) else (kind,)):
-        return []
-    seen = seen | {id(field)}
-    reference = field.get("$ref")
-    if isinstance(reference, str) and reference.startswith("#/$defs/"):
-        target = reference.removeprefix("#/$defs/").replace("~1", "/").replace("~0", "~")
-        return _selector_values(definitions.get(target), definitions, seen)
-    branches = field.get("oneOf") or field.get("anyOf")
-    if branches:
-        values = [_selector_values(branch, definitions, seen) for branch in branches]
-        if all(group is not None for group in values):
-            return list(dict.fromkeys(value for group in values for value in group))
-    return None
-
-
 def _wire_variants(schema):
     """Read direct alternatives and local definition references without external resolution."""
     definitions = schema.get("$defs", {})
@@ -976,12 +954,11 @@ def _wire_variants(schema):
             if not ref.startswith("#/$defs/") or ref in seen:
                 break
             seen.add(ref)
-            name = ref.removeprefix("#/$defs/").replace("~1", "/").replace("~0", "~")
-            variant = definitions.get(name, {})
+            variant = local_definition(ref, definitions)
         if variant is False:
             continue
         body = variant if isinstance(variant, dict) else {}
-        selectors = _selector_values(body.get("properties", {}).get("action"), definitions)
+        selectors = selector_values(body.get("properties", {}).get("action"), definitions)
         yield path, body, selectors
 
 
@@ -989,7 +966,7 @@ def declared_actions(entry: CatalogEntry) -> list[str]:
     """Prefer bounded wire selectors, then registered capabilities and Python literals."""
     schema = entry.get("input_schema", {})
     definitions = schema.get("$defs", {})
-    direct = _selector_values(schema.get("properties", {}).get("action"), definitions)
+    direct = selector_values(schema.get("properties", {}).get("action"), definitions)
     variants = [selectors for _, _, selectors in _wire_variants(schema)]
     if variants and all(group is not None for group in variants):
         selectors = list(dict.fromkeys(value for group in variants for value in group))
@@ -1721,12 +1698,35 @@ def describe_action(
     *,
     visible_names: set[str] | None = None,
 ) -> dict:
-    """Bind a selected action while preserving the actual SDK schema and constraints."""
+    """Bind a selected action or advertised input choice and retain the SDK constraints."""
     entry = {**entry, "input_schema": descriptor.get("inputSchema", descriptor.get("input_schema"))}
     descriptor = deepcopy(descriptor)
     schema = descriptor.get("inputSchema", descriptor.get("input_schema"))
+    actions = declared_actions(entry)
+    choices = (
+        advertised_input_choices(schema)
+        if not actions and visible_names is not None and entry["name"] in visible_names
+        else None
+    )
     card = None
-    if operation is not None:
+    if operation is not None and choices is not None:
+        matching = [name for name, values in choices.items() if operation in values]
+        if len(matching) != 1:
+            reason = "Ambiguous" if matching else "Unknown"
+            return {
+                "success": False,
+                "error": f"{reason} input variant {operation!r} for {entry['name']}.",
+                **({"input_choices": choices} if choices else {}),
+            }
+        selector = matching[0]
+        field = schema["properties"][selector]
+        schema["properties"][selector] = {**field, "const": operation}
+        schema["properties"][selector].pop("default", None)
+        schema["required"] = list(dict.fromkeys([*schema.get("required", ()), selector]))
+        card = action_card({**entry, "input_schema": schema}, None)
+        card["input_variant"] = {"selector": selector, "value": operation}
+        card["invoke"]["arguments"][selector] = operation
+    elif operation is not None:
         card = action_card(entry, operation)
         properties = schema.setdefault("properties", {})
         action_schema = properties.get("action", {})
@@ -1750,13 +1750,14 @@ def describe_action(
                 if "options" not in schema["required"]:
                     schema["required"].append("options")
                 options.pop("default", None)
-    elif not declared_actions(entry):
+    elif not actions:
         card = action_card(entry, None)
     if card is not None:
         _describe_inputs(card, schema, entry.get("func"))
     catalog = tool_capability(entry, visible_names=visible_names)
     return {
         "operation": card,
+        **({"input_choices": choices} if choices else {}),
         "tool": descriptor,
         "catalog": catalog,
         "maturity": catalog["maturity"],

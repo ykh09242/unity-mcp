@@ -51,6 +51,7 @@ from services.registry.call_preparation import (
     prepared_binding_execution,
     prepare_tool_call,
 )
+from services.registry.input_choices import OPERATION_SELECTOR_MAX_LENGTH
 from services.registry.preview_continuation import PreviewBinding
 from services.registry.task_search import RANKED_SEARCH_FIELDS, RequiredValues, RouteSurfaces
 from services.registry.search_arguments import SEARCH_INPUT
@@ -714,8 +715,8 @@ async def manage_tools(
     ] = 0,
     operation: Annotated[
         str | None,
-        Field(min_length=1, max_length=128),
-        "With an exact tool, select a declared action for catalog, describe or prepare. Omit to browse the tool.",
+        Field(min_length=1, max_length=OPERATION_SELECTOR_MAX_LENGTH),
+        "With an exact tool, select a declared action. For describe or prepare on a tool without an action selector, use an exact advertised string choice that identifies one input field. For an ambiguous choice, draft the actual input field without operation.",
     ] = None,
     intent: Annotated[
         ActionIntent | None,
@@ -1013,7 +1014,8 @@ async def manage_tools(
                 "success": False,
                 "error": "Unknown tool in this catalog and the current advertised inventory. Browse catalog or refresh the client tool list.",
             }
-        result = _describe_binding(entries[name], definition, operation, visible)
+        registered = discovery.definitions.get(name) if discovery is not None else None
+        result = _describe_binding(entries[name], definition, operation, visible, registered)
         if not visible or name not in visible or "manage_tools" not in visible:
             return result
         if operation is not None and result.get("success") is False:
@@ -1028,6 +1030,7 @@ async def manage_tools(
             return result
         card = result.get("operation")
         if card is not None:
+            draft = dict(card["invoke"]["arguments"])
             project = (
                 {}
                 if "unity_instance" in card["forbidden_parameters"]
@@ -1041,7 +1044,7 @@ async def manage_tools(
                     "action": "prepare",
                     "tool": name,
                     **({"operation": operation} if operation is not None else {}),
-                    "arguments": {"action": operation} if operation is not None else {},
+                    "arguments": draft,
                     **project,
                 },
             }
@@ -1116,7 +1119,10 @@ async def manage_tools(
             if definition is None and discovery is not None:
                 definition = discovery.definitions.get(tool)
             if definition is not None:
-                result["description"] = _describe_binding(entry, definition, None, visible)
+                registered = discovery.definitions.get(tool) if discovery is not None else None
+                result["description"] = _describe_binding(
+                    entry, definition, None, visible, registered
+                )
             actions = declared_actions(entry)
             result["readiness"] = {
                 "status": "unobserved",
@@ -1219,13 +1225,30 @@ async def manage_tools(
     return {"success": False, "error": f"Unknown action '{action}'"}
 
 
-def _describe_binding(entry, definition, operation, visible):
+def _describe_binding(entry, definition, operation, visible, registered):
     from services.registry.action_catalog import describe_action
 
+    descriptor = definition.to_mcp_tool()
+    if visible is not None and definition.name in visible:
+        same_registration = registered is not None and PreviewBinding.capture(registered).matches(
+            definition
+        )
+        if not same_registration or registered.parameters != definition.parameters:
+            entry = {
+                "name": definition.name,
+                "group": entry.get("group") if same_registration else None,
+                "wire_only": True,
+            }
+        entry = {
+            **entry,
+            "title": descriptor.title,
+            "description": descriptor.description,
+            "kwargs": {"annotations": descriptor.annotations or {}, "meta": descriptor.meta or {}},
+        }
     try:
         return describe_action(
-            {**entry, "input_schema": definition.parameters},
-            definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
+            entry,
+            descriptor.model_dump(mode="json", exclude_none=True),
             operation,
             visible_names=set(visible) if visible is not None else None,
         )
@@ -1239,25 +1262,37 @@ async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=
         return not_prepared("The tool is unavailable on this connection.")
     definition = visible[name]
     entry = next((item for item in get_registered_tools() if item["name"] == name), None)
+    discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
+    registered = discovery.definitions.get(name) if discovery else None
+    if registered is not None and not PreviewBinding.capture(registered).matches(definition):
+        entry = None
     schema = definition.parameters
+    selected_action = None
     if operation is not None:
         descriptor = _describe_binding(
-            entry or {"name": name, "kwargs": {}}, definition, operation, visible
+            entry or {"name": name, "kwargs": {}}, definition, operation, visible, registered
         )
         if descriptor.get("success") is False:
-            return not_prepared(descriptor["error"])
+            choices = descriptor.get("input_choices")
+            return not_prepared(
+                descriptor["error"], **({"input_choices": choices} if choices else {})
+            )
         target = descriptor["tool"]
         schema = target.get("inputSchema", target.get("input_schema"))
         if not isinstance(schema, dict):
             return not_prepared("The selected operation has no advertised input schema.")
+        card = descriptor["operation"]
+        selected_action = card["action"]
+        if variant := card.get("input_variant"):
+            draft = {variant["selector"]: variant["value"], **draft}
     func = entry.get("func") if entry else None
     closed = func is not None and all(
         p.kind is not inspect.Parameter.VAR_KEYWORD
         for p in inspect.signature(func).parameters.values()
     )
     project = (await _retry_project_binding(ctx)).get("unity_instance")
-    selector = operation if operation is not None else draft.get("action")
-    if "unity_instance" in forbidden_action_parameters(name, selector, schema):
+    selector = selected_action if operation is not None else draft.get("action")
+    if "unity_instance" in forbidden_action_parameters(name if func else None, selector, schema):
         if draft.get("unity_instance") is not None:
             return not_prepared("This operation does not accept a target unity_instance.")
         project = None
@@ -1284,7 +1319,7 @@ async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=
         name,
         schema,
         draft,
-        operation=operation,
+        operation=selected_action,
         original=original,
         project=project,
         registered=func is not None,
@@ -1295,8 +1330,6 @@ async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=
         return result
     # The registry's unity_target controls availability. It does not establish
     # where the selected action will run or whether it writes a client file.
-    discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
-    registered = discovery.definitions.get(name) if discovery else None
     arguments = result["prepared_call"]["arguments"]
     execution = await prepared_binding_execution(ctx, registered, definition, arguments)
     if execution is not None:
