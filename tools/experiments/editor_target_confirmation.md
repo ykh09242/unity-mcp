@@ -22,3 +22,18 @@ After this cohort the server guidance began identifying the published guide URI,
 ```sh
 python tools/experiments/verify_heartbeat_edit_confirmation.py tools/experiments/editor_target_confirmation_results.json
 ```
+
+## Korean supplement on package `553e660c9`
+
+The agent received one new Korean request in a fresh session per catalog. It asked for a Korean tooltip with a question mark, an edit to the original file, and preservation of the visible label and other elements. The request and expected value were committed before either submission. Each agent saved the exact text and read the file back. Independent checks verified the Editor state, the saved tooltip, all other source bytes and the asset metadata. Both agents accurately reported that they had not exercised a live pointer hover. [Original Korean request](korean_edit_request.json) · [Supplement and language coverage](korean_edit_confirmation_results.json)
+
+| Catalog | Completed | Failed MCP tools / calls | Failed skill reads / attempts | Failed resources / reads, including skills | Host routing errors before dispatch |
+|---|---:|---:|---:|---:|---:|
+| Core | 1/1 | 0/11 | 0/2 | 0/3 | 1 |
+| Full | 1/1 | 0/12 | 0/2 | 0/3 | 0 |
+
+All 29 public requests received successful replies. The core host rejected one additional read attempt before contacting the server because the host wrapper lacked its server argument. The strict check includes this diagnostic. The owned Editor exited and the same 130 shared preferences matched. The language index now covers eleven languages across the primary study and this supplement. The two Korean turns used the later package and have their own denominators.
+
+```sh
+python tools/experiments/verify_edit_language_supplement.py
+```
