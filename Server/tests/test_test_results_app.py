@@ -30,6 +30,7 @@ from services.test_results_app import (
     install_test_results_app,
     project_test_results_tools,
 )
+from tests.timing import watchdog_timeout
 from transport.unity_instance_middleware import UnityInstanceMiddleware
 from transport.plugin_hub import PluginHub
 
@@ -413,7 +414,8 @@ def run_packaged_app(packets):
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=10,
+        # Covers Node startup and scheduling; the fixture bounds JavaScript execution separately.
+        timeout=watchdog_timeout(),
     )
     assert process.returncode == 0, process.stdout + process.stderr
     return json.loads(process.stdout)
