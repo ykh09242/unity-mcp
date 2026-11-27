@@ -137,39 +137,75 @@ def test_recovered_rejection_fails_perfection_gate():
 
 
 @pytest.mark.parametrize(
-    ("extra_args", "per_catalog", "expected_exit", "full_host_errors"),
-    [((), 1, 0, 0), (("--include-primary",), 13, 1, 1)],
-    ids=["supplement", "combined"],
+    ("study", "include_primary", "failures"),
+    [
+        ("project_scope", False, {}),
+        (
+            "project_scope",
+            True,
+            {
+                "full": {
+                    "host_errors": 1,
+                    "host_stderr_error_records": 1,
+                    "host_router_errors_without_public_request": 1,
+                },
+            },
+        ),
+        (
+            "initial_discovery",
+            True,
+            {
+                "core": {
+                    "unsuccessful_public_replies": 1,
+                    "unsuccessful_resource_replies": 1,
+                    "failed_skill_document_reads": 1,
+                    "host_errors": 2,
+                    "host_stderr_error_records": 1,
+                },
+                "full": {
+                    "unsuccessful_public_replies": 2,
+                    "unsuccessful_tool_replies": 2,
+                    "host_errors": 2,
+                },
+            },
+        ),
+    ],
+    ids=["supplement", "combined", "recovered-public-reads"],
 )
-def test_strict_replay_distinguishes_host_and_public_failures(
-    extra_args, per_catalog, expected_exit, full_host_errors
-):
+def test_strict_replay_distinguishes_host_and_public_failures(study, include_primary, failures):
     experiments = Path(__file__).resolve().parents[1] / "experiments"
+    per_catalog = 13 if include_primary else 1
     replay = subprocess.run(
         [
             sys.executable,
             str(experiments / "verify_edit_language_supplement.py"),
-            str(experiments / "korean_project_scope_confirmation_results.json"),
+            str(experiments / f"korean_{study}_confirmation_results.json"),
             "--require-perfect",
-            *extra_args,
+            *(["--include-primary"] if include_primary else []),
         ],
         capture_output=True,
         text=True,
         check=False,
         timeout=30,
     )
-    assert replay.returncode == expected_exit, replay.stderr or replay.stdout
+    assert replay.returncode == int(bool(failures)), replay.stderr or replay.stdout
     totals = json.loads(replay.stdout)
     assert set(totals) == {"core", "full"}
-    for counts in totals.values():
+    for profile, counts in totals.items():
         assert counts["scheduled"] == counts["completed"] == per_catalog
         assert counts["native_edit_targets_reached"] == per_catalog
-        assert counts["unsuccessful_public_replies"] == counts["missing_public_replies"] == 0
         assert counts["skill_document_reads"] > 0
-        assert counts["failed_skill_document_reads"] == 0
-    assert totals["core"]["host_errors"] == 0
-    assert totals["full"]["host_errors"] == full_host_errors
-    assert totals["full"]["host_router_errors_without_public_request"] == full_host_errors
+        for counter in (
+            "unsuccessful_public_replies",
+            "missing_public_replies",
+            "unsuccessful_resource_replies",
+            "unsuccessful_tool_replies",
+            "failed_skill_document_reads",
+            "host_errors",
+            "host_stderr_error_records",
+            "host_router_errors_without_public_request",
+        ):
+            assert counts[counter] == failures.get(profile, {}).get(counter, 0)
 
 
 @pytest.mark.parametrize("omitted_stream", ["events", "stderr"])
