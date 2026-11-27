@@ -92,8 +92,21 @@ def test_audio_at_actual_registry_and_sdk_boundary():
                         result = await client.call_tool("manage_audio", {"action": "play", "target": "Speaker", "clip": clip})
                         check(sent[-1][2]["clip"] == clip, "explicit clip " + repr(clip))
                         check(result.structured_content == failure, "native failure retained")
-                    result = await client.call_tool("manage_audio", {"action": "stop", "target": "Speaker", "clip": "Assets/Audio/Click.wav"})
-                    check(sent[-1][2]["clip"] == "Assets/Audio/Click.wav" and result.structured_content == failure, "native stop validation remains authoritative")
+                    invalid_stop = {
+                        "action": "stop",
+                        "target": "Speaker",
+                        "clip": "Assets/Audio/Click.wav",
+                    }
+                    before = len(sent)
+                    result = await client.call_tool("manage_audio", invalid_stop)
+                    check(
+                        sent[before:] == [("Project@audio", "manage_audio", invalid_stop)],
+                        "stop still reaches native validation",
+                    )
+                    check(
+                        result.structured_content == {**failure, "hint": "clip applies only to play."},
+                        "native stop error retained with a scoped recovery hint",
+                    )
                     for malformed in (None, [], "malformed transport response"):
                         reply = malformed
                         result = await client.call_tool("manage_audio", {"action": "stop", "target": 0})
