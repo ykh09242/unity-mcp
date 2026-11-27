@@ -331,6 +331,8 @@ async def test_hosted_refresh_uses_serving_defaults_even_when_listing_projects_d
 async def test_prepared_public_grants_observe_the_selected_lease_without_dispatch(
     command_hub, monkeypatch
 ):
+    from fastmcp import FastMCP
+
     from services import operation_permissions as policy
     from services.registry.call_preparation import prepared_execution
 
@@ -348,7 +350,7 @@ async def test_prepared_public_grants_observe_the_selected_lease_without_dispatc
     async def get_state(key):
         return state.get(key)
 
-    ctx = SimpleNamespace(get_state=get_state)
+    ctx = SimpleNamespace(fastmcp=FastMCP("prepared public grants"), get_state=get_state)
     schema = {"properties": {"action": {"default": "rename"}}}
     claims = {
         "observer": {"unity_mcp_permissions": ["read"]},
