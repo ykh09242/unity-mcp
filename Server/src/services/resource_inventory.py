@@ -1,6 +1,8 @@
 """Tool bindings for resources published on the calling MCP connection."""
 
+import inspect
 import json
+import re
 from types import FunctionType
 from typing import NamedTuple
 from urllib.parse import parse_qs, urlsplit
@@ -10,7 +12,12 @@ from weakref import WeakKeyDictionary
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import AuthorizationError, ToolError
 from fastmcp.resources import FunctionResource, Resource, ResourceResult, ResourceTemplate
-from fastmcp.resources.template import FunctionResourceTemplate, extract_query_params
+from fastmcp.resources.template import (
+    FunctionResourceTemplate,
+    extract_exploded_query_params,
+    extract_query_params,
+    template_param_key,
+)
 from fastmcp.resources.types import TextResource
 from fastmcp.server.providers.fastmcp_provider import (
     FastMCPProviderResource,
@@ -47,6 +54,41 @@ CATALOG_READ = "manage_tools.read_resource"
 _EDITOR_READ = "selected_editor_observation"
 _PACKAGED_GUIDE = "packaged_guide"
 _packaged_guides = WeakKeyDictionary()
+_OBSERVATION_URI_VALUES = {"evaluate_getters": "false"}
+
+
+def observation_template_domain(template: FunctionResourceTemplate) -> dict | None:
+    """Describe the serving callback's read-only URI expansions, or keep it native-only."""
+    uri = template.uri_template
+    literals = re.sub(r"\{[^{}]*\}", "", uri)
+    if "?" in literals or "#" in literals:
+        # The adapter accepts only options explicitly declared as query variables.
+        return None
+    path = set(re.findall(r"\{([\w-]+)(?:\*)?\}", uri))
+    query = extract_query_params(uri)
+    variables = {template_param_key(raw): raw for raw in path | query}
+    repeated = extract_exploded_query_params(uri) | template._list_query_params
+    parameters = inspect.signature(template.fn).parameters
+    fixed, required, omitted = {}, [], []
+    for name, expected in _OBSERVATION_URI_VALUES.items():
+        raw = variables.get(name)
+        parameter = parameters.get(name)
+        default = parameter.default if parameter is not None else expected
+        safe_default = (str(default).lower() if type(default) is bool else default) == expected
+        if raw is None or raw in repeated or name in repeated:
+            if not safe_default or raw in path:
+                return None
+            if raw is not None:
+                omitted.append(raw)
+            continue
+        fixed[raw] = expected
+        if raw in path or not safe_default:
+            required.append(raw)
+    return {
+        **({"fixed_uri_variables": fixed} if fixed else {}),
+        **({"required_uri_variables": required} if required else {}),
+        **({"omit_uri_variables": omitted} if omitted else {}),
+    }
 
 
 def register_packaged_guide(server: FastMCP, guide: PublishedSnapshotResource) -> None:
@@ -134,6 +176,13 @@ def observation_uri_allowed(uri: str) -> bool:
         required_permissions,
     )
 
+    if (
+        not isinstance(uri, str)
+        or not uri.startswith(("mcpforunity://", "skill://"))
+        or "{" in uri
+        or "}" in uri
+    ):
+        return False
     try:
         grants = required_permissions("read_unity_resource", {"uri": uri})
         return grants == {Permission.READ}
@@ -278,42 +327,81 @@ async def _listed_binding(
     return selected
 
 
+async def _observation_binding(
+    server: FastMCP, uri: str, label: str, allow_templates: bool, reader: str
+):
+    """Resolve metadata and validate the original URI without invoking the resource."""
+    native = "Use native resources/read for this resource or its requested options."
+    if not observation_uri_allowed(uri):
+        raise AuthorizationError(native)
+    selected = await _listed_binding(server, uri, label, allow_templates)
+    if not catalog_observation(server, selected, reader):
+        raise AuthorizationError(native)
+    if isinstance(selected, Resource):
+        return selected, None
+    # The SDK can ignore undeclared options, fragments and repeated scalar values.
+    parts = urlsplit(uri)
+    query = parse_qs(parts.query, keep_blank_values=True)
+    domain = observation_template_domain(selected)
+    if (
+        domain is None
+        or parts.fragment
+        or query.keys() - extract_query_params(selected.uri_template)
+        or any(len(values) != 1 for values in query.values())
+    ):
+        raise AuthorizationError(native)
+    params = selected.matches(uri)
+    if (
+        params is None
+        or any(
+            template_param_key(name) not in params
+            for name in domain.get("required_uri_variables", ())
+        )
+        or any(template_param_key(name) in params for name in domain.get("omit_uri_variables", ()))
+        or any(
+            params.get(template_param_key(name), value) != value
+            for name, value in domain.get("fixed_uri_variables", {}).items()
+        )
+    ):
+        raise AuthorizationError(native)
+    security = selected.resolve_security(server._resource_security)
+    if security is not None and security.validate(params) is not None:
+        raise AuthorizationError("Resource unavailable")
+    return selected, params
+
+
+async def can_prepare_observation(ctx: Context, uri: str, instance: str | None) -> bool:
+    from services.operation_permissions import OperationPermissionError, authorize_remote_resource
+
+    try:
+        with internal_resource_read(ctx.fastmcp, uri, instance):
+            await authorize_remote_resource(uri)
+            await ctx.fastmcp._check_resource_access(uri)
+            await _observation_binding(ctx.fastmcp, uri, "resource", True, CATALOG_READ)
+    except (AuthorizationError, OperationPermissionError):
+        return False
+    return True
+
+
 async def _read_observation(
     server: FastMCP, uri: str, label: str, allow_templates: bool, reader: str, instance: str | None
 ) -> ResourceResult:
     """Use native read middleware with the admitted descriptor pinned through dispatch."""
-    native = "Use native resources/read for this resource or its requested options."
     if not observation_uri_allowed(uri):
-        raise AuthorizationError(native)
+        raise AuthorizationError(
+            "Use native resources/read for this resource or its requested options."
+        )
 
     async def read_selected(context):
         if str(context.message.uri) != uri:
-            raise AuthorizationError(native)
-        selected = await _listed_binding(server, uri, label, allow_templates)
-        if not catalog_observation(server, selected, reader):
-            raise AuthorizationError(native)
+            raise AuthorizationError("Resource unavailable")
+        selected, params = await _observation_binding(server, uri, label, allow_templates, reader)
         if catalog_observation(server, selected, _EDITOR_READ):
             current = await context.fastmcp_context.get_state("unity_instance")
             if not instance or instance != current:
                 raise AuthorizationError("Select a Unity instance to read this observation")
         if isinstance(selected, Resource):
             return await selected._read()
-        # The SDK ignores undeclared query options, fragments and repeated scalar
-        # values. A tool adapter must not silently discard caller instructions.
-        parts = urlsplit(uri)
-        query = parse_qs(parts.query, keep_blank_values=True)
-        if (
-            parts.fragment
-            or query.keys() - extract_query_params(selected.uri_template)
-            or any(len(values) != 1 for values in query.values())
-        ):
-            raise AuthorizationError(native)
-        params = selected.matches(uri)
-        if params is None or params.get("evaluate_getters", "false") != "false":
-            raise AuthorizationError(native)
-        security = selected.resolve_security(server._resource_security)
-        if security is not None and security.validate(params) is not None:
-            raise AuthorizationError("Resource unavailable")
         return await selected._read(uri, params)
 
     async with Context(fastmcp=server) as read_ctx:

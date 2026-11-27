@@ -232,6 +232,7 @@ class CatalogResource(TypedDict):
     description: str | None
     func: NotRequired[Callable]
     catalog_observation: NotRequired[bool]
+    observation_expansion: NotRequired[dict | None]
     schema_required: NotRequired[Collection[str]]
     kwargs: NotRequired[dict]
 

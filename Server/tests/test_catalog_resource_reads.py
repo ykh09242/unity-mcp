@@ -564,6 +564,187 @@ async def test_registered_component_preserves_selectors_and_reserves_getters_for
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_compact_template_families_bind_the_requested_observation_or_native_options(
+    command_hub, monkeypatch, mode
+):
+    from fastmcp.resources.template import expand_uri_template
+    from tests.test_camera_inventory_tool import inventory_server
+
+    target = {"unity_instance": "Fixture@hash"}
+    search = {
+        "selection": "agent",
+        "query": "Inspect these components",
+        "route_surfaces": "resources",
+        "limit": 20,
+        **target,
+    }
+    async with Client(
+        inventory_server(monkeypatch, profile="full"), mode=mode, cache=False
+    ) as client:
+
+        async def directory(**scope):
+            page = await client.call_tool("search_unity_tools", {**search, **scope})
+            return page.structured_content
+
+        offset = 0
+        while True:
+            page = await directory(offset=offset)
+            candidates = [
+                row for row in page["families"] if "/component/{component_name}" in row["family"]
+            ]
+            if candidates:
+                break
+            offset = page["next_offset"]
+            assert offset is not None
+
+        (row,) = candidates
+        family = row["family"]
+        fixed = {"evaluate_getters": "false"}
+        assert "strict_selection,evaluate_getters}" in family
+        adapter = row["preferred_read_after_expansion"]
+        native = row["native_read_after_expansion"]
+        assert adapter["fixed_uri_variables"] == fixed
+        assert adapter["arguments"] == target
+        assert "fixed_uri_variables" not in native
+        assert native["method"] == "resources/read" and native["params"]["_meta"] == target
+        for hosts, key in ((["manage_tools"], "read_after_expansion"), ([], None)):
+            scoped = await directory(offset=offset, host_tool_names=hosts)
+            listed = next(item for item in scoped["families"] if item["family"] == family)
+            assert "preferred_read_after_expansion" not in listed
+            assert listed["native_read_after_expansion"] == native
+            if key:
+                assert listed[key]["fixed_uri_variables"] == fixed
+            else:
+                assert "read_after_expansion" not in listed
+        detailed = await directory(family=family)
+        (binding,) = detailed["operations"]
+        assert binding["preferred_read_after_expansion"] == adapter
+        assert binding["read_after_expansion"]["fixed_uri_variables"] == fixed
+
+        variables = {"instance_id": -15782, "component_name": "Canvas", "strict_selection": "true"}
+        for options in ({}, adapter["fixed_uri_variables"]):
+            expanded = expand_uri_template(family, {**variables, **options})
+            args = {**adapter["arguments"], adapter["set_argument"]: expanded}
+            result = await client.call_tool(adapter["tool"], args)
+            assert json.loads(result.structured_content["contents"][0]["text"])["success"]
+        requested = expand_uri_template(family, {**variables, "evaluate_getters": "true"})
+        for tool, args in (
+            ("read_unity_resource", {"uri": requested}),
+            ("manage_tools", {"action": "read_resource", "uri": requested}),
+        ):
+            preview = await client.call_tool(
+                "manage_tools", {"action": "prepare", "tool": tool, "arguments": args, **target}
+            )
+            assert preview.structured_content["ready"] is False
+            refused = await client.call_tool(tool, {**args, **target}, raise_on_error=False)
+            assert refused.is_error
+        result = await client.read_resource(requested, meta=native["params"]["_meta"])
+        assert json.loads(result[0].text)["success"]
+        expected = {"instanceID": -15782, "componentName": "Canvas", "strictSelection": True}
+        assert [(m["name"], m["params"]) for m in command_hub.sent] == [
+            ("get_gameobject_component_selected", expected),
+            ("get_gameobject_component_selected", expected),
+            ("get_gameobject_component_selected", {**expected, "evaluateGetters": True}),
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_template_option_domains_follow_the_published_binding(server, mode):
+    trusted = "mcpforunity://meter/{meter}{?page}{&evaluate_getters}"
+    other = "mcpforunity://native/{meter}{?evaluate_getters}"
+    implicit = "mcpforunity://implicit/{meter}"
+    repeated = "mcpforunity://repeated/{meter}{?evaluate_getters*}"
+    literal = "mcpforunity://literal/{meter}?reading={evaluate_getters}"
+    path = "mcpforunity://path/{meter}/{evaluate_getters}"
+    hyphen = "mcpforunity://hyphen/{meter}{?evaluate-getters}"
+    reads = []
+
+    @partial(register_catalog_observation, server, trusted)
+    def observation(meter: str, page: str = "1", evaluate_getters: str = "true") -> str:
+        return f"{meter}/{page}/{evaluate_getters}"
+
+    @server.resource(other)
+    def native_only(meter: str, evaluate_getters: str = "false") -> str:
+        return f"{meter}/{evaluate_getters}"
+
+    def conditional(meter: str, evaluate_getters: str = "true") -> str:
+        reads.append(evaluate_getters)
+        return f"{meter}/{evaluate_getters}"
+
+    for template in (implicit, literal, path, hyphen):
+        register_catalog_observation(server, template, conditional)
+
+    @partial(register_catalog_observation, server, repeated)
+    def multi(meter: str, evaluate_getters: list[str] | None = None) -> str:
+        reads.append(evaluate_getters)
+        return meter
+
+    async with Client(server, mode=mode, cache=False) as client:
+        request = {
+            "query": "meter",
+            "selection": "agent",
+            "route_surfaces": "resources",
+            "limit": 20,
+        }
+        result = await client.call_tool("search_unity_tools", request)
+        rows = {row["family"]: row for row in result.structured_content["families"]}
+        assert rows[trusted]["preferred_read_after_expansion"]["fixed_uri_variables"] == {
+            "evaluate_getters": "false"
+        }
+        assert rows[trusted]["preferred_read_after_expansion"]["required_uri_variables"] == [
+            "evaluate_getters"
+        ]
+        for template in (other, implicit, repeated, literal):
+            assert rows[template]["native_read_after_expansion"]["method"] == "resources/read"
+            assert (
+                "preferred_read_after_expansion" not in rows[template]
+                and "read_after_expansion" not in rows[template]
+            )
+        for template, variable in ((path, "evaluate_getters"), (hyphen, "evaluate-getters")):
+            adapter = rows[template]["preferred_read_after_expansion"]
+            assert adapter["fixed_uri_variables"] == {variable: "false"}
+            assert adapter["required_uri_variables"] == [variable]
+        value = await client.call_tool(
+            "read_unity_resource", {"uri": "mcpforunity://meter/main?page=2&evaluate_getters=false"}
+        )
+        assert value.structured_content["contents"][0]["text"] == "main/2/false"
+        omitted = await client.call_tool(
+            "read_unity_resource", {"uri": "mcpforunity://meter/main?page=2"}, raise_on_error=False
+        )
+        assert omitted.is_error
+        for uri, permitted in (
+            ("mcpforunity://implicit/main", False),
+            ("mcpforunity://repeated/main?evaluate_getters=false", False),
+            ("mcpforunity://literal/main?reading=false", False),
+            ("mcpforunity://path/main/true", False),
+            ("mcpforunity://path/main/false", True),
+            ("mcpforunity://hyphen/main?evaluate-getters=true", False),
+            ("mcpforunity://hyphen/main?evaluate-getters=false", True),
+        ):
+            args = {"uri": uri}
+            before = len(reads)
+            preview = await client.call_tool(
+                "manage_tools",
+                {"action": "prepare", "tool": "read_unity_resource", "arguments": args},
+            )
+            assert preview.structured_content["ready"] is permitted, uri
+            assert len(reads) == before
+            actual = await client.call_tool("read_unity_resource", args, raise_on_error=False)
+            assert actual.is_error is not permitted, uri
+        assert reads == ["false", "false"]
+        assert (await client.read_resource("mcpforunity://implicit/main"))[0].text == "main/true"
+        assert (await client.read_resource("mcpforunity://literal/main?reading=false"))[
+            0
+        ].text == "main/false"
+        assert (await client.read_resource("mcpforunity://repeated/main?evaluate_getters=false"))[
+            0
+        ].text == "main"
+        assert reads[-3:] == ["true", "false", ["false"]]
+
+
+@pytest.mark.asyncio
 async def test_read_rechecks_the_serving_owner_after_resource_middleware(server):
     uri = "mcpforunity://fixture/change"
     reads = []

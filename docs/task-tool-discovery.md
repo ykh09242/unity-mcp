@@ -122,10 +122,13 @@ For example, after observing a GameObject instance ID in the selected scene,
 expand `mcpforunity://scene/gameobject/{instance_id}/children{?page_size,cursor}`
 with that ID. Use the expanded URI in the returned
 `preferred_read_after_expansion` or `read_after_expansion` tool call when
-offered, or in native `resources/read`. Fixed observations can supply a
-`preferred_read_tool` or `read_tool` directly. The catalog exposes these tools for read-only
-observations. For operations such as evaluating component getters, follow
-`native_read_after_expansion` and the native resource's permission checks.
+offered. Search family summaries also expose these bindings. For the chosen
+tool, use the exact URI text in `fixed_uri_variables` for any listed variable
+you supply. Include `required_uri_variables` and leave out `omit_uri_variables`.
+When a requested option falls outside the tool's binding, use the original
+option with `native_read_after_expansion` and its permission checks. Component
+getter evaluation uses this native route. Fixed observations can supply a
+`preferred_read_tool` or `read_tool` directly.
 When a host presents one resource reader for multiple connections, inspect
 its arguments and supply the server selector from the listing alongside the
 URI. A connection-bound SDK client already identifies the server.

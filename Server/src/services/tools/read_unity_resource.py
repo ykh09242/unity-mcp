@@ -15,8 +15,8 @@ from services.resource_inventory import read_published_document
     group=None,
     description=(
         "Read the packaged Unity MCP guide on this connection with no arguments. "
-        "For another published observation, pass the concrete URI from its catalog binding "
-        "or expand its URI template with observed values. Getter evaluation requires native resources/read."
+        "For another published observation, use its tool binding. Expand a template with observed "
+        "values and its fixed_uri_variables. For evaluate_getters=true, use native resources/read."
     ),
     annotations=ToolAnnotations(
         title="Read Unity Resource",
@@ -31,7 +31,7 @@ async def read_unity_resource(
     uri: Annotated[
         str | None,
         Field(min_length=1, max_length=4096, pattern=r"^(mcpforunity|skill)://[^{}]+$"),
-        "Omit to read the packaged guide, or supply a concrete or expanded catalog observation URI.",
+        "Omit for the packaged guide. Supply a catalog observation URI and use its tool binding's fixed variable values.",
     ] = None,
 ) -> dict:
     return await read_published_document(ctx, uri)

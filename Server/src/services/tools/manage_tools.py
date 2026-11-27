@@ -25,7 +25,13 @@ from pydantic import Field, ValidationError
 from transport.protocol import internal_catalog, internal_resource_catalog, is_sessionless
 
 from models.host_tool_inventory import HostToolEvidence, HostToolNames, input_schema_digest
-from services.resource_inventory import connection_inventory, connection_inventory_call
+from services.resource_inventory import (
+    can_prepare_observation,
+    connection_inventory,
+    connection_inventory_call,
+    observation_template_domain,
+    observation_uri_allowed,
+)
 from services.registry import (
     mcp_for_unity_tool,
     TOOL_GROUPS,
@@ -250,32 +256,45 @@ def _bind_resource_read(
     project: dict[str, str],
     *,
     readers: set[str],
-    observations: set[str],
+    observations: dict[str, dict],
     skill: bool = False,
 ) -> None:
-    if "uri_template" in row:
+    if "uri_template" in row or row.get("kind") == "resource_template":
+        template = row.get("uri_template") or row["family"]
         row["native_read_after_expansion"] = {
             "method": "resources/read",
             "params": {"_meta": project} if project else {},
             "set_param": "uri",
         }
-        if row["uri_template"] not in observations:
+        if template not in observations:
             return
+        constraints = observations[template]
+        if constraints:
+            row["native_read_after_expansion"]["authorization"] = "checked_for_expanded_uri"
         if "read_unity_resource" in readers:
             row["preferred_read_after_expansion"] = {
                 "tool": "read_unity_resource",
                 "arguments": dict(project),
                 "set_argument": "uri",
+                **constraints,
             }
-        if "manage_tools" in readers:
+        if "manage_tools" in readers and (
+            "family" not in row or "read_unity_resource" not in readers
+        ):
             row["read_after_expansion"] = {
                 "tool": "manage_tools",
                 "arguments": {"action": "read_resource", **project},
                 "set_argument": "uri",
+                **constraints,
             }
-        if readers:
+        if readers and constraints:
             row["read_guidance"] = (
-                "Use the tool when the expanded URI resolves to this observation with declared options. Use native resources/read for getter execution."
+                "For the tool, match fixed_uri_variables using URI text, supply required_uri_variables and omit any omit_uri_variables. "
+                "For evaluate_getters=true, pass the requested URI to native resources/read with its required grants."
+            )
+        elif readers and "family" not in row:
+            row["read_guidance"] = (
+                "Expand the template with the observed identifiers and declared options."
             )
         return
     uri = row["uri"]
@@ -435,7 +454,7 @@ async def search_unity_tools(
     )
     # Resolve the caller's inventory on its MCP context before browsing declarations.
     resources = await _catalog_resources(ctx)
-    observations = {r["uri"] for r in resources if r.get("catalog_observation")}
+    observations = _observation_domains(resources)
     outcome = await asyncio.to_thread(
         search_catalog,
         request,
@@ -477,11 +496,16 @@ async def search_unity_tools(
             )
         )
         operations = outcome.get("operations", [])
+        template_families = [
+            row for row in outcome.get("families", ()) if row["kind"] == "resource_template"
+        ]
         readers = (
             await _resource_readers(ctx, request)
-            if any(row["kind"] != "tool" for row in operations)
+            if template_families or any(row["kind"] != "tool" for row in operations)
             else set()
         )
+        for row in template_families:
+            _bind_resource_read(ctx, row, project, readers=readers, observations=observations)
         for binding in operations:
             if binding["kind"] == "tool" and can_manage:
                 selected = {"operation": binding["action"]} if binding["action"] is not None else {}
@@ -979,7 +1003,7 @@ async def manage_tools(
                     " Follow a returned tool binding on this connection or read_call with a resource client."
                 )
                 project = await _retry_project_binding(ctx)
-                observations = {r["uri"] for r in resources if r.get("catalog_observation")}
+                observations = _observation_domains(resources)
                 readers = await _resource_readers(ctx) if observations else set()
                 for item in page["skills"]:
                     _bind_resource_read(
@@ -1007,7 +1031,7 @@ async def manage_tools(
                     if isinstance(branch, dict):
                         branch["browse"].update(project)
                 if request.group in {"resources", "resource_templates"}:
-                    observations = {r["uri"] for r in resources if r.get("catalog_observation")}
+                    observations = _observation_domains(resources)
                     readers = await _resource_readers(ctx) if observations else set()
                     for item in page[request.group]:
                         _bind_resource_read(
@@ -1391,6 +1415,19 @@ async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=
     # The registry's unity_target controls availability. It does not establish
     # where the selected action will run or whether it writes a client file.
     arguments = result["prepared_call"]["arguments"]
+    if (
+        name == "read_unity_resource"
+        or name == "manage_tools"
+        and arguments.get("action") == "read_resource"
+    ) and arguments.get("uri") is not None:
+        from transport.unity_instance_middleware import _trusted_builtin_callback
+
+        if _trusted_builtin_callback(
+            getattr(definition, "fn", None), name, None
+        ) and not await can_prepare_observation(ctx, arguments["uri"], project):
+            return not_prepared(
+                "The requested URI or options are outside this observation tool's read policy. Getter execution requires native resources/read and its required grants."
+            )
     execution = await prepared_binding_execution(ctx, registered, definition, arguments)
     if execution is not None:
         result["execution"] = execution
@@ -1438,7 +1475,6 @@ async def _catalog_resources(
     from services.operation_permissions import authorize_remote_resource, remote_operation_allowed
     from services.resource_inventory import (
         catalog_observation,
-        observation_uri_allowed,
         same_resource_binding,
     )
 
@@ -1477,9 +1513,14 @@ async def _catalog_resources(
                 and await remote_operation_allowed("read_unity_resource", {"uri": uri}, ctx=ctx),
             }
         )
-    native_only_templates = {
-        item.uri_template for item in templates if not catalog_observation(ctx.fastmcp, item)
-    }
+    domains = {}
+    for item in templates:
+        domain = (
+            observation_template_domain(item) if catalog_observation(ctx.fastmcp, item) else None
+        )
+        # An unversioned route cannot promise a domain that differs across its published versions.
+        uri = item.uri_template
+        domains[uri] = domain if domains.get(uri, domain) == domain else None
     resources.extend(
         {
             "uri": item.uri_template,
@@ -1487,11 +1528,20 @@ async def _catalog_resources(
             "description": item.description or "",
             "kwargs": {"meta": item.meta},
             "schema_required": tuple(item.parameters.get("required", ())),
-            "catalog_observation": item.uri_template not in native_only_templates,
+            "catalog_observation": domains[item.uri_template] is not None,
+            "observation_expansion": domains[item.uri_template],
         }
         for item in dedupe_with_versions(templates, lambda item: item.uri_template)
     )
     return resources
+
+
+def _observation_domains(resources):
+    return {
+        r["uri"]: r.get("observation_expansion") or {}
+        for r in resources
+        if r.get("catalog_observation")
+    }
 
 
 async def _catalog_inventory(ctx, declarations, discovery):
