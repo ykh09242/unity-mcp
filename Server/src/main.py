@@ -68,7 +68,7 @@ from transport.catalog_subscriptions import (
 from transport.mcp_version_middleware import McpVersionMiddleware, mcp_request_body_limit
 from transport.inventory_ordering import InventoryOrderingMiddleware
 from transport.session_state_store import SessionStateStore
-from transport.skills_extension import install_skills
+from transport.skills_extension import SKILL_URI, install_skills
 from transport.scene_load_inputs import prepare_scene_load_inputs
 from transport.test_job_tasks import WaitTaskDeliveryMiddleware
 from transport.test_wait_binding import install_test_job_tasks
@@ -537,8 +537,8 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 
 Target and discover
 - Find Editors via mcpforunity://instances or manage_tools(action="list_instances"). Sessionless tools use unity_instance=Name@hash, resources use _meta.unity_instance.
-- For the MCP guide use manage_tools(action="catalog",group="skills"). Follow its read_call here. Open local skills through the host.
-- Resolve Assets/... in the selected Editor project. Confirm the target. Its root may differ from the client workspace. Keep names/paths verbatim. Client file access and links need a verified shared root. Use published URIs/templates.
+- If listed, read {SKILL_URI}. Get read_call via manage_tools(action="catalog",group="skills"). Open local files in the host.
+- Resolve Assets/... in the selected Editor project. Confirm its root, which may differ from the workspace. Keep names/paths verbatim. Client file access and links need a verified shared root. Use published URIs/templates.
 - Search by meaning. Call search_unity_tools with arguments {{"query":"<original text>","selection":"agent"}}. Follow next_call (next_offset), set open_family.arguments.family and compare operations. Inspect manage_tools(action="describe",tool=name,operation=action).
 - Use manage_tools(action="catalog") for reads. Fill operation.prepare_call from input_fields. Invoke prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
 - Check manage_tools(action="list_groups").discovery, client/project scope, Editor toggles and consent. Activate and refresh tools/list. Fixed hosts may need a user reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
