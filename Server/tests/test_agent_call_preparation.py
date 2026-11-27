@@ -141,6 +141,83 @@ async def test_debug_detail_requires_an_explicit_advertised_choice(server, mode)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_prepare_classifies_the_serving_default_when_only_the_list_schema_changes(
+    server, mode
+):
+    from fastmcp.server.middleware import Middleware
+
+    class ProjectList(Middleware):
+        async def on_list_tools(self, context, call_next):
+            tools = await call_next(context)
+            projected = []
+            for tool in tools:
+                if tool.name == "refresh_unity":
+                    schema = deepcopy(tool.parameters)
+                    schema["properties"]["wait_for_ready"]["default"] = False
+                    tool = tool.model_copy(update={"parameters": schema})
+                projected.append(tool)
+            return projected
+
+    server.add_middleware(ProjectList())
+    async with Client(server, mode=mode, cache=False) as client:
+        listed = next(t for t in await client.list_tools() if t.name == "refresh_unity")
+        assert listed.input_schema["properties"]["wait_for_ready"]["default"] is False
+        serving = await server.get_tool("refresh_unity")
+        assert serving.parameters["properties"]["wait_for_ready"]["default"] is True
+        for draft, grants in (
+            ({}, ["edit", "read", "run"]),
+            ({"wait_for_ready": False}, ["edit", "run"]),
+        ):
+            result = (
+                await client.call_tool(
+                    "manage_tools",
+                    {"action": "prepare", "tool": "refresh_unity", "arguments": draft},
+                )
+            ).structured_content
+            assert result["prepared_call"]["arguments"] == draft
+            assert result["execution"]["required_server_permissions"] == grants
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["provider", "version", "authorization", "defaults"])
+async def test_prepare_withholds_grants_when_the_serving_definition_changes(
+    server, monkeypatch, change
+):
+    from services.registry import call_preparation as preparation
+
+    existing = await server.get_tool("refresh_unity")
+    classify = preparation.prepared_execution
+
+    async def replace_after_check(ctx, name, arguments, schema):
+        execution = await classify(ctx, name, arguments, schema)
+        # Change the serving descriptor during the permission check's await boundary.
+        if change == "provider":
+
+            @server.tool(name="refresh_unity")
+            def replacement():
+                pytest.fail("Preparation dispatched the replacement")
+        elif change == "defaults":
+            monkeypatch.setitem(
+                existing.parameters["properties"]["wait_for_ready"], "default", False
+            )
+        else:
+            update = {"version": "2"} if change == "version" else {"auth": lambda ctx: True}
+            server.local_provider.remove_tool(name)
+            server.add_tool(existing.model_copy(update=update))
+        return execution
+
+    monkeypatch.setattr(preparation, "prepared_execution", replace_after_check)
+    async with Client(server, mode="legacy", cache=False) as client:
+        result = (
+            await client.call_tool(
+                "manage_tools", {"action": "prepare", "tool": "refresh_unity", "arguments": {}}
+            )
+        ).structured_content
+        assert result["ready"] and "execution" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 async def test_prepare_reports_the_concrete_editor_operation_without_granting_it(server, mode):
     async with Client(server, mode=mode) as client:
         for name, draft, grant in (

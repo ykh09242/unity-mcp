@@ -1,5 +1,6 @@
 """Construct a public call without executing it or acquiring permissions."""
 
+from copy import deepcopy
 from typing import Annotated
 
 from jsonschema import Draft202012Validator, validators
@@ -9,6 +10,7 @@ from referencing.exceptions import Unresolvable
 
 from core.config import config
 from models.custom_tool_schema import SchemaContractError, bounded_json, validation_details
+from models.host_tool_inventory import input_schema_digest
 from services.credential_lease import CredentialLeaseError
 from services.operation_permissions import (
     OperationPermissionError,
@@ -18,6 +20,7 @@ from services.operation_permissions import (
 from services.registry.action_contracts import conflicting_action_fields
 from services.registry.operation_scheduler import OperationScopeChanged
 from services.registry.operation_target import capture_http_target
+from services.registry.preview_continuation import PreviewBinding
 
 
 PAGE_SIZE = "x-unity-mcp-page-size"
@@ -102,6 +105,33 @@ async def prepared_execution(ctx, name, arguments, schema):
         check["requester"] = "allowed"
         check["selected_target"] = await _selected_target_grant(ctx, name, params, instance)
     return execution
+
+
+async def prepared_binding_execution(ctx, registered, listed, arguments):
+    """A prepared call has no version selector. Match the default provider used by tools/call."""
+    from fastmcp.exceptions import AuthorizationError
+
+    if getattr(registered, "fn", None) is None:
+        return None
+    binding = PreviewBinding.capture(registered)
+    if not binding.matches(listed):
+        return None
+    try:
+        serving = await ctx.fastmcp.get_tool(listed.name)
+        if not binding.matches(serving):
+            return None
+        # List middleware may project a different description or schema. Snapshot
+        # the defaults that admission would actually consume before checking leases.
+        schema = deepcopy(serving.parameters)
+        execution = await prepared_execution(ctx, listed.name, arguments, schema)
+        current = await ctx.fastmcp.get_tool(listed.name)
+    except (AuthorizationError, OperationPermissionError):
+        return None
+    if binding.matches(current) and input_schema_digest(schema) == input_schema_digest(
+        current.parameters
+    ):
+        return execution
+    return None
 
 
 async def _selected_target_grant(ctx, name, params, instance) -> str:

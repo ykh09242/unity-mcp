@@ -291,6 +291,107 @@ async def test_final_native_fence_intersects_requester_and_plugin(
 
 
 @pytest.mark.asyncio
+async def test_hosted_refresh_uses_serving_defaults_even_when_listing_projects_dispatch_only(
+    monkeypatch,
+):
+    from copy import deepcopy
+    from fastmcp import FastMCP
+    from services.registry.call_preparation import prepared_binding_execution
+
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    server = FastMCP("serving-defaults")
+
+    @server.tool()
+    def refresh_unity(wait_for_ready: bool = True):
+        pytest.fail("Preparation dispatched refresh")
+
+    serving = await server.get_tool("refresh_unity")
+    schema = deepcopy(serving.parameters)
+    schema["properties"]["wait_for_ready"]["default"] = False
+    listed = serving.model_copy(update={"parameters": schema})
+
+    async def get_state(key):
+        return None
+
+    ctx = SimpleNamespace(fastmcp=server, get_state=get_state)
+    claims = {"request": {"unity_mcp_permissions": ["edit", "run"]}}
+    async with permission_service(monkeypatch, claims) as fixture:
+        with bind_credential_lease((await fixture.service.validate("request")).lease):
+            default = await prepared_binding_execution(ctx, serving, listed, {})
+            assert default["required_server_permissions"] == ["edit", "read", "run"]
+            assert default["permission_check"]["requester"] == "denied"
+            dispatch = await prepared_binding_execution(
+                ctx, serving, listed, {"wait_for_ready": False}
+            )
+            assert dispatch["required_server_permissions"] == ["edit", "run"]
+            assert dispatch["permission_check"]["requester"] == "allowed"
+
+
+@pytest.mark.asyncio
+async def test_prepared_public_grants_observe_the_selected_lease_without_dispatch(
+    command_hub, monkeypatch
+):
+    from services import operation_permissions as policy
+    from services.registry.call_preparation import prepared_execution
+
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    await command_hub.registry.unregister("session")
+    await command_hub.registry.register("session", "Fixture", "hash", "6000", user_id="alice")
+    command_hub.websocket.state.user_id = "alice"
+    monkeypatch.setitem(
+        policy._ACTIONS,
+        "fixture_family",
+        {policy.Permission.READ: {"inspect"}, policy.Permission.EDIT: {"rename"}},
+    )
+    state = {"unity_instance": "Fixture@hash", "unity_session_id": "session"}
+
+    async def get_state(key):
+        return state.get(key)
+
+    ctx = SimpleNamespace(get_state=get_state)
+    schema = {"properties": {"action": {"default": "rename"}}}
+    claims = {
+        "observer": {"unity_mcp_permissions": ["read"]},
+        "author": {"unity_mcp_permissions": ["read", "edit"]},
+    }
+    async with permission_service(monkeypatch, claims) as fixture:
+        author = (await fixture.service.validate("author")).lease
+        observer = (await fixture.service.validate("observer")).lease
+        setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, observer)
+
+        async def evidence(name="fixture_family", args=None):
+            return (await prepared_execution(ctx, name, args or {}, schema))["permission_check"]
+
+        with bind_credential_lease(observer):
+            refused = await evidence()
+            assert (refused["requester"], refused["selected_target"]) == ("denied", "not_checked")
+            assert (await evidence(args={"action": "inspect"}))["selected_target"] == "allowed"
+        with bind_credential_lease(author):
+            refused = await evidence()
+            assert (refused["requester"], refused["selected_target"]) == ("allowed", "denied")
+            assert (await evidence("unclassified_family"))["requester"] == "denied"
+            setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, author)
+            assert (await evidence())["selected_target"] == "allowed"
+            # The existing public gate must consult the live plugin again on invocation.
+            setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, observer)
+            with pytest.raises(OperationPermissionError):
+                await policy.authorize_remote_operation(
+                    "fixture_family", {"action": "rename"}, ctx=ctx
+                )
+            state["unity_session_id"] = "gone"
+            missing = await evidence()
+            assert (missing["requester"], missing["selected_target"]) == ("allowed", "not_checked")
+            state["unity_session_id"] = "session"
+            state["unity_instance"] = "Other@other"
+            assert (await evidence())["selected_target"] == "not_checked"
+            state["unity_instance"] = "Fixture@hash"
+            command_hub.websocket.state.plugin_registered = False
+            assert (await evidence(args={"action": "inspect"}))["selected_target"] == "not_checked"
+            assert (await evidence("read_response"))["requester"] == "not_checked"
+        assert command_hub.sent == [] and PluginHub._pending == {}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "command,params",
     [

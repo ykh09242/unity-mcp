@@ -49,7 +49,7 @@ from services.registry.call_preparation import (
     PAGE_SIZE,
     ExactTextAssertion,
     not_prepared,
-    prepared_execution,
+    prepared_binding_execution,
     prepare_tool_call,
 )
 from services.registry.preview_continuation import PreviewBinding
@@ -1236,11 +1236,10 @@ async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=
     # where the selected action will run or whether it writes a client file.
     discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
     registered = discovery.definitions.get(name) if discovery else None
-    handler = getattr(registered, "fn", None)
-    if handler is None or getattr(definition, "fn", None) is not handler:
-        return result
     arguments = result["prepared_call"]["arguments"]
-    result["execution"] = await prepared_execution(ctx, name, arguments, definition.parameters)
+    execution = await prepared_binding_execution(ctx, registered, definition, arguments)
+    if execution is not None:
+        result["execution"] = execution
     return result
 
 
