@@ -158,13 +158,17 @@ def read_wire(folder):
     return sorted(calls, key=lambda c: c["time_ns"]), inventory
 
 
-async def preflight(server, lane, instance, profile):
+async def preflight(server, lane, instance, profile, *, timeout=45):
     transport = StdioTransport(
         command=str(server),
         args=wire.server_arguments(profile, instance),
-        env=wire.server_environment(lane / "status"),
+        # A disposable probe needs replay protection only for its own request budget.
+        env={
+            **wire.server_environment(lane / "status"),
+            "UNITY_MCP_COMMAND_TOTAL_TIMEOUT": str(timeout),
+        },
     )
-    async with Client(transport, timeout=45, init_timeout=60) as client:
+    async with Client(transport, timeout=timeout, init_timeout=60) as client:
         registered = await client.read_resource_mcp("mcpforunity://instances")
         selection = json.loads(registered.contents[0].text)
         if not selection.get("success") or [
@@ -173,9 +177,17 @@ async def preflight(server, lane, instance, profile):
             raise RuntimeError("The trial server must only expose its own disposable editor")
         project = await client.read_resource_mcp("mcpforunity://project/info")
         info = json.loads(project.contents[0].text)
-        root = (info.get("data") or {}).get("projectRoot")
+        data = info.get("data") if isinstance(info.get("data"), dict) else {}
+        if info.get("success") is not True:
+            metrics = data.get("capacity") if isinstance(data.get("capacity"), dict) else {}
+            raise RuntimeError(
+                f"Isolated project probe refused: code={info.get('code')}, "
+                f"execution={data.get('execution')}, hint={info.get('hint')}, "
+                f"retry_after_ms={metrics.get('retry_after_ms')}."
+            )
+        root = data.get("projectRoot")
         if (
-            not info.get("success")
+            not isinstance(root, str)
             or not root
             or Path(root).resolve() != (lane / "project").resolve()
         ):
@@ -292,6 +304,7 @@ def run_case(row, lane, receipts, codex, server, instance):
         attempts=list(attempts),
     )
     prepared = False
+    commissioning = False
     try:
         before = request(lane, "prepare", row["task"], row["language"], row["seed"])
         if not before.get("ok") or before.get("instance") != instance:
@@ -303,12 +316,16 @@ def run_case(row, lane, receipts, codex, server, instance):
         else:
             result["status"] = "host_error"
             with tempfile.TemporaryDirectory(prefix="unity-observation-client-") as neutral:
+                commissioning = True
                 cmd = actor_command(
                     codex, Path(neutral), run_dir, server, instance, row, status_dir=lane / "status"
                 )
+                commissioning = False
                 result.update(run_actor(cmd, row["query"], run_dir))
     except (OSError, ValueError, IndexError, KeyError, RuntimeError, TimeoutError) as exc:
         result["error"] = str(exc)
+        if commissioning:
+            result["commissioning_failed"] = True
     finally:
         if prepared:
             try:
@@ -359,6 +376,8 @@ def run_lane(lane, assigned, receipts, codex, server):
             len(result["calls"]),
             flush=True,
         )
+        if result.get("commissioning_failed"):
+            raise RuntimeError(f"Lane stopped before the next submission: {result['error']}")
 
 
 def main():
