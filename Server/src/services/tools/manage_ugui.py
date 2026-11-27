@@ -868,6 +868,7 @@ async def _diagnose_raycast(
     group="ui",
     description=(
         "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. "
+        "get_hierarchy reads one target GameObject and its descendants. "
         "Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast with allow_custom_filters=false, diagnose_device_profiles. Mutating actions: create, set_rect, set_layout, "
         "set_text, set_canvas, set_image. Optional uGUI and TextMeshPro support is detected in the Editor. "
         "Writes include bounded data.verification for the same target, with retained serialized fields and "

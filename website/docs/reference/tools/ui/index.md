@@ -10,7 +10,7 @@ UI Toolkit (UXML, USS, UIDocument, optional PanelRenderer) and Canvas-based uGUI
 
 - **[`capture_ui_snapshot`](./capture_ui_snapshot.md)** — Capture a bounded complete semantic scene UI snapshot for ugui or uitoolkit.
 - **[`inspect_ugui_hit_order`](./inspect_ugui_hit_order.md)** — Read ordered native uGUI hits for a scene RectTransform and current bottom-left screen pixel coordinates.
-- **[`manage_ugui`](./manage_ugui.md)** — Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings.
+- **[`manage_ugui`](./manage_ugui.md)** — Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. get_hierarchy reads one target GameObject and its descendants.
 - **[`ui_capture`](./ui_capture.md)** — Start, poll or cancel a bounded UI Toolkit render capture.
 - **[`ui_document`](./ui_document.md)** — Attach UI documents and configure Panel Settings.
 - **[`ui_element`](./ui_element.md)** — Change a visual element's text, classes, style or state.

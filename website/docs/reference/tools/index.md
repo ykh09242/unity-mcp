@@ -181,7 +181,7 @@ Test runner, async test jobs & bounded Play Mode input simulation
 UI Toolkit (UXML, USS, UIDocument, optional PanelRenderer) and Canvas-based uGUI editing and diagnostics
 - **[`capture_ui_snapshot`](./ui/capture_ui_snapshot.md)** — Capture a bounded complete semantic scene UI snapshot for ugui or uitoolkit.
 - **[`inspect_ugui_hit_order`](./ui/inspect_ugui_hit_order.md)** — Read ordered native uGUI hits for a scene RectTransform and current bottom-left screen pixel coordinates.
-- **[`manage_ugui`](./ui/manage_ugui.md)** — Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings.
+- **[`manage_ugui`](./ui/manage_ugui.md)** — Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. get_hierarchy reads one target GameObject and its descendants.
 - **[`ui_capture`](./ui/ui_capture.md)** — Start, poll or cancel a bounded UI Toolkit render capture.
 - **[`ui_document`](./ui/ui_document.md)** — Attach UI documents and configure Panel Settings.
 - **[`ui_element`](./ui/ui_element.md)** — Change a visual element's text, classes, style or state.
