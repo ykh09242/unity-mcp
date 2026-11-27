@@ -553,11 +553,20 @@ async def test_startup_worker_keeps_loop_responsive_and_drains_before_cleanup(
 ):
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "0")
     monkeypatch.setattr(config, "transport_mode", "stdio")
-    monkeypatch.setattr(main, "STARTUP_CONNECT_TIMEOUT", 0.02, raising=False)
-    entered, expired = asyncio.Event(), asyncio.Event()
+    monkeypatch.setattr(main, "STARTUP_CONNECT_TIMEOUT", watchdog_timeout())
+    entered, tick = asyncio.Event(), asyncio.Event()
     release = threading.Event()
     loop = asyncio.get_running_loop()
     loop_thread = threading.get_ident()
+    deadlines = {}
+    real_timeout_at = asyncio.timeout_at
+
+    def capture_timeout(when):
+        scope = real_timeout_at(when)
+        deadlines[asyncio.current_task()] = scope
+        return scope
+
+    monkeypatch.setattr(asyncio, "timeout_at", capture_timeout)
     pool = Mock()
     pool.aclose = AsyncMock()
     pool.discover_all_instances.return_value = [SimpleNamespace(id="Fixture@hash")]
@@ -585,14 +594,20 @@ async def test_startup_worker_keeps_loop_responsive_and_drains_before_cleanup(
                 yielded.set()
 
     startup = asyncio.create_task(start())
-    loop.call_later(0.04, expired.set)
     try:
         await await_signal(entered, "startup worker", producers=(startup,))
         if ending == "cancel":
             startup.cancel()
         elif ending == "level_cancel":
             scopes[0].cancel()
-        await await_signal(expired, "event-loop ticker")
+        else:
+            # Discovery and connection use separate timeout scopes with one original deadline.
+            # Expire the scope owning the blocked worker after it has actually entered.
+            deadlines[startup].reschedule(loop.time())
+        loop.call_soon(tick.set)
+        await await_signal(tick, "event-loop ticker")
+        if ending == "deadline":
+            assert deadlines[startup].expired()
         assert not startup.done(), "Actual blocking work must remain owned until it exits"
         assert not yielded.is_set()
         pool.aclose.assert_not_awaited()
