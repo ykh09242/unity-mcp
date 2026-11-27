@@ -128,6 +128,7 @@ STRUCTURED_SEARCH = "af08d11b9b7aae4c8d0d45dec1bcbead3053499eb566f04258d9d9fb275
 ACTION_CONTRACT = "c45b292c8ef906242f676725fb69b215e5ac617810ffc34e304ecf30fd194137"
 PREVIEW_CONTINUATION = "df69472b5dfa147ead8b155f263b288704a93470b07b61a10c7fc4f48617a37c"
 CONNECTION_OBSERVATION = "6f616ae8e881f5632f9b6d56d93e535c656335abb72492b57fa155cfd1a276ea"
+RESOURCE_BINDINGS = "4ae752132916146b0f3a8c50ebc481bb76b3e1bdb74bb80815fd1570191b316c"
 STUDIES = {
     PUBLISHED: ("compact_edit_confirmation_results.json", prior.PUBLISHED, FROZEN_PINS),
     EDITOR_CATALOG: (
@@ -208,6 +209,15 @@ STUDIES = {
         {
             "package": "0324c39b7429c8e3e6d898abc404e40109596f64",
             "runtime": "c49fca264230314c2eccd011cbb4c8d0c3b198f4",
+            "skill": "d5a0802842738e0a1b1ab73007704f046bfc3c14",
+        },
+    ),
+    RESOURCE_BINDINGS: (
+        "connection_observation_confirmation_results.json",
+        CONNECTION_OBSERVATION,
+        {
+            "package": "4903d8416f5fbc6f183a20cd69eb664abce618df",
+            "runtime": "5376ce9f63f26f620cb1d7b40762b73c429bbfe7",
             "skill": "d5a0802842738e0a1b1ab73007704f046bfc3c14",
         },
     ),

@@ -1,0 +1,464 @@
+{
+  "schema": 1,
+  "primary_sha256": "4ae752132916146b0f3a8c50ebc481bb76b3e1bdb74bb80815fd1570191b316c",
+  "request_sha256": "adbccbff5d05d76ee9f636e65c2ffea8870426f05b011edc27dc389d256dc679",
+  "seal_sha256": "45b6ea1d67ec992cf4e00906095ed47874aa44c8b9e482757c17877024d5dd01",
+  "languages": {
+    "h02": "de",
+    "h04": "ru",
+    "h06": "vi",
+    "h08": "fr",
+    "r01": "vi",
+    "r03": "ru",
+    "n01": "sv",
+    "n02": "it",
+    "n03": "ja",
+    "n04": "pl",
+    "n05": "es",
+    "n06": "tr",
+    "k01": "ko"
+  },
+  "product_pins": {
+    "package": "4903d8416f5fbc6f183a20cd69eb664abce618df",
+    "runtime": "5376ce9f63f26f620cb1d7b40762b73c429bbfe7",
+    "skill": "d5a0802842738e0a1b1ab73007704f046bfc3c14"
+  },
+  "actor": {
+    "version": "codex-cli 0.172.0",
+    "sha256": "3f42b12274b353ecb3ec555e6c8d0a43f6c6cb29c3a546179bc12dee4855deb6",
+    "model": "gpt-6.2-sol",
+    "reasoning_effort": "medium",
+    "host": "ordinary-codex-exec"
+  },
+  "unity_version": "6000.0.69f1",
+  "catalog_sizes": {
+    "core": 62,
+    "full": 92
+  },
+  "verified_product_archives": {
+    "package": {
+      "files": 1600,
+      "sha256": "521a8c574b10ce6fb4274d9cdd52665bbffa03110c9d78c33071783960b92232"
+    },
+    "runtime": {
+      "files": 1436,
+      "sha256": "89b28a9e2d158f31e9c5efca2f3bc5e84e37e4fa4aba07c3fe1b5495a120242d"
+    }
+  },
+  "native_control": {
+    "before": {
+      "value": "See the log",
+      "asset_sha256": "202257c9fbc33929527cca8acc57de3f43c6d85be36074680126e71a7406e3ac",
+      "meta_sha256": "a69c72656db2afc3208b9f0baa859e46de88a0a7e02a06180ef58ddf84d7efe7",
+      "protected_bytes_sha256": "73d8392ea6f324dc0f22fd535b111d76dbae8bec51d6d3f83d951be6d035b09d"
+    },
+    "after": {
+      "value": "인계 기록을 열까요?",
+      "asset_sha256": "d7debd6fb6cfc10631ff135b66403f78449f60e9789d5e8e7438ead889bfc245",
+      "meta_sha256": "a69c72656db2afc3208b9f0baa859e46de88a0a7e02a06180ef58ddf84d7efe7",
+      "protected_bytes_sha256": "73d8392ea6f324dc0f22fd535b111d76dbae8bec51d6d3f83d951be6d035b09d"
+    }
+  },
+  "shared_preferences": {
+    "owned_editor_stopped": true,
+    "shared_prefs": "5ab447bb3881745f00a37d8290018c33a1d238d17391edd6bbcd99c9267b6ffb",
+    "count": 130
+  },
+  "cases": [
+    {
+      "id": "9b4353bfa9a00be7",
+      "profile": "core",
+      "task": "r03",
+      "effect": "edit",
+      "original_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "answer_sha256": "493998ac513bf5b694facd8a30124762133926faf66ec747f20de72d352b3b8c",
+      "delivery_status": "completed",
+      "seconds": 61.747,
+      "receipt_sha256": "edc7f459951db8d243c1ec785190c9c828e48287afca1751b9237bfbaccc83ad",
+      "fingerprint": "5e8b31ffc55212c48cfa851669c0735c265f59a60e907b32877c8e289a20080f",
+      "before_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "See the log"
+      },
+      "after_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "인계 기록을 열까요?"
+      },
+      "before_sha256": "a1cbcf4af8fbdc079370238e07d7e00971c47397a9a8c5219a3eba3f236f54ff",
+      "after_sha256": "d9f5484e9f04f6b9ffdb282493182fb3c881cc12a37a9fc9509792b3dfb33cf9",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "4cf71abdedbe482491c2c59b7b8db5daba4085b557c8381d2bb814028efa7603",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "b1b7d7febb5607b3c7040d44d79c9e8ad83257959525263409bae5da04e67399",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "read_unity_resource",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "f6437bdd1749befc1f513cc5265d5771319357d4e7516908d174432ad6ca040b"
+        },
+        {
+          "index": 1,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "70132f844afb3bbbe5ac970d846ad9cb93b85ae0e80f09b52d7599791d4ee2e6"
+        },
+        {
+          "index": 2,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4f100b503276ec5359b7589d67eafc5e5445bf68416f15ecc9a2d7d711bf520e"
+        },
+        {
+          "index": 3,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "11d06a5e8a249ff355c06b8415c65221a238be4913136de7345b7ee3c41f5389"
+        },
+        {
+          "index": 4,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "01c095a28f1d283b9704a8fd34901a53d6c3885d1e6bbef973c19476358dadc2"
+        },
+        {
+          "index": 5,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "36f0337f3a8e765faa56a7fd56092508eff38b78c3ee6fa6ea7fbc359153b06f"
+        },
+        {
+          "index": 6,
+          "binding": "manage_tools",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "8191e95b5bd23dbf334723a59ecb31e7229e4b66081b235318c7fee762a2d1db"
+        },
+        {
+          "index": 7,
+          "binding": "read_unity_resource",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "bb6ffa30e1ea00439b349f34923a85165dbd4f588951f1e23e5ccc13ebd27259"
+        },
+        {
+          "index": 8,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "f2a41249d342c09bc1ff47a38f51a546f764fc2d50c08765edb4cce62e9c72d9"
+        },
+        {
+          "index": 9,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4d0203ae8b7456cae720500a69e5dd0f3970047959d79643fcff00f0cda39573"
+        },
+        {
+          "index": 10,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "d4ecbe47efbd418628a33aeb2a776f1eb7e0cb845e8551dda55914bab6a39263"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "22dbe21f363390f1611207900db6fddacb9a45130da01354012d18c511c853a2",
+        "57d1ab3b6671b4e32e538324c74ae6496298ad67fd69d57c5b917c83da209690",
+        "c37c2d2da7590d2f37c02cefb30740e121f4b232895228f797debea0f48748ad",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "5e8b31ffc55212c48cfa851669c0735c265f59a60e907b32877c8e289a20080f",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 4,
+            "sha256": "01c095a28f1d283b9704a8fd34901a53d6c3885d1e6bbef973c19476358dadc2"
+          },
+          {
+            "index": 8,
+            "sha256": "f2a41249d342c09bc1ff47a38f51a546f764fc2d50c08765edb4cce62e9c72d9"
+          },
+          {
+            "index": 9,
+            "sha256": "4d0203ae8b7456cae720500a69e5dd0f3970047959d79643fcff00f0cda39573"
+          },
+          {
+            "index": 10,
+            "sha256": "d4ecbe47efbd418628a33aeb2a776f1eb7e0cb845e8551dda55914bab6a39263"
+          }
+        ]
+      },
+      "actor_first_list_delta": {
+        "count": 62,
+        "added": [],
+        "absent": []
+      },
+      "host_item_types": {
+        "agent_message": 3,
+        "mcp_tool_call": 11
+      },
+      "other_integrations": [],
+      "host_routes": [
+        "unityMCP/manage_tools",
+        "unityMCP/read_unity_resource",
+        "unityMCP/ui_source"
+      ],
+      "host_file_changes": [],
+      "before_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "after_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "host_tool_calls": {
+        "completed": 11
+      },
+      "skill_document_reads": [
+        0,
+        7
+      ],
+      "discovery_use": {
+        "list_instances": 1,
+        "describe": 1,
+        "prepare": 1,
+        "prepare_with_exact_text": 1
+      },
+      "disk": {
+        "before": {
+          "value": "See the log",
+          "asset_sha256": "202257c9fbc33929527cca8acc57de3f43c6d85be36074680126e71a7406e3ac",
+          "meta_sha256": "a69c72656db2afc3208b9f0baa859e46de88a0a7e02a06180ef58ddf84d7efe7",
+          "protected_bytes_sha256": "73d8392ea6f324dc0f22fd535b111d76dbae8bec51d6d3f83d951be6d035b09d"
+        },
+        "after": {
+          "value": "인계 기록을 열까요?",
+          "asset_sha256": "d7debd6fb6cfc10631ff135b66403f78449f60e9789d5e8e7438ead889bfc245",
+          "meta_sha256": "a69c72656db2afc3208b9f0baa859e46de88a0a7e02a06180ef58ddf84d7efe7",
+          "protected_bytes_sha256": "73d8392ea6f324dc0f22fd535b111d76dbae8bec51d6d3f83d951be6d035b09d"
+        }
+      },
+      "language_case": "k01"
+    },
+    {
+      "id": "8316239466907bb5",
+      "profile": "full",
+      "task": "r03",
+      "effect": "edit",
+      "original_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "answer_sha256": "9c89050f2d4410bd4da0124eb99fa2493be5f3442e16b8cf986d28472864102a",
+      "delivery_status": "completed",
+      "seconds": 48.622,
+      "receipt_sha256": "a89c1af48878b3c4bfd177d8f488d9f7c7788f6b43e2f504e0a707e9b567ee59",
+      "fingerprint": "eaaddc6365de504b3443e7c602a22917bc182af14691d8891c3b0d83de0e467f",
+      "before_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "See the log"
+      },
+      "after_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "인계 기록을 열까요?"
+      },
+      "before_sha256": "d378e909f095a56a5843b170a1d0de5a5e7ce8fd8b1be3da7bf6c26a56f168a3",
+      "after_sha256": "bf1a0770678b56c0be3396b835c380692f5b3a278aca850c1c551c56f2c7a173",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "341bf46c0cdd616cc4eb1562cb80f88b25b01e5ccb1597363ebe81b38d7fa4e0",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "71f0d6f8909b5c6c64a003f61b1289340a50d8719b0c17164eb14f7aaae8ed1c",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "read_unity_resource",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "e7d7ce9c3057456178a999d054d139ac5af444d7cf427e00dc2de3724b080639"
+        },
+        {
+          "index": 1,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "35251ef59400f935c13aa73fdda9dc05c42fa5989e77f4d9c6a4147d47266b6f"
+        },
+        {
+          "index": 2,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "9445c8096a6c00fc9ca662b00eceb8266cdbd0c6631c54b29532176ece4fabb0"
+        },
+        {
+          "index": 3,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "6143ddde102f9a0313cf8b94e33331b0ea176462f47a70f458ffdb163fc88c43"
+        },
+        {
+          "index": 4,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "f2257d5525e3d42370bc784715f6099124930719a87c5f99dbf804fb152bb781"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "2acca0f6eaf15bf335c2ea0474c46251723b226262d8a6f762f768aea983d98b",
+        "3c77c7bb6c73854cbdf3236c47f940e5753a2495052b690e86fb88dd7164ade2",
+        "be63f488f09ba0275797f52ec8feaf7d783a769ef66288b9be14b2ef03f5bc5a",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "eaaddc6365de504b3443e7c602a22917bc182af14691d8891c3b0d83de0e467f",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 1,
+            "sha256": "35251ef59400f935c13aa73fdda9dc05c42fa5989e77f4d9c6a4147d47266b6f"
+          },
+          {
+            "index": 2,
+            "sha256": "9445c8096a6c00fc9ca662b00eceb8266cdbd0c6631c54b29532176ece4fabb0"
+          },
+          {
+            "index": 3,
+            "sha256": "6143ddde102f9a0313cf8b94e33331b0ea176462f47a70f458ffdb163fc88c43"
+          },
+          {
+            "index": 4,
+            "sha256": "f2257d5525e3d42370bc784715f6099124930719a87c5f99dbf804fb152bb781"
+          }
+        ]
+      },
+      "actor_first_list_delta": {
+        "count": 92,
+        "added": [],
+        "absent": []
+      },
+      "host_item_types": {
+        "agent_message": 3,
+        "mcp_tool_call": 5
+      },
+      "other_integrations": [],
+      "host_routes": [
+        "unityMCP/read_unity_resource",
+        "unityMCP/ui_source"
+      ],
+      "host_file_changes": [],
+      "before_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "after_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "host_tool_calls": {
+        "completed": 5
+      },
+      "skill_document_reads": [
+        0
+      ],
+      "discovery_use": {},
+      "disk": {
+        "before": {
+          "value": "See the log",
+          "asset_sha256": "202257c9fbc33929527cca8acc57de3f43c6d85be36074680126e71a7406e3ac",
+          "meta_sha256": "a69c72656db2afc3208b9f0baa859e46de88a0a7e02a06180ef58ddf84d7efe7",
+          "protected_bytes_sha256": "73d8392ea6f324dc0f22fd535b111d76dbae8bec51d6d3f83d951be6d035b09d"
+        },
+        "after": {
+          "value": "인계 기록을 열까요?",
+          "asset_sha256": "d7debd6fb6cfc10631ff135b66403f78449f60e9789d5e8e7438ead889bfc245",
+          "meta_sha256": "a69c72656db2afc3208b9f0baa859e46de88a0a7e02a06180ef58ddf84d7efe7",
+          "protected_bytes_sha256": "73d8392ea6f324dc0f22fd535b111d76dbae8bec51d6d3f83d951be6d035b09d"
+        }
+      },
+      "language_case": "k01"
+    }
+  ]
+}
