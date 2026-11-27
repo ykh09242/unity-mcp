@@ -60,6 +60,21 @@ def fresh_telemetry():
     yield
 
 
+@pytest.fixture
+def stdio_editor_target(tmp_path):
+    """Return the discovery record a local connection pool receives for one Editor."""
+    from models.models import UnityInstanceInfo
+
+    return UnityInstanceInfo(
+        id="Project@deadbeef",
+        name="Project",
+        path=str(tmp_path / "Project" / "Assets"),
+        hash="deadbeef",
+        port=6400,
+        status="running",
+    )
+
+
 def pytest_collection_modifyitems(session, config, items):  # noqa: ARG001
     """Reorder tests so characterization tests run before integration tests.
 

@@ -199,16 +199,15 @@ async def test_sync_handles_custom_tool_service_not_initialized():
 
 
 @pytest_asyncio.fixture
-async def pooled_connection(monkeypatch):
+async def pooled_connection(monkeypatch, stdio_editor_target):
     """Use real pool publication so reconnect work has its production owner."""
     from transport.legacy import unity_connection
 
     pool = unity_connection.UnityConnectionPool()
-    target = SimpleNamespace(id="Project@deadbeef", port=6400)
-    monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
+    monkeypatch.setattr(pool, "resolve_instance", lambda _: stdio_editor_target)
     monkeypatch.setattr(UnityConnection, "connect", lambda _, **kwargs: True)
     monkeypatch.setattr(unity_connection, "_unity_connection_pool", pool)
-    connection = pool.get_connection(target.id)
+    connection = pool.get_connection(stdio_editor_target.id)
     try:
         yield connection
     finally:

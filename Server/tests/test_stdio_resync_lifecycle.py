@@ -2,7 +2,6 @@
 
 import asyncio  # noqa: ANYIO_OK -- exercise the transport's existing asyncio lifetime.
 import threading
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -12,13 +11,12 @@ from transport.legacy import unity_connection as uc
 
 
 @pytest.fixture
-def pool_connection(monkeypatch):
+def pool_connection(monkeypatch, stdio_editor_target):
     pool = uc.UnityConnectionPool()
     monkeypatch.setattr(uc, "_unity_connection_pool", pool)
-    target = SimpleNamespace(id="Main@deadbeef", port=6400)
-    monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
+    monkeypatch.setattr(pool, "resolve_instance", lambda _: stdio_editor_target)
     monkeypatch.setattr(uc.UnityConnection, "connect", lambda _, **kwargs: True)
-    conn = pool.get_connection(target.id)
+    conn = pool.get_connection(stdio_editor_target.id)
     monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)
     return pool, conn
 
@@ -268,14 +266,13 @@ async def test_queued_resync_selection_is_drained_without_dispatch(pool_connecti
 
 
 @pytest.mark.asyncio
-async def test_initial_connection_cannot_publish_after_retirement(monkeypatch):
+async def test_initial_connection_cannot_publish_after_retirement(monkeypatch, stdio_editor_target):
     pool = uc.UnityConnectionPool()
-    target = SimpleNamespace(id="Main@deadbeef", port=6400)
     loop = asyncio.get_running_loop()
     started = asyncio.Event()
     release = threading.Event()
     disposed = []
-    monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
+    monkeypatch.setattr(pool, "resolve_instance", lambda _: stdio_editor_target)
 
     def connect(connection):
         loop.call_soon_threadsafe(started.set)
@@ -288,7 +285,7 @@ async def test_initial_connection_cannot_publish_after_retirement(monkeypatch):
 
     monkeypatch.setattr(uc.UnityConnection, "connect", connect)
     monkeypatch.setattr(uc.UnityConnection, "disconnect", disconnect)
-    selecting = loop.run_in_executor(None, pool.get_connection, target.id)
+    selecting = loop.run_in_executor(None, pool.get_connection, stdio_editor_target.id)
     await await_signal(started, "initial connection started")
     closing = asyncio.create_task(pool.aclose())
     try:
@@ -305,14 +302,15 @@ async def test_initial_connection_cannot_publish_after_retirement(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_late_published_connection_is_sealed_before_final_disposal(monkeypatch):
+async def test_late_published_connection_is_sealed_before_final_disposal(
+    monkeypatch, stdio_editor_target
+):
     pool = uc.UnityConnectionPool()
-    target = SimpleNamespace(id="Main@deadbeef", port=6400)
     loop = asyncio.get_running_loop()
     before_publication = asyncio.Event()
     release = threading.Event()
     real_connect = uc.UnityConnection.connect
-    monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
+    monkeypatch.setattr(pool, "resolve_instance", lambda _: stdio_editor_target)
     monkeypatch.setattr(uc.UnityConnection, "connect", lambda _, **kwargs: True)
 
     class PausedPublication(dict):
@@ -322,7 +320,7 @@ async def test_late_published_connection_is_sealed_before_final_disposal(monkeyp
             super().__setitem__(key, connection)
 
     pool._connections = PausedPublication()
-    selecting = loop.run_in_executor(None, pool.get_connection, target.id)
+    selecting = loop.run_in_executor(None, pool.get_connection, stdio_editor_target.id)
     await await_signal(before_publication, "selection passed its last retirement check")
     closing = asyncio.create_task(pool.aclose())
     try:
