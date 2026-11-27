@@ -8,7 +8,7 @@ import logging
 import math
 import re
 import unicodedata
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -16,12 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 
 from services.declared_action_contracts import ASSET_REFERENCE_WIRE
 from services.registry.capability_adapter import capability_command
+from services.registry.action_contracts import used_by_actions
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import parse_json_payload, coerce_int, normalize_properties
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.preflight import preflight
+from services.tools.preflight import RefreshIfDirty, preflight
 from services.tools.pagination import validate_page, page_integer
 from services.tools.reference_diagnostics import (
     ASSET_REFERENCE_ACTIONS,
@@ -155,6 +156,21 @@ def asset_label_params(
     return params
 
 
+AssetRefreshAction = Literal[
+    "import",
+    "create",
+    "modify",
+    "delete",
+    "duplicate",
+    "move",
+    "rename",
+    "search",
+    "get_info",
+    "create_folder",
+    "get_components",
+]
+
+
 @mcp_for_unity_tool(
     group="legacy",
     description=(
@@ -182,17 +198,7 @@ async def manage_asset(
     ctx: Context,
     action: Annotated[
         Literal[
-            "import",
-            "create",
-            "modify",
-            "delete",
-            "duplicate",
-            "move",
-            "rename",
-            "search",
-            "get_info",
-            "create_folder",
-            "get_components",
+            AssetRefreshAction,
             "list_asset_bundles",
             "get_bundle_assets",
             "get_bundle_dependencies",
@@ -307,7 +313,12 @@ async def manage_asset(
         bool,
         "get_bundle_assets only: include the first bounded dependency page without building bundles.",
     ] = False,
+    refresh_if_dirty: Annotated[
+        RefreshIfDirty, used_by_actions(*get_args(AssetRefreshAction))
+    ] = True,
 ) -> dict[str, Any]:
+    if type(refresh_if_dirty) is not bool:
+        return {"success": False, "message": "refresh_if_dirty must be a boolean."}
     action_l = (action or "").lower()
     if await_graph_seconds is not None and (
         isinstance(await_graph_seconds, bool)
@@ -507,28 +518,13 @@ async def manage_asset(
             "code": "invalid_metadata_search",
             "message": "Metadata search does not generate previews.",
         }
-    if action_l not in {
-        "import",
-        "create",
-        "modify",
-        "delete",
-        "duplicate",
-        "move",
-        "rename",
-        "search",
-        "get_info",
-        "create_folder",
-        "get_components",
-        "list_asset_bundles",
-        "get_bundle_assets",
-        "get_bundle_dependencies",
-    }:
-        return {"success": False, "message": f"Unknown asset action: '{action}'."}
     bundle_inspection = action_l in {
         "list_asset_bundles",
         "get_bundle_assets",
         "get_bundle_dependencies",
     }
+    if not bundle_inspection and action_l not in get_args(AssetRefreshAction):
+        return {"success": False, "message": f"Unknown asset action: '{action}'."}
     if action_l != "search" and not bundle_inspection and not path:
         return {"success": False, "message": f"Action '{action}' requires parameter 'path'."}
     if action_l == "search" and path is None:
@@ -635,7 +631,7 @@ async def manage_asset(
 
     unity_instance = await get_unity_instance_from_context(ctx)
     if not bundle_inspection:
-        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=refresh_if_dirty)
         if gate is not None:
             return gate.model_dump()
 

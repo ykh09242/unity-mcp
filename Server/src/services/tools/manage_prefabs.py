@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -10,12 +10,13 @@ from services.registry.preview_continuation import (
     native_plan_id,
     matches_serialized_edit,
 )
+from services.registry.action_contracts import used_by_actions
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_bool, normalize_vector3
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.preflight import preflight
+from services.tools.preflight import RefreshIfDirty, preflight
 from services.tools.primitive_validation import primitive_type_error
 
 
@@ -76,6 +77,24 @@ def _prefab_plan_apply(params, data):
     )
 
 
+PrefabAction = Literal[
+    "create_from_gameobject",
+    "get_info",
+    "get_hierarchy",
+    "modify_contents",
+    "preview_modify_contents",
+    "apply_preview",
+    "open_prefab_stage",
+    "save_prefab_stage",
+    "close_prefab_stage",
+    "list_overrides",
+    "trace_property",
+    "revert_overrides",
+    "apply_overrides",
+]
+_REFRESH_ACTIONS = tuple(action for action in get_args(PrefabAction) if action != "trace_property")
+
+
 @mcp_for_unity_tool(
     preview_contracts={"preview_modify_contents": _prefab_plan_apply},
     group="legacy",
@@ -132,21 +151,7 @@ def _prefab_plan_apply(params, data):
 async def manage_prefabs(
     ctx: Context,
     action: Annotated[
-        Literal[
-            "create_from_gameobject",
-            "get_info",
-            "get_hierarchy",
-            "modify_contents",
-            "preview_modify_contents",
-            "apply_preview",
-            "open_prefab_stage",
-            "save_prefab_stage",
-            "close_prefab_stage",
-            "list_overrides",
-            "trace_property",
-            "revert_overrides",
-            "apply_overrides",
-        ],
+        PrefabAction,
         "Prefab operation to perform.",
     ],
     prefab_path: Annotated[
@@ -251,8 +256,11 @@ async def manage_prefabs(
         int, "get_hierarchy inclusive depth scope, root=0; default 64, maximum 128."
     ] = 64,
     property_path: Annotated[str | None, "trace_property only: exact serialized leaf path."] = None,
+    refresh_if_dirty: Annotated[RefreshIfDirty, used_by_actions(*_REFRESH_ACTIONS)] = True,
 ) -> dict[str, Any]:
-    if action not in {*REQUIRED_PARAMS, "save_prefab_stage", "close_prefab_stage"}:
+    if type(refresh_if_dirty) is not bool:
+        return {"success": False, "message": "refresh_if_dirty must be a boolean."}
+    if action not in get_args(PrefabAction):
         return {"success": False, "message": f"Unknown prefab action: '{action}'."}
     if preview_only is not None and (action != "modify_contents" or type(preview_only) is not bool):
         return {"success": False, "message": "preview_only is a boolean for modify_contents only."}
@@ -624,7 +632,9 @@ async def manage_prefabs(
             gate = await preflight(
                 ctx,
                 wait_for_no_compile=True,
-                refresh_if_dirty=not preview_only and action != "trace_property",
+                refresh_if_dirty=refresh_if_dirty
+                if not preview_only and action in _REFRESH_ACTIONS
+                else False,
             )
             if gate is not None:
                 return gate.model_dump()

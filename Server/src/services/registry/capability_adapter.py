@@ -9,7 +9,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from models.capability_results import BUNDLE_RESULT, validate_bundle_result
-from services.registry.action_contracts import action_input_error
+from services.registry.action_contracts import action_input_error, narrow_parameter_usage
 from services.registry.action_catalog import ACTION_OBSERVATIONS_META, action_observations
 from services.registry.capability_catalog import Capability, CAPABILITIES
 from services.registry.tool_registry import get_registered_tools, mcp_for_unity_tool
@@ -48,7 +48,11 @@ def register_capability(capability: Capability, implementation: Callable) -> Cal
         raise ValueError(f"{capability.name}: unknown parameters {sorted(unknown)}")
     parameters = []
     for name, parameter in signature.parameters.items():
-        if name not in admitted:
+        if name == "refresh_if_dirty":
+            parameter = narrow_parameter_usage(parameter, capability.actions)
+            if parameter is None:
+                continue
+        elif name not in admitted:
             continue
         if name == "ctx":
             # SDK registration can attach an injection default to the source.

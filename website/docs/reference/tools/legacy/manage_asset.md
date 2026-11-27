@@ -48,6 +48,7 @@ Tip (payload safety): for `action="search"`, prefer paging (`page_size`, `page_n
 | `reference_revision` | `str \| None` | — | Recheck the same bounded read/preview or guard move/delete immediately before mutation. |
 | `await_graph_seconds` | `float \| None` | — | Asset writes only: wait 0..30 seconds for the existing active graph receipt and first diff page; never activates a graph. |
 | `include_dependencies` | `bool` | — | get_bundle_assets only: include the first bounded dependency page without building bundles. |
+| `refresh_if_dirty` | `bool` | — | Set false to skip optional asset refreshes before this command. True preserves the operation's existing refresh policy and permissions. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

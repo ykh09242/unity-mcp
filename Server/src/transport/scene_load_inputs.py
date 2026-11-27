@@ -276,8 +276,9 @@ class SceneLoadInputs(Middleware):
         if (
             args.get("action") != "load"
             or any(args.get(key) is not None for key in ("name", "path", "build_index"))
-            or set(args) - {"action", "name", "path", "build_index", "additive"}
+            or set(args) - {"action", "name", "path", "build_index", "additive", "refresh_if_dirty"}
             or (args.get("additive") is not None and type(args["additive"]) is not bool)
+            or ("refresh_if_dirty" in args and type(args["refresh_if_dirty"]) is not bool)
         ):
             return await call_next(context)
         if ctx.session.protocol_version != "2026-07-28":

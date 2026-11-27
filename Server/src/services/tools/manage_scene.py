@@ -1,23 +1,39 @@
-from typing import Annotated, Literal, Any
+from typing import Annotated, Literal, Any, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from services.registry.capability_adapter import capability_command
-from services.registry.action_contracts import input_actions
+from services.registry.action_contracts import input_actions, used_by_actions
 from services.registry import mcp_for_unity_tool
 from services.registry.action_catalog import ACTION_OBSERVATIONS_META, action_observations
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_int, coerce_bool
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.preflight import preflight
+from services.tools.preflight import RefreshIfDirty, preflight
 from services.tools.pagination import page_integer
 from services.tools.reference_diagnostics import reference_page, reference_path
 
 
 _VERIFY_ACTIONS = ("load", "save")
 _SCENE_HANDLE_ACTIONS = ("validate", "save")
+
+
+SceneRefreshAction = Literal[
+    "create",
+    "load",
+    "save",
+    "get_hierarchy",
+    "get_active",
+    "get_build_settings",
+    "scene_view_frame",
+    "close_scene",
+    "set_active_scene",
+    "get_loaded_scenes",
+    "move_to_scene",
+    "validate",
+]
 
 
 @mcp_for_unity_tool(
@@ -42,21 +58,7 @@ _SCENE_HANDLE_ACTIONS = ("validate", "save")
 async def manage_scene(
     ctx: Context,
     action: Annotated[
-        Literal[
-            "create",
-            "load",
-            "save",
-            "get_hierarchy",
-            "get_active",
-            "get_build_settings",
-            "scene_view_frame",
-            "close_scene",
-            "set_active_scene",
-            "get_loaded_scenes",
-            "move_to_scene",
-            "validate",
-            "validate_references",
-        ],
+        Literal[SceneRefreshAction, "validate_references"],
         "Perform CRUD operations on Unity scenes and control the Scene View camera.",
     ],
     name: Annotated[str, "Scene name. For Save As, the destination name."] | None = None,
@@ -173,7 +175,12 @@ async def manage_scene(
         input_actions(*_SCENE_HANDLE_ACTIONS),
         "validate/save: exact scene_handle from get_loaded_scenes. For save, all source selectors must match one loaded scene; omit them to save the active scene.",
     ] = None,
+    refresh_if_dirty: Annotated[
+        RefreshIfDirty, used_by_actions(*get_args(SceneRefreshAction))
+    ] = True,
 ) -> dict[str, Any]:
+    if type(refresh_if_dirty) is not bool:
+        return {"success": False, "message": "refresh_if_dirty must be a boolean."}
     if verify is not None and (type(verify) is not bool or action not in _VERIFY_ACTIONS):
         return {"success": False, "message": "verify requires load/save and a boolean value."}
     if scene_handle is not None and (
@@ -412,7 +419,7 @@ async def manage_scene(
 
         # Use centralized retry helper with instance routing
         unity_instance = await get_unity_instance_from_context(ctx)
-        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=refresh_if_dirty)
         if gate is not None:
             return gate.model_dump()
         response = await send_with_unity_instance(

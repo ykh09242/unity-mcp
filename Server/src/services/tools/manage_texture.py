@@ -4,13 +4,14 @@ Defines the manage_texture tool for procedural texture generation in Unity.
 
 import base64
 from pathlib import PureWindowsPath
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from core.config import config
+from services.registry.action_contracts import used_by_actions
 from services.registry import mcp_for_unity_tool
 from services.texture_actions import IMAGE_GENERATORS, checked_texture_parameters
 from services.texture_import_settings import (
@@ -27,7 +28,7 @@ from services.tools.utils import (
 )
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.preflight import preflight
+from services.tools.preflight import RefreshIfDirty, preflight
 
 MAX_TEXTURE_DIMENSION = 8192
 MAX_TEXTURE_PIXELS = 8192 * 8192
@@ -506,6 +507,18 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
     return finalize_import_settings(value, result)
 
 
+TextureAction = Literal[
+    "create",
+    "modify",
+    "delete",
+    "create_sprite",
+    "apply_pattern",
+    "apply_gradient",
+    "apply_noise",
+    "set_import_settings",
+]
+
+
 @mcp_for_unity_tool(
     group="vfx",
     description=(
@@ -522,16 +535,7 @@ def _normalize_import_settings(value: Any) -> tuple[dict | None, str | None]:
 async def manage_texture(
     ctx: Context,
     action: Annotated[
-        Literal[
-            "create",
-            "modify",
-            "delete",
-            "create_sprite",
-            "apply_pattern",
-            "apply_gradient",
-            "apply_noise",
-            "set_import_settings",
-        ],
+        TextureAction,
         "Action to perform.",
     ],
     # Required for most actions
@@ -623,6 +627,7 @@ async def manage_texture(
             )
         ),
     ] = None,
+    refresh_if_dirty: Annotated[RefreshIfDirty, used_by_actions(*get_args(TextureAction))] = True,
 ) -> dict[str, Any]:
     # --- Normalize parameters ---
     if not path:
@@ -796,7 +801,7 @@ async def manage_texture(
         params_dict = checked_texture_parameters(params_dict)
 
     unity_instance = await get_unity_instance_from_context(ctx)
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=refresh_if_dirty)
     if gate is not None:
         return gate.model_dump()
 

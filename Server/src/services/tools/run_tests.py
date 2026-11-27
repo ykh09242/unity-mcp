@@ -21,7 +21,7 @@ from core.config import config
 from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.preflight import preflight
+from services.tools.preflight import RefreshIfDirty, preflight
 from services.tools.immutable_json import prepare_json_copy
 from services.tools.shared_tool_reads import SharedToolReads
 from services.tools.test_job_wait import wait_for_test_job
@@ -517,9 +517,12 @@ async def run_tests(
     wait_timeout: Annotated[
         int, Field(strict=True, ge=0, le=60), "Optional initial status observation, in seconds."
     ] = 0,
+    refresh_if_dirty: RefreshIfDirty = True,
 ) -> RunTestsStartResponse | MCPResponse:
     from services.job_completion import prepare_wait, complete_job
 
+    if type(refresh_if_dirty) is not bool:
+        return MCPResponse(success=False, message="refresh_if_dirty must be a boolean.")
     observation_target = await prepare_wait(ctx, wait_timeout)
     if clear_stuck and wait_timeout:
         return MCPResponse(success=False, error="wait_timeout requires starting a test job")
@@ -557,7 +560,7 @@ async def run_tests(
         return MCPResponse(success=False, error="require_source_freshness must be a boolean")
 
     gate = await preflight(
-        ctx, requires_no_tests=True, wait_for_no_compile=True, refresh_if_dirty=True
+        ctx, requires_no_tests=True, wait_for_no_compile=True, refresh_if_dirty=refresh_if_dirty
     )
     if isinstance(gate, MCPResponse):
         return gate
@@ -565,7 +568,10 @@ async def run_tests(
     from services.source_freshness import ensure_source_freshness
 
     freshness = await ensure_source_freshness(
-        ctx, instance=unity_instance, deadline=admission_deadline, refresh_policy="if_needed"
+        ctx,
+        instance=unity_instance,
+        deadline=admission_deadline,
+        refresh_policy="if_needed" if refresh_if_dirty else "never",
     )
     legacy_optional = not require_source_freshness and freshness.reason == "unsupported"
     if freshness.status != "observed_current" and not legacy_optional:

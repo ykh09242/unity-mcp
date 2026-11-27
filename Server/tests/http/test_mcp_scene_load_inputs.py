@@ -262,12 +262,22 @@ async def test_missing_scene_target_is_a_sealed_input_round_before_any_native_wo
 @pytest.mark.parametrize("flow_server", [True, False], indirect=True, ids=["hosted", "local"])
 async def test_accept_retries_original_arguments_and_runs_the_existing_load_once(flow_server):
     # Given: a complete first MRTR leg, with original flags and explicit selector.
+    arguments = {
+        "action": "load",
+        "additive": True,
+        "refresh_if_dirty": False,
+        "unity_instance": "A@a",
+    }
     async with connected(flow_server) as (_, client, peer, _):
-        first = (await request(client)).json()["result"]
+        first = (await request(client, arguments=arguments)).json()["result"]
         assert first["resultType"] == "input_required", first
         # When: the independent retry echoes state and submits only the missing field.
         response = await request(
-            client, state=first["requestState"], answer=accepted(), request_id="retry"
+            client,
+            arguments=arguments,
+            state=first["requestState"],
+            answer=accepted(),
+            request_id="retry",
         )
         message = response.json()
         # Then: ordinary SDK/tool/preflight/native conversion receives exactly that load.

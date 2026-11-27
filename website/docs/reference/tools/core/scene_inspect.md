@@ -29,6 +29,7 @@ Inspect loaded scenes, hierarchy and build settings, or frame the Scene view.
 | `max_depth` | `int \| str \| None` | — | Accepted for forward-compatibility; current paging returns a single level. |
 | `max_children_per_node` | `int \| str \| None` | — | Child paging hint (safety). |
 | `include_transform` | `bool \| str \| None` | — | If true, include local transform in node summaries. |
+| `refresh_if_dirty` | `bool` | — | Set false to skip optional asset refreshes before this command. True preserves the operation's existing refresh policy and permissions. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

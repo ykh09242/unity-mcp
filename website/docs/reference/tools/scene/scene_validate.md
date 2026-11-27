@@ -26,6 +26,7 @@ Validate the scene, with optional explicit repair.
 | `continuation` | `str \| None` | — | validate: opaque read-only continuation, valid for five minutes in the same unchanged Editor scene. |
 | `max_objects` | `int \| str \| None` | — | validate: 1-10000 objects per slice, default 1000; validate_references: 1-250000, default 1024. |
 | `scene_handle` | `int \| None` | — | validate/save: exact scene_handle from get_loaded_scenes. For save, all source selectors must match one loaded scene; omit them to save the active scene. |
+| `refresh_if_dirty` | `bool` | — | Set false to skip optional asset refreshes before this command. True preserves the operation's existing refresh policy and permissions. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

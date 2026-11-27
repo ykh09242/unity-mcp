@@ -39,6 +39,7 @@ Edit prefab contents, inspect whole-prefab or selected-component changes without
 | `preview_id` | `str \| None` | — | One-attempt token from preview_modify_contents, valid 10 minutes. |
 | `preview_only` | `bool \| None` | — | modify_contents only: inspect changes without saving; includes load/edit side effects, not save callbacks. No apply token; inspect complete/truncated coverage in data.preview. |
 | `preview_scope` | `Literal['prefab', 'components'] \| None` | — | Requires preview_only=true. Default prefab observes the whole prefab. components observes only components named by component_properties on the selected target and accepts only component-property edits. Inspect data.preview.scope, complete and whole_prefab_complete. |
+| `refresh_if_dirty` | `bool` | — | Set false to skip optional asset refreshes before this command. True preserves the operation's existing refresh policy and permissions. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

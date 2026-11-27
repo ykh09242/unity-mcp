@@ -27,6 +27,7 @@ Create a prefab asset from an existing GameObject.
 | `search_inactive` | `bool \| None` | — | Include inactive GameObjects in search. |
 | `unlink_if_instance` | `bool \| None` | — | Unpack the outermost prefab instance root before creating a new prefab; child targets are rejected. A failed save may leave the scene unpacked. |
 | `name` | `str \| None` | — | Source name for create_from_gameobject when target is omitted. In modify_contents, renames a child. The root uses the prefab asset filename. |
+| `refresh_if_dirty` | `bool` | — | Set false to skip optional asset refreshes before this command. True preserves the operation's existing refresh policy and permissions. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

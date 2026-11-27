@@ -3,22 +3,30 @@ Tool for managing components on GameObjects in Unity.
 Supports add, remove, and set_property operations.
 """
 
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field, StrictBool, StrictInt
+from services.registry.action_contracts import used_by_actions
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.utils import parse_json_payload, normalize_properties
-from services.tools.preflight import preflight
+from services.tools.preflight import RefreshIfDirty, preflight
 
 
 _VALUE_OMITTED = object()
 # Keep the public value optional/nullable while distinguishing a JSON null from omission.
 _VALUE_DEFAULT = Field(default_factory=lambda: _VALUE_OMITTED)
+
+
+ComponentAction = Literal[
+    "add",
+    "remove",
+    "set_property",
+]
 
 
 @mcp_for_unity_tool(
@@ -45,7 +53,7 @@ _VALUE_DEFAULT = Field(default_factory=lambda: _VALUE_OMITTED)
 async def manage_components(
     ctx: Context,
     action: Annotated[
-        Literal["add", "remove", "set_property"],
+        ComponentAction,
         "Action to perform: add (add component), remove (remove component), set_property (set component property)",
     ],
     target: Annotated[str | int, "Target GameObject - instance ID (preferred) or name/path"],
@@ -90,6 +98,7 @@ async def manage_components(
         Field(ge=-2147483648, le=2147483647),
         "Nonzero live component instanceID from the components resource. Requires the selected target and type to match; cannot be combined with component_index or add.",
     ] = None,
+    refresh_if_dirty: Annotated[RefreshIfDirty, used_by_actions(*get_args(ComponentAction))] = True,
 ) -> dict[str, Any]:
     """
     Manage components on GameObjects.
@@ -184,7 +193,7 @@ async def manage_components(
         }
 
     unity_instance = await get_unity_instance_from_context(ctx)
-    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+    gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=refresh_if_dirty)
     if gate is not None:
         return gate.model_dump()
 

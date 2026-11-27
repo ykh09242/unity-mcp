@@ -36,6 +36,24 @@ async def test_current_observation_does_not_refresh(transport):
 
 
 @pytest.mark.asyncio
+async def test_test_start_without_refresh_still_requires_current_sources(transport, monkeypatch):
+    from services.tools import run_tests as starts
+
+    stale = {**current(), "status": "incomplete"}
+    transport.return_value = {"success": True, "source_freshness": stale}
+    monkeypatch.setattr(starts, "get_unity_instance_from_context", AsyncMock(return_value="Main"))
+    gate = AsyncMock(return_value=None)
+    monkeypatch.setattr(starts, "preflight", gate)
+    ctx = object()
+    result = await starts.run_tests(ctx, refresh_if_dirty=False)
+    gate.assert_awaited_once_with(
+        ctx, requires_no_tests=True, wait_for_no_compile=True, refresh_if_dirty=False
+    )
+    assert result.error == "source_freshness_required"
+    assert [call.args[2] for call in transport.await_args_list] == ["get_compile_job"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("gap", ["input_limit", "metadata_limit"])
 async def test_public_test_start_returns_coverage_gap_without_refresh_or_dispatch(
     transport, monkeypatch, gap

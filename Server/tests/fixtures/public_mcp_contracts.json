@@ -905,6 +905,20 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "import",
+                  "create",
+                  "modify",
+                  "delete",
+                  "duplicate",
+                  "move",
+                  "rename",
+                  "create_folder"
+                ]
+              },
               "scan_root": {
                 "anyOf": [
                   {
@@ -1037,6 +1051,15 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "search",
+                  "get_info",
+                  "get_components"
+                ]
               },
               "search_pattern": {
                 "anyOf": [
@@ -3805,6 +3828,13 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create"
+                ]
+              },
               "rotation": {
                 "anyOf": [
                   {
@@ -4042,6 +4072,13 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "duplicate"
+                ]
+              },
               "search_method": {
                 "anyOf": [
                   {
@@ -4271,6 +4308,14 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "modify",
+                  "delete"
+                ]
               },
               "rotation": {
                 "anyOf": [
@@ -4506,6 +4551,13 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "placement"
+                ]
               },
               "space": {
                 "anyOf": [
@@ -4756,6 +4808,14 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "move_relative",
+                  "look_at"
+                ]
               },
               "search_method": {
                 "anyOf": [
@@ -8704,6 +8764,23 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "import",
+                  "create",
+                  "modify",
+                  "delete",
+                  "duplicate",
+                  "move",
+                  "rename",
+                  "search",
+                  "get_info",
+                  "create_folder",
+                  "get_components"
+                ]
+              },
               "scan_root": {
                 "anyOf": [
                   {
@@ -10120,6 +10197,15 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "add",
+                  "remove",
+                  "set_property"
+                ]
+              },
               "search_method": {
                 "anyOf": [
                   {
@@ -10753,6 +10839,19 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create",
+                  "modify",
+                  "delete",
+                  "duplicate",
+                  "move_relative",
+                  "look_at",
+                  "placement"
+                ]
               },
               "rotation": {
                 "anyOf": [
@@ -18371,6 +18470,24 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create_from_gameobject",
+                  "get_info",
+                  "get_hierarchy",
+                  "modify_contents",
+                  "preview_modify_contents",
+                  "apply_preview",
+                  "open_prefab_stage",
+                  "save_prefab_stage",
+                  "close_prefab_stage",
+                  "list_overrides",
+                  "revert_overrides",
+                  "apply_overrides"
+                ]
+              },
               "rotation": {
                 "anyOf": [
                   {
@@ -20757,6 +20874,24 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create",
+                  "load",
+                  "save",
+                  "get_hierarchy",
+                  "get_active",
+                  "get_build_settings",
+                  "scene_view_frame",
+                  "close_scene",
+                  "set_active_scene",
+                  "get_loaded_scenes",
+                  "move_to_scene",
+                  "validate"
+                ]
+              },
               "remove_scene": {
                 "anyOf": [
                   {
@@ -22924,6 +23059,20 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create",
+                  "modify",
+                  "delete",
+                  "create_sprite",
+                  "apply_pattern",
+                  "apply_gradient",
+                  "apply_noise",
+                  "set_import_settings"
+                ]
               },
               "set_pixels": {
                 "anyOf": [
@@ -26542,6 +26691,15 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "modify_contents",
+                  "preview_modify_contents",
+                  "apply_preview"
+                ]
+              },
               "rotation": {
                 "anyOf": [
                   {
@@ -26695,6 +26853,13 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create_from_gameobject"
+                ]
+              },
               "search_inactive": {
                 "anyOf": [
                   {
@@ -26808,6 +26973,14 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "get_info",
+                  "get_hierarchy"
+                ]
               },
               "unity_instance": {
                 "anyOf": [
@@ -26925,6 +27098,15 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "list_overrides",
+                  "revert_overrides",
+                  "apply_overrides"
+                ]
+              },
               "target": {
                 "anyOf": [
                   {
@@ -26991,6 +27173,15 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "open_prefab_stage",
+                  "save_prefab_stage",
+                  "close_prefab_stage"
+                ]
               },
               "unity_instance": {
                 "anyOf": [
@@ -27788,6 +27979,10 @@
                 ],
                 "type": "string"
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean"
+              },
               "require_source_freshness": {
                 "default": true,
                 "type": "boolean"
@@ -28183,6 +28378,17 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "get_hierarchy",
+                  "get_active",
+                  "get_build_settings",
+                  "get_loaded_scenes",
+                  "scene_view_frame"
+                ]
+              },
               "scene_view_target": {
                 "anyOf": [
                   {
@@ -28355,6 +28561,18 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create",
+                  "load",
+                  "save",
+                  "close_scene",
+                  "set_active_scene",
+                  "move_to_scene"
+                ]
               },
               "remove_scene": {
                 "anyOf": [
@@ -28718,6 +28936,13 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "validate"
+                ]
               },
               "scene_handle": {
                 "anyOf": [
@@ -32120,6 +32345,20 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "import",
+                  "create",
+                  "modify",
+                  "delete",
+                  "duplicate",
+                  "move",
+                  "rename",
+                  "create_folder"
+                ]
+              },
               "scan_root": {
                 "anyOf": [
                   {
@@ -32252,6 +32491,15 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "search",
+                  "get_info",
+                  "get_components"
+                ]
               },
               "search_pattern": {
                 "anyOf": [
@@ -35020,6 +35268,13 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create"
+                ]
+              },
               "rotation": {
                 "anyOf": [
                   {
@@ -35257,6 +35512,13 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "duplicate"
+                ]
+              },
               "search_method": {
                 "anyOf": [
                   {
@@ -35486,6 +35748,14 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "modify",
+                  "delete"
+                ]
               },
               "rotation": {
                 "anyOf": [
@@ -35721,6 +35991,13 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "placement"
+                ]
               },
               "space": {
                 "anyOf": [
@@ -35971,6 +36248,14 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "move_relative",
+                  "look_at"
+                ]
               },
               "search_method": {
                 "anyOf": [
@@ -39919,6 +40204,23 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "import",
+                  "create",
+                  "modify",
+                  "delete",
+                  "duplicate",
+                  "move",
+                  "rename",
+                  "search",
+                  "get_info",
+                  "create_folder",
+                  "get_components"
+                ]
+              },
               "scan_root": {
                 "anyOf": [
                   {
@@ -41335,6 +41637,15 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "add",
+                  "remove",
+                  "set_property"
+                ]
+              },
               "search_method": {
                 "anyOf": [
                   {
@@ -41968,6 +42279,19 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create",
+                  "modify",
+                  "delete",
+                  "duplicate",
+                  "move_relative",
+                  "look_at",
+                  "placement"
+                ]
               },
               "rotation": {
                 "anyOf": [
@@ -49586,6 +49910,24 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create_from_gameobject",
+                  "get_info",
+                  "get_hierarchy",
+                  "modify_contents",
+                  "preview_modify_contents",
+                  "apply_preview",
+                  "open_prefab_stage",
+                  "save_prefab_stage",
+                  "close_prefab_stage",
+                  "list_overrides",
+                  "revert_overrides",
+                  "apply_overrides"
+                ]
+              },
               "rotation": {
                 "anyOf": [
                   {
@@ -51972,6 +52314,24 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create",
+                  "load",
+                  "save",
+                  "get_hierarchy",
+                  "get_active",
+                  "get_build_settings",
+                  "scene_view_frame",
+                  "close_scene",
+                  "set_active_scene",
+                  "get_loaded_scenes",
+                  "move_to_scene",
+                  "validate"
+                ]
+              },
               "remove_scene": {
                 "anyOf": [
                   {
@@ -54139,6 +54499,20 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create",
+                  "modify",
+                  "delete",
+                  "create_sprite",
+                  "apply_pattern",
+                  "apply_gradient",
+                  "apply_noise",
+                  "set_import_settings"
+                ]
               },
               "set_pixels": {
                 "anyOf": [
@@ -57757,6 +58131,15 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "modify_contents",
+                  "preview_modify_contents",
+                  "apply_preview"
+                ]
+              },
               "rotation": {
                 "anyOf": [
                   {
@@ -57910,6 +58293,13 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create_from_gameobject"
+                ]
+              },
               "search_inactive": {
                 "anyOf": [
                   {
@@ -58023,6 +58413,14 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "get_info",
+                  "get_hierarchy"
+                ]
               },
               "unity_instance": {
                 "anyOf": [
@@ -58140,6 +58538,15 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "list_overrides",
+                  "revert_overrides",
+                  "apply_overrides"
+                ]
+              },
               "target": {
                 "anyOf": [
                   {
@@ -58206,6 +58613,15 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "open_prefab_stage",
+                  "save_prefab_stage",
+                  "close_prefab_stage"
+                ]
               },
               "unity_instance": {
                 "anyOf": [
@@ -59003,6 +59419,10 @@
                 ],
                 "type": "string"
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean"
+              },
               "require_source_freshness": {
                 "default": true,
                 "type": "boolean"
@@ -59398,6 +59818,17 @@
                 ],
                 "default": null
               },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "get_hierarchy",
+                  "get_active",
+                  "get_build_settings",
+                  "get_loaded_scenes",
+                  "scene_view_frame"
+                ]
+              },
               "scene_view_target": {
                 "anyOf": [
                   {
@@ -59570,6 +60001,18 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "create",
+                  "load",
+                  "save",
+                  "close_scene",
+                  "set_active_scene",
+                  "move_to_scene"
+                ]
               },
               "remove_scene": {
                 "anyOf": [
@@ -59933,6 +60376,13 @@
                   }
                 ],
                 "default": null
+              },
+              "refresh_if_dirty": {
+                "default": true,
+                "type": "boolean",
+                "x-unity-mcp-used-by-actions": [
+                  "validate"
+                ]
               },
               "scene_handle": {
                 "anyOf": [

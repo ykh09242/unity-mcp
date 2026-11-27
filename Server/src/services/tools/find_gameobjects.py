@@ -4,13 +4,13 @@ from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import Field, StrictBool
+from pydantic import Field
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 from services.tools.utils import coerce_bool, coerce_int
-from services.tools.preflight import preflight
+from services.tools.preflight import RefreshIfDirty, preflight
 
 
 _SEARCH_METHODS = {"by_name", "by_tag", "by_layer", "by_component", "by_path", "by_id"}
@@ -159,12 +159,7 @@ async def find_gameobjects(
             description="Optional same-ID projection; handles use existing session-scoped lifetime",
         ),
     ] = None,
-    refresh_if_dirty: Annotated[
-        StrictBool,
-        Field(
-            description="Set false to search the current scene without a preflight asset refresh."
-        ),
-    ] = True,
+    refresh_if_dirty: RefreshIfDirty = True,
 ) -> dict[str, Any]:
     """Preserve legacy payloads; validate scoped options before refresh-capable preflight."""
     if type(refresh_if_dirty) is not bool:

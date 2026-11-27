@@ -8,6 +8,7 @@ from typing import Annotated, Any, Union, get_args, get_origin
 
 from jsonschema import Draft202012Validator
 from pydantic import Field
+from pydantic.fields import FieldInfo
 
 from services.action_inputs import INPUT_ACTION_REQUIRED, REFLECTION_REQUIRED, TERRAIN_REQUIRED
 from services.declared_action_contracts import (
@@ -41,6 +42,17 @@ def required_for_actions(*actions: str):
 def used_by_actions(*actions: str):
     """Identify meaningful inputs without rejecting values older callers could supply."""
     return Field(json_schema_extra={_USED_ACTIONS: list(actions)})
+
+
+def narrow_parameter_usage(parameter, actions):
+    """Carry a source option into an adapter only for its declared actions."""
+    metadata = FieldInfo.from_annotation(parameter.annotation).json_schema_extra or {}
+    applicable = [action for action in actions if action in metadata.get(_USED_ACTIONS, ())]
+    if applicable:
+        return parameter.replace(
+            annotation=Annotated[parameter.annotation, used_by_actions(*applicable)]
+        )
+    return None
 
 
 def declared_optional_parameters(schema, operation):

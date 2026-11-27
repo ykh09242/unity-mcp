@@ -3,13 +3,24 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field, StrictBool
 
 from core.config import config
 from models import MCPResponse
 from models.native_recovery import parse_coordination
 from models.response_lifetime import ResponsePollLifetime
 from services.operation_permissions import remote_operation_allowed
+
+
+RefreshIfDirty = Annotated[
+    StrictBool,
+    Field(
+        description="Set false to skip optional asset refreshes before this command. "
+        "True preserves the operation's existing refresh policy and permissions."
+    ),
+]
 
 
 def _in_pytest() -> bool:
@@ -56,6 +67,8 @@ async def preflight(
       - MCPResponse busy/retry payload when the tool should not proceed right now
       - None when the tool should proceed normally
     """
+    if type(refresh_if_dirty) is not bool:
+        return MCPResponse(success=False, message="refresh_if_dirty must be a boolean.")
     if _in_pytest():
         return None
 

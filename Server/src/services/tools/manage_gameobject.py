@@ -1,9 +1,10 @@
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from services.registry.capability_adapter import capability_command
+from services.registry.action_contracts import used_by_actions
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -14,7 +15,7 @@ from services.tools.utils import (
     normalize_vector3,
     normalize_string_list,
 )
-from services.tools.preflight import preflight
+from services.tools.preflight import RefreshIfDirty, preflight
 from services.tools.primitive_validation import primitive_type_error
 
 
@@ -150,6 +151,17 @@ def _normalize_component_properties(
     return None, f"component_properties must be a dict or JSON string, got {type(value).__name__}"
 
 
+GameObjectAction = Literal[
+    "create",
+    "modify",
+    "delete",
+    "duplicate",
+    "move_relative",
+    "look_at",
+    "placement",
+]
+
+
 @mcp_for_unity_tool(
     group="legacy",
     description=(
@@ -168,7 +180,7 @@ def _normalize_component_properties(
 async def manage_gameobject(
     ctx: Context,
     action: Annotated[
-        Literal["create", "modify", "delete", "duplicate", "move_relative", "look_at", "placement"],
+        GameObjectAction,
         "Action to perform on GameObject.",
     ]
     | None = None,
@@ -315,16 +327,11 @@ async def manage_gameobject(
         list[float] | str, "Optional up vector [x,y,z] for look_at. Defaults to [0,1,0]."
     ]
     | None = None,
+    refresh_if_dirty: Annotated[
+        RefreshIfDirty, used_by_actions(*get_args(GameObjectAction))
+    ] = True,
 ) -> dict[str, Any]:
-    if action not in {
-        "create",
-        "modify",
-        "delete",
-        "duplicate",
-        "move_relative",
-        "look_at",
-        "placement",
-    }:
+    if action not in get_args(GameObjectAction):
         return {
             "success": False,
             "message": "Missing required parameter 'action'. Valid actions: create, modify, delete, duplicate, move_relative, look_at, placement. To SEARCH for GameObjects use the find_gameobjects tool. To manage COMPONENTS use the manage_components tool.",
@@ -524,7 +531,7 @@ async def manage_gameobject(
 
         # Use centralized retry helper with instance routing
         unity_instance = await get_unity_instance_from_context(ctx)
-        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+        gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=refresh_if_dirty)
         if gate is not None:
             return gate.model_dump()
         response = await send_with_unity_instance(
