@@ -16,6 +16,7 @@ from tools.experiments.verify_compact_edit_confirmation import host_tool_calls
 from tools.experiments.verify_compact_edit_followup import disk_valid, read_pair
 from tools.experiments.verify_heartbeat_edit_confirmation import (
     ACTION_CONTRACT,
+    APPLY_ROUTE,
     CONNECTION_GUIDE,
     CONNECTION_OBSERVATION,
     EDITOR_TARGET,
@@ -57,6 +58,10 @@ STUDIES = {
     "2c514958bc9f00515327deacca1b0202c1b757a22ed4e97a6e5d3faf308a8f2a": (
         "operation_discovery_confirmation_results.json",
         OPERATION_DISCOVERY,
+    ),
+    "c11466455d7243be7d4414fb30ea9a1d893e8d55a5aee884269a26838ed5f4c9": (
+        "apply_route_confirmation_results.json",
+        APPLY_ROUTE,
     ),
 }
 

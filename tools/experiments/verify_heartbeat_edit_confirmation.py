@@ -142,6 +142,7 @@ PREVIEW_CONTINUATION = "df69472b5dfa147ead8b155f263b288704a93470b07b61a10c7fc4f4
 CONNECTION_OBSERVATION = "6f616ae8e881f5632f9b6d56d93e535c656335abb72492b57fa155cfd1a276ea"
 RESOURCE_BINDINGS = "4ae752132916146b0f3a8c50ebc481bb76b3e1bdb74bb80815fd1570191b316c"
 OPERATION_DISCOVERY = "68b1093bef6a9920d39e2dbafbe376f6488298c8eb4f113e82cfd6055f0cf1ce"
+APPLY_ROUTE = "3fbbaf1ed3eb03a18bf539b6ef64138db9b659f2947f2a16d680ab0a5121c490"
 STUDIES = {
     PUBLISHED: ("compact_edit_confirmation_results.json", prior.PUBLISHED, FROZEN_PINS),
     EDITOR_CATALOG: (
@@ -240,6 +241,15 @@ STUDIES = {
         {
             "package": "163fe032c782c9258201b0aa4a7a7df9b29952e7",
             "runtime": "9decbcf3ef15b1768c5e8ac18466f2d364c10fb2",
+            "skill": "3dace93bfe6cfce8f8e7aa2dcea4fac440377fba",
+        },
+    ),
+    APPLY_ROUTE: (
+        "operation_discovery_confirmation_results.json",
+        OPERATION_DISCOVERY,
+        {
+            "package": "21ef2c610cb233a2260ef668d785b88520db38b2",
+            "runtime": "b721756f3fc275be670334f69ee0f2be21ac9042",
             "skill": "3dace93bfe6cfce8f8e7aa2dcea4fac440377fba",
         },
     ),
