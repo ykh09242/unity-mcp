@@ -18,6 +18,11 @@ from tools.experiments.verify_compact_edit import (
 from tools.experiments.verify_compact_edit_confirmation import host_tool_calls, verified_archives
 from tools.experiments.verify_compact_edit_followup import call_outcomes, perfect
 
+RESOURCE_TOOL_BINDINGS = [
+    ("manage_tools", {"action": "read_resource"}),
+    ("read_unity_resource", {}),
+]
+
 
 def test_extracted_product_must_match_frozen_archive(tmp_path):
     pins = {"package": "a" * 40, "runtime": "b" * 40}
@@ -43,13 +48,14 @@ def test_host_tool_denominator_counts_recovered_failures():
 
 
 @pytest.mark.parametrize("form", ["text", "blob"])
-def test_generic_skill_tool_verifies_published_uri_and_exact_bytes(form):
+@pytest.mark.parametrize(("tool", "binding"), RESOURCE_TOOL_BINDINGS)
+def test_generic_skill_tool_verifies_published_uri_and_exact_bytes(form, tool, binding):
     uri = SKILL_ROOT + "references/scene.md"
     body = "장면\r\n".encode()
     content = body.decode() if form == "text" else base64.b64encode(body).decode()
     call = {
-        "name": "manage_tools",
-        "arguments": {"action": "read_resource", "uri": uri},
+        "name": tool,
+        "arguments": {**binding, "uri": uri},
         "success": True,
         "result": {"contents": [{"uri": uri, form: content}]},
     }
@@ -64,10 +70,11 @@ def test_generic_skill_tool_verifies_published_uri_and_exact_bytes(form):
 
 
 @pytest.mark.parametrize("uri", [SKILL_ROOT + "unknown.md", "file:///unlisted/SKILL.md"])
-def test_rejected_generic_skill_read_is_a_skill_attempt_and_a_failed_tool(uri):
+@pytest.mark.parametrize(("tool", "binding"), RESOURCE_TOOL_BINDINGS)
+def test_rejected_generic_skill_read_is_a_skill_attempt_and_a_failed_tool(uri, tool, binding):
     call = {
-        "name": "manage_tools",
-        "arguments": {"action": "read_resource", "uri": uri},
+        "name": tool,
+        "arguments": {**binding, "uri": uri},
         "success": False,
     }
     cases = [
@@ -98,6 +105,21 @@ def test_generic_tool_read_of_a_non_skill_uri_is_not_a_skill_read(uri):
     }
 
     assert skill_read_uri(call) is None
+    assert not verified_skill_read(call, {})
+
+
+def test_connection_reader_without_a_selector_verifies_the_packaged_guide():
+    uri = SKILL_ROOT + "SKILL.md"
+    call = {
+        "name": "read_unity_resource",
+        "arguments": {},
+        "success": True,
+        "result": {"contents": [{"uri": uri, "text": "guide"}]},
+    }
+    assert skill_read_uri(call) == uri
+    assert verified_skill_read(call, {"SKILL.md": "sha256:" + digest(b"guide")})
+    call["success"] = False
+    assert skill_read_uri(call) == uri
     assert not verified_skill_read(call, {})
 
 

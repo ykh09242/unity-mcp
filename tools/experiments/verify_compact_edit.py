@@ -517,7 +517,11 @@ def skill_read_uri(call):
     name = call["name"]
     arguments = call.get("arguments") or {}
     candidate = name
-    if name == "manage_tools" and isinstance(arguments, dict):
+    if name == "read_unity_resource" and isinstance(arguments, dict):
+        candidate = arguments.get("uri")
+        if candidate is None:
+            return SKILL_ROOT + "SKILL.md"
+    elif name == "manage_tools" and isinstance(arguments, dict):
         if arguments.get("action") == "read_skill":
             return arguments.get("skill_uri") or SKILL_ROOT + "SKILL.md"
         if arguments.get("action") == "read_resource":
@@ -536,12 +540,12 @@ def skill_read_uri(call):
 
 
 def verified_skill_read(call, entries):
-    """Check document bytes from direct resources and both catalog tool actions."""
+    """Check document identity and bytes across native and tool-based reads."""
     uri = skill_read_uri(call)
     if uri is None or call["success"] is not True:
         return False
     result = call["result"]
-    if call["name"] == "manage_tools":
+    if call["name"] in {"manage_tools", "read_unity_resource"}:
         contents = result["contents"]
         require(
             len(contents) == 1 and contents[0]["uri"] == uri, "Skill tool returned another file"
