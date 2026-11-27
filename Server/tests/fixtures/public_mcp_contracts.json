@@ -23966,7 +23966,8 @@
                 "x-unity-mcp-page-size": {
                   "actions": [
                     "search",
-                    "catalog"
+                    "catalog",
+                    "describe"
                   ],
                   "maximum": 20
                 }
@@ -24257,7 +24258,8 @@
                         "x-unity-mcp-page-size": {
                           "actions": [
                             "search",
-                            "catalog"
+                            "catalog",
+                            "describe"
                           ],
                           "maximum": 20
                         }
@@ -55179,7 +55181,8 @@
                 "x-unity-mcp-page-size": {
                   "actions": [
                     "search",
-                    "catalog"
+                    "catalog",
+                    "describe"
                   ],
                   "maximum": 20
                 }
@@ -55470,7 +55473,8 @@
                         "x-unity-mcp-page-size": {
                           "actions": [
                             "search",
-                            "catalog"
+                            "catalog",
+                            "describe"
                           ],
                           "maximum": 20
                         }

@@ -12,6 +12,7 @@ session group activation cannot grant access to a Unity-disabled tool.
 """
 
 import asyncio
+from collections import Counter
 import inspect
 import logging
 from typing import Annotated, Any, Literal
@@ -64,13 +65,16 @@ _MAX_DISCOVERY_PAGE = 20
 _RequestedPageSize = Annotated[
     int,
     Field(strict=True, ge=1, json_schema_extra={PAGE_SIZE: {"maximum": _MAX_DISCOVERY_PAGE}}),
-    "Requested entries per page. Search and catalog return at most 20. Follow next_offset where available.",
+    "Requested entries per page for search, catalog or a tool's operation choices. At most 20 per page.",
 ]
 _ManagePageSize = Annotated[
     _RequestedPageSize,
     Field(
         json_schema_extra={
-            PAGE_SIZE: {"maximum": _MAX_DISCOVERY_PAGE, "actions": ["search", "catalog"]}
+            PAGE_SIZE: {
+                "maximum": _MAX_DISCOVERY_PAGE,
+                "actions": ["search", "catalog", "describe"],
+            }
         }
     ),
 ]
@@ -174,6 +178,38 @@ async def _retry_project_binding(ctx: Context) -> dict[str, str]:
 def _resource_read_call(uri: str, project: dict[str, str]) -> dict:
     params = {"uri": uri, **({"_meta": project} if project else {})}
     return {"method": "resources/read", "params": params}
+
+
+def _describe_call(name: str, project: dict[str, str], **selection) -> dict:
+    return {
+        "tool": "manage_tools",
+        "arguments": {"action": "describe", "tool": name, **selection, **project},
+    }
+
+
+def _operation_choice_page(name, description, project, offset, limit):
+    values = description["catalog"]["actions"]
+    if not values:
+        # A bare operation value must identify exactly one advertised input field.
+        frequencies = Counter(
+            value for field in description.get("input_choices", {}).values() for value in field
+        )
+        values = [value for value, count in frequencies.items() if count == 1]
+    values = list(
+        dict.fromkeys(value for value in values if 1 <= len(value) <= OPERATION_SELECTOR_MAX_LENGTH)
+    )
+    end = offset + limit
+    return {
+        "operation_choices": [
+            _describe_call(name, project, operation=value) for value in values[offset:end]
+        ],
+        "next_offset": end if end < len(values) else None,
+        **(
+            {"next_call": _describe_call(name, project, limit=limit, offset=end)}
+            if end < len(values)
+            else {}
+        ),
+    }
 
 
 async def _resource_readers(ctx: Context, request=None) -> set[str]:
@@ -448,10 +484,8 @@ async def search_unity_tools(
         )
         for binding in operations:
             if binding["kind"] == "tool" and can_manage:
-                args = {"action": "describe", "tool": binding["tool"], **project}
-                if binding["action"] is not None:
-                    args["operation"] = binding["action"]
-                binding["describe_call"] = {"tool": "manage_tools", "arguments": args}
+                selected = {"operation": binding["action"]} if binding["action"] is not None else {}
+                binding["describe_call"] = _describe_call(binding["tool"], project, **selected)
             if binding["kind"] == "tool" and project:
                 schema = entries[binding["tool"]].get("input_schema", {})
                 if (
@@ -661,7 +695,7 @@ async def search_unity_tools(
         "list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
-        "reset (restore configured profile), describe (supply tool alone to list its actions, then select one for its inputs), "
+        "reset (restore configured profile), describe (start with tool alone and follow a returned operation_choices call for its inputs), "
         "prepare (return schema-checked arguments and current public permission evidence without executing the call), "
         "catalog (browse or filter by group or tool, or search by query alone), "
         "search (discover routes for a task in any language), "
@@ -718,12 +752,16 @@ async def manage_tools(
     catalog_query: _CatalogQuery = None,
     offset: Annotated[
         int,
-        Field(strict=True, ge=0, description="Page offset for catalog or selection=agent search."),
+        Field(
+            strict=True,
+            ge=0,
+            description="Page offset for catalog, tool-only describe or selection=agent search.",
+        ),
     ] = 0,
     operation: Annotated[
         str | None,
         Field(min_length=1, max_length=OPERATION_SELECTOR_MAX_LENGTH),
-        "With an exact tool, select a declared action. For describe or prepare on a tool without an action selector, use an exact advertised string choice that identifies one input field. For an ambiguous choice, draft the actual input field without operation.",
+        "Omit when only the tool name is known. Copy a returned operation_choices or describe_call binding to select an action or a unique advertised input choice. For an ambiguous choice, draft the actual input field without operation.",
     ] = None,
     intent: Annotated[
         ActionIntent | None,
@@ -787,12 +825,12 @@ async def manage_tools(
     if action == "catalog" and query is not None and group is None and tool is None:
         action = "search"
     if type(limit) is int and limit > _MAX_DISCOVERY_PAGE:
-        if action == "catalog":
+        if action == "catalog" or (action == "describe" and operation is None):
             limit = _MAX_DISCOVERY_PAGE
         elif action != "search":
             return {
                 "success": False,
-                "error": "A larger page request applies only to search or catalog.",
+                "error": "A larger page request applies only to search, catalog or tool-only describe.",
             }
     if action == "prepare":
         if not tool or arguments is None:
@@ -890,8 +928,15 @@ async def manage_tools(
         return {"success": False, "error": "catalog_query is supported only for search."}
     if (selection != "ranked" or family is not None) and action != "search":
         return {"success": False, "error": "selection and family are supported only for search."}
-    if offset and action not in {"catalog", "search"}:
-        return {"success": False, "error": "offset requires catalog or selection=agent search."}
+    if (
+        offset
+        and action not in {"catalog", "search"}
+        and not (action == "describe" and operation is None)
+    ):
+        return {
+            "success": False,
+            "error": "offset requires catalog, tool-only describe or selection=agent search.",
+        }
     if operation is not None and action not in {"catalog", "describe"}:
         return {"success": False, "error": "Select an operation with catalog, describe or prepare."}
     if include_schema and (action not in {"activate", "describe"} or not tool or group is not None):
@@ -1026,16 +1071,16 @@ async def manage_tools(
         result = _describe_binding(entries[name], definition, operation, visible, registered)
         if not visible or name not in visible or "manage_tools" not in visible:
             return result
-        if operation is not None and result.get("success") is False:
-            result["next_call"] = {
-                "tool": "manage_tools",
-                "arguments": {
-                    "action": "describe",
-                    "tool": name,
-                    **await _retry_project_binding(ctx),
-                },
-            }
+        if result.get("success") is False:
+            if operation is not None:
+                result["next_call"] = _describe_call(name, await _retry_project_binding(ctx))
             return result
+        if operation is None:
+            result.update(
+                _operation_choice_page(
+                    name, result, await _retry_project_binding(ctx), offset, limit
+                )
+            )
         card = result.get("operation")
         if card is not None:
             draft = dict(card["invoke"]["arguments"])

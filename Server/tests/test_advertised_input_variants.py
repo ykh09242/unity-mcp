@@ -32,6 +32,50 @@ async def _manage(client, **arguments):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_tool_first_discovery_emits_only_selectable_calls_from_this_tool(server, mode):
+    @server.tool
+    def sample_station(action: Literal["observe", "advance", "reset"]) -> None:
+        raise AssertionError("Describing an operation must not execute it")
+
+    @server.tool
+    def sample_counter(formatting: Literal["brief", "shared"], order: Literal["shared"]) -> None:
+        raise AssertionError("Describing a selector must not execute it")
+
+    async with Client(server, mode=mode) as client:
+        form = {"action": "describe", "tool": "sample_station", "limit": 2}
+        first = await _manage(client, **form)
+        assert first["next_offset"] == 2
+        assert first["next_call"] == {"tool": "manage_tools", "arguments": {**form, "offset": 2}}
+        follow = first["next_call"]
+        second = (await client.call_tool(follow["tool"], follow["arguments"])).structured_content
+        assert second["next_offset"] is None and "next_call" not in second
+        assert [len(page["operation_choices"]) for page in (first, second)] == [2, 1]
+        bound = []
+        for choice in first["operation_choices"] + second["operation_choices"]:
+            assert (
+                choice["tool"] == "manage_tools" and choice["arguments"]["tool"] == "sample_station"
+            )
+            card = (await client.call_tool(choice["tool"], choice["arguments"])).structured_content[
+                "operation"
+            ]
+            assert card["invoke"]["arguments"] == {"action": choice["arguments"]["operation"]}
+            bound.append(card["action"])
+        assert bound == ["observe", "advance", "reset"]
+        bad = await _manage(client, action="describe", tool="sample_counter", operation=bound[0])
+        assert bad["success"] is False
+        choices = (
+            await client.call_tool(bad["next_call"]["tool"], bad["next_call"]["arguments"])
+        ).structured_content
+        assert [call["arguments"]["operation"] for call in choices["operation_choices"]] == [
+            "brief"
+        ]
+        call = choices["operation_choices"][0]
+        selected = (await client.call_tool(call["tool"], call["arguments"])).structured_content
+        assert selected["operation"]["invoke"]["arguments"] == {"formatting": "brief"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 async def test_serialized_object_fields_description_prepares_the_real_input_field(server, mode):
     async with Client(server, mode=mode) as client:
         name = "inspect_serialized_object"

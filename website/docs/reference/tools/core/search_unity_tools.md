@@ -21,7 +21,7 @@ Search Unity tools, actions and readable resources without changing selection or
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `query` | `str \| None` | — | Original user request. Keep its language, names, paths and text verbatim. Required for the agent directory. Optional for an exact agent family or ranked evidence search. |
-| `limit` | `int` | — | Requested entries per page. Search and catalog return at most 20. Follow next_offset where available. |
+| `limit` | `int` | — | Requested entries per page for search, catalog or a tool's operation choices. At most 20 per page. |
 | `catalog_query` | `str \| None` | — | Ranked search only. Optional English action and target terms or exact tool/action identifier for lexical matching. Keep the original request in query. |
 | `intent` | `Literal['observe', 'interact', 'edit'] \| None` | — | Ranked search only. Choose the requested purpose by meaning in any language: observe for reading state, interact for operating the Editor or running game, edit for changing project content. |
 | `observation_source` | `Literal['editor_live', 'asset_file', 'imported_asset', 'compile_job', 'scenario_job'] \| None` | — | Ranked search only. Require evidence from the current Editor (editor_live), a saved file (asset_file), import results (imported_asset), a compilation job (compile_job), or a Play Scenario job (scenario_job). |
