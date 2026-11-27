@@ -1,0 +1,62 @@
+name: Native heartbeat publication
+
+on:
+  push:
+    branches: [beta]
+    paths: &paths
+      - MCPForUnity/Editor/Services/Transport/Transports/HeartbeatFilePublication.cs
+      - MCPForUnity/Editor/Services/Transport/Transports/StdioBridgeHost.cs
+      - TestProjects/UnityMCPTests/Assets/Tests/EditMode/Services/StdioBridgeLifecycleTests.cs
+      - tools/tests/fixtures/heartbeat_publication/**
+      - .github/workflows/heartbeat-publication.yml
+  pull_request:
+    branches: [main, beta]
+    paths: *paths
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Heartbeat on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-26, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare ACL utilities for Ubuntu's preinstalled Mono
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v getfacl || ! command -v setfacl; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y acl
+          fi
+      - name: Verify and install Mono 6.14.1 for Apple Silicon
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+          # https://formulae.brew.sh/api/formula/mono.json — arm64_tahoe, rebuild 4
+          BOTTLE_SHA256: f5ea5ba70d06035e98457f490a33ac2e5e287c7fee8e788df009e6698702ed97
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          brew fetch --force-bottle mono
+          bottle="$(brew --cache --force-bottle mono)"
+          printf '%s  %s\n' "$BOTTLE_SHA256" "$bottle" | shasum -a 256 --check
+          brew install --force-bottle mono
+          "$(brew --prefix mono)/bin/mono" --version | grep -F 'Mono JIT compiler version 6.14.1'
+          echo "$(brew --prefix mono)/bin" >> "$GITHUB_PATH"
+      - name: Verify native ACLs and recovery with Mono
+        if: runner.os != 'Windows'
+        run: python3 tools/tests/fixtures/heartbeat_publication/run.py
+      - name: Verify native DACLs, file sharing and recovery with .NET Framework
+        if: runner.os == 'Windows'
+        run: python tools/tests/fixtures/heartbeat_publication/run.py
