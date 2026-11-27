@@ -17,8 +17,24 @@ from transport.legacy import unity_connection as uc
 from transport.legacy.port_discovery import PortDiscovery
 
 
+@pytest.fixture
+def over_budget_discovery(monkeypatch):
+    clock = Mock(wraps=time)
+    clock.monotonic.return_value = 100.0
+    monkeypatch.setattr(main, "time", clock)
+    monkeypatch.setattr(uc, "time", clock)
+
+    def discover():
+        clock.monotonic.return_value += main.STARTUP_CONNECT_TIMEOUT + 1.0
+        return []
+
+    return clock.monotonic, discover
+
+
 @pytest.mark.parametrize("transport,skip", [("http", "0"), ("stdio", "1"), ("stdio", "0")])
-def test_cli_default_discovery_shares_startup_budget(monkeypatch, tmp_path, transport, skip):
+def test_cli_default_discovery_shares_startup_budget(
+    monkeypatch, tmp_path, transport, skip, over_budget_discovery
+):
     from contextlib import nullcontext
 
     monkeypatch.setattr(config, "transport_mode", config.transport_mode)
@@ -33,22 +49,30 @@ def test_cli_default_discovery_shares_startup_budget(monkeypatch, tmp_path, tran
     monkeypatch.setattr(main, "local_auth_token", lambda *_: nullcontext("owned-fixture"))
     monkeypatch.setattr(main, "local_auth_token_path", lambda _: tmp_path / "token")
     monkeypatch.setattr(main, "STARTUP_CONNECT_TIMEOUT", 0.05)
+    monotonic, discover = over_budget_discovery
     pool = Mock()
-    pool.discover_all_instances.side_effect = lambda: time.sleep(0.07) or []
+    pool.discover_all_instances.side_effect = discover
     monkeypatch.setattr(uc, "get_unity_connection_pool", Mock(return_value=pool))
+    bounded_discovery = Mock(wraps=main.run_with_connection_deadline)
+    monkeypatch.setattr(main, "run_with_connection_deadline", bounded_discovery)
     server = Mock()
     monkeypatch.setattr(main, "create_mcp_server", Mock(return_value=server))
-    began = time.monotonic()
+    expected_deadline = monotonic() + main.STARTUP_CONNECT_TIMEOUT
     main.main()
     if transport == "stdio" and skip == "0":
         pool.discover_all_instances.assert_called_once()
-        assert began <= server._unity_startup_deadline <= began + 0.06
-        assert server._unity_startup_deadline < time.monotonic()
+        bounded_discovery.assert_called_once()
+        assert bounded_discovery.call_args.args[1] == expected_deadline
+        assert server._unity_startup_deadline == expected_deadline
+        assert expected_deadline < monotonic()
     else:
         pool.discover_all_instances.assert_not_called()
+        bounded_discovery.assert_not_called()
 
 
-def test_cli_expired_default_discovery_does_not_restart_lifespan_budget(monkeypatch):
+def test_cli_expired_default_discovery_does_not_restart_lifespan_budget(
+    monkeypatch, over_budget_discovery
+):
     monkeypatch.setattr(config, "transport_mode", config.transport_mode)
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "0")
@@ -60,8 +84,9 @@ def test_cli_expired_default_discovery_does_not_restart_lifespan_budget(monkeypa
     monkeypatch.setattr(main, "_unity_connection_pool", None)
     monkeypatch.setattr(main, "_plugin_registry", None)
     monkeypatch.setattr(uc, "_unity_connection_pool", None)
+    _, discover = over_budget_discovery
     pool = Mock(aclose=AsyncMock())
-    pool.discover_all_instances.side_effect = lambda: time.sleep(0.03) or []
+    pool.discover_all_instances.side_effect = discover
     monkeypatch.setattr(uc, "get_unity_connection_pool", Mock(return_value=pool))
     lifespan_factory = Mock(return_value=pool)
     monkeypatch.setattr(main, "get_unity_connection_pool", lifespan_factory)
