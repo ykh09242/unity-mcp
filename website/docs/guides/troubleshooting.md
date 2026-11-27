@@ -28,6 +28,18 @@ Work from package import to server, bridge, client, then target. Do not delete p
 
 `GET /health` checks only the process. Verify an Editor by reading `mcpforunity://instances` and its project info. Never share token-file contents, API keys or complete private payloads in diagnostics.
 
+## An edit stopped after its preview
+
+Check the tool history in the client that received the request. When a successful preview
+returns `data.follow_up`, its `execution` field identifies the Unity Editor that will
+apply the change, when the tool provides that information. If the history ends at the
+preview, the Editor has received no follow-up apply request.
+
+Check which project the client opened and which edits its workspace and MCP approval
+settings permit. For an authorized edit that matches the preview, use the returned
+call through that client's normal approval flow. If the call was already sent, inspect
+its reply and read back the requested saved file or live state before attempting it again.
+
 ## Verify the actual MCP read path
 
 Run the diagnostic against an exact discovered Editor ID:
