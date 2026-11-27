@@ -21,7 +21,12 @@ if not __package__:
 
 from tools.experiments import agent_family_evaluation as previous
 from tools.experiments import live_agent_wire as wire
-from tools.experiments.live_agent_workspace import project_scope_command, verify_project_scope
+from tools.experiments.live_agent_workspace import (
+    ActorCommissioningError,
+    project_scope_command,
+    verify_project_editor,
+    verify_project_scope,
+)
 
 HERE = Path(__file__).resolve().parent
 NEW_SHA = "cd8e8fd0edcf63a2b9a295066a2c0cc20ee6a53204fb925ac1f53d4f1d0905b9"
@@ -328,6 +333,7 @@ def run_case(row, lane, receipts, codex, server, instance, *, workspace_proof=No
                 )
                 if workspace_proof:
                     cmd = project_scope_command(cmd, project=lane / "project")
+                    verify_project_editor(lane / "project", instance)
                     # A timeout or process interruption can hide a completed external action.
                     # Reserve this original before dispatch and never submit it a second time.
                     original_sha256 = hashlib.sha256(row["query"].encode()).hexdigest()
@@ -344,7 +350,7 @@ def run_case(row, lane, receipts, codex, server, instance, *, workspace_proof=No
                 result.update(run_actor(cmd, row["query"], run_dir))
     except (OSError, ValueError, IndexError, KeyError, RuntimeError, TimeoutError) as exc:
         result["error"] = str(exc)
-        if commissioning:
+        if commissioning or isinstance(exc, ActorCommissioningError):
             result["commissioning_failed"] = True
     finally:
         if prepared:

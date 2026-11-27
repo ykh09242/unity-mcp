@@ -11,6 +11,10 @@ from subprocess import run as run_sandbox_probe
 import sys
 
 
+class ActorCommissioningError(RuntimeError):
+    """The harness failed before submitting the original to the agent."""
+
+
 def _owned_project(project):
     from tools.experiments.live_editor_fixture import lane
 
@@ -19,6 +23,33 @@ def _owned_project(project):
     if project.name != "project" or not project.is_dir():
         raise ValueError("The workspace must be the disposable Editor project")
     return project
+
+
+def verify_project_editor(project, expected_instance):
+    """Obtain current identity from the owned Editor, including during heartbeat replacement."""
+    from tools.experiments.live_editor_fixture import lane
+
+    project = _owned_project(project)
+    owned = project.parent
+    try:
+        launched = json.loads(lane.real_child(owned / "launch.json").read_bytes())
+        observed = lane.request(owned, "ping", timeout=15)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise ActorCommissioningError(
+            f"Could not confirm the owned Editor before submission: {exc}"
+        ) from exc
+    if not (
+        observed.get("ok") is True
+        and expected_instance
+        and observed.get("instance") == expected_instance
+        and type(launched.get("pid")) is int
+        and launched["pid"] > 0
+        and type(observed.get("pid")) is int
+        and observed["pid"] == launched["pid"]
+        and observed.get("project_root") == launched.get("project") == str(project)
+    ):
+        raise ActorCommissioningError("The responding Editor does not match the owned launch")
+    return expected_instance
 
 
 def _sandbox_options():

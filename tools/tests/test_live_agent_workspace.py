@@ -35,6 +35,25 @@ def test_command_uses_only_the_owned_project_and_preserves_original_stdin(projec
         scope.project_scope_command(cmd, project=project.parent)
 
 
+def test_native_identity_stays_available_without_a_heartbeat_file(project, monkeypatch):
+    owned = project.parent
+    (owned / "launch.json").write_text(json.dumps({"pid": 42, "project": str(project)}))
+    response = {"ok": True, "pid": 42, "project_root": str(project), "instance": "project@12345678"}
+
+    def ping(directory, operation, *, timeout):
+        assert directory == owned and operation == "ping" and timeout > 0
+        return response
+
+    monkeypatch.setattr(lane, "request", ping)
+    assert scope.verify_project_editor(project, "project@12345678") == "project@12345678"
+    for key, other in (("pid", 55), ("project_root", str(owned)), ("instance", "other@87654321")):
+        expected = response[key]
+        response[key] = other
+        with pytest.raises(scope.ActorCommissioningError, match="owned launch"):
+            scope.verify_project_editor(project, "project@12345678")
+        response[key] = expected
+
+
 def test_probe_rejects_unrestricted_child_and_leaves_no_markers(project, monkeypatch):
     def unrestricted(cmd, **kwargs):
         # Deliberately execute the same two controlled operations without filesystem confinement.

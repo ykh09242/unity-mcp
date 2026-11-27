@@ -119,6 +119,24 @@ def test_project_workspace_never_resubmits_an_uncertain_or_interrupted_turn(tmp_
     assert list(folder.glob("attempt-*")) == []
 
 
+def test_pre_dispatch_failure_inside_host_adapter_is_commissioning(tmp_path, monkeypatch):
+    from tools.experiments.live_editor_fixture import lane
+
+    monkeypatch.setattr(
+        lane, "request", lambda *args: {"ok": True, "instance": "owned", "state": {}}
+    )
+    monkeypatch.setattr(trial, "actor_command", lambda *a, **kw: ["client"])
+
+    def fail_before_start(*args):
+        raise trial.ActorCommissioningError("Native identity unavailable before dispatch")
+
+    monkeypatch.setattr(trial, "run_actor", fail_before_start)
+    row = {"id": "original", "query": "edit", "task": "t", "language": "en", "seed": 1}
+    outcome = trial.run_case(row, tmp_path, tmp_path, "codex", "server", "owned")
+    assert outcome["commissioning_failed"] and outcome["delivered"] is False
+    assert "before dispatch" in outcome["error"]
+
+
 def test_actor_command_keeps_query_and_oracle_off_command_line(tmp_path):
     row = {"profile": "core", "task": "secret-scoring-task", "query": "各地的會議？"}
     cmd = trial.actor_command(
