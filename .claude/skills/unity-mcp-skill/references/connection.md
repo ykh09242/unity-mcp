@@ -20,9 +20,11 @@ selected action's input shapes and `input_variants` when present. Fields in
 `other_tool_parameters` have no confirmed membership in this action.
 A concrete resource's `read_call` contains its URI and project binding.
 Use `manage_tools(action="catalog", group="skills")` or `resources/list` for
-skill files published on this connection. Follow the returned `read_call`
-or copy the listed URI exactly. Open a host-installed skill through the host's
-own skill loader. Use `resources/templates/list` for parameterized resources.
+skill files published on this connection. Invoke a listed document's `read_tool`
+with its supplied arguments to receive its MCP contents through the current tool
+connection. Resource clients can follow `read_call` with the same URI and project.
+Open a host-installed skill through the host's own skill loader. Use
+`resources/templates/list` for parameterized resources.
 
 Use `selection="ranked"` for lexical or evidence searches. `catalog_query`, `intent`, `observation_source` and `required_values` belong to ranked search. Family IDs and pagination belong to agent browsing. On a mode conflict, use the returned `search_retries` entry that preserves the requested evidence, target and host scope. If the action and its verification need different evidence, find each route separately.
 
@@ -64,8 +66,11 @@ See `operation.prepare_exact_text.example` for the outer prepare fields. Set
 `query` to the unchanged original and pass `exact_text` alongside `arguments`,
 for example `[{"path":["edits",0,"newText"],"expected":"Confirm!"}]` for a text edit.
 Use object keys and zero-based array indices relative to the draft. Compare the
-preview and an independent saved readback with that source span. The check can
-verify the span selected by the caller; either punctuation boundary may be a substring.
+preview and an independent saved readback with that source span.
+`exact_text_evidence.source_ranges` locates each selected value in the original
+query by zero-based Unicode code point offsets, with an exclusive end. A null
+entry means the same value occurs more than once. Use the surrounding request
+to decide which characters belong to the replacement before applying the edit.
 Preparation can bind the supplied original text and cap annotated page sizes.
 It checks the input schema only. Permissions, current target IDs, Unity
 availability and the resulting state are checked at invocation and readback.
