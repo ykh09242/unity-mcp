@@ -169,6 +169,16 @@ def _request_target_metadata(ctx) -> dict:
     return meta if isinstance(meta, dict) else {}
 
 
+_TARGET_UNAVAILABLE = (
+    "explicit_unity_target_unavailable: The selected project could not be resolved. "
+    "Read mcpforunity://instances and explicitly select the intended project."
+)
+
+
+class _MissingLocalEditor(ValueError):
+    """The exact local selector was absent from the completed discovery result."""
+
+
 def resolve_discovered_instance(value: str | int, instances: list, transport: str) -> str:
     """Resolve against the caller-visible catalog, retaining stdio port shorthand."""
     if type(value) is int:
@@ -385,6 +395,10 @@ class UnityInstanceMiddleware(Middleware):
             if UnityConnectionPool.is_exact_instance_id(value):
                 pool = get_unity_connection_pool()
                 instances = await pool.discover_exact_instance(value)
+                try:
+                    return resolve_discovered_instance(value, instances, transport)
+                except ValueError as error:
+                    raise _MissingLocalEditor(str(error)) from error
 
         if instances is None:
             instances = await self._discover_instances(ctx)
@@ -688,6 +702,9 @@ class UnityInstanceMiddleware(Middleware):
         try:
             async with foreground_progress(context.fastmcp_context):
                 return await self._call_tool_with_receipts(context, call_next)
+        except _MissingLocalEditor:
+            # Keep other projects and the submitted selector out of the public failure.
+            raise ToolError(_TARGET_UNAVAILABLE) from None
         except ValidationError as error:
             cause = sdk_argument_validation_cause(error)
             if cause is None:
@@ -1046,10 +1063,7 @@ class UnityInstanceMiddleware(Middleware):
                     return ToolResult(structured_content=result.model_dump())
         except (ConnectionError, ValueError, NoUnitySessionError) as error:
             if selection_options.get("require_explicit"):
-                raise ToolError(
-                    "explicit_unity_target_unavailable: The selected project could not be resolved. "
-                    "Read mcpforunity://instances and explicitly select the intended project."
-                ) from error
+                raise ToolError(_TARGET_UNAVAILABLE) from error
             raise
 
         await self._admit_selected_tool(context, getattr(context.message, "name", None), user_id)

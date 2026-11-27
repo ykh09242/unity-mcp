@@ -174,6 +174,22 @@ async def test_side_effectful_wrappers_require_deliberate_target(target_server, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_offline_inline_editor_explains_local_discovery_before_dispatch(
+    target_server, monkeypatch, mode
+):
+    monkeypatch.setattr(config, "require_explicit_target", False)
+    async with Client(target_server.server, mode=mode) as client:
+        result = await client.call_tool(
+            "manage_scene", {"action": "save", "unity_instance": A}, raise_on_error=False
+        )
+    message = str(result.content)
+    assert result.is_error and "explicit_unity_target_unavailable" in message
+    assert "mcpforunity://instances" in message and A not in message and B not in message
+    assert target_server.dispatched == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 async def test_inline_target_is_per_call_and_missing_target_never_retargets(target_server, mode):
     # Given two projects and an explicit inline target.
     target_server.inventory.append(SimpleNamespace(id=A, hash="aaaaaaaa"))
