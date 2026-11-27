@@ -12,10 +12,13 @@ and host scope across pages. An exact family may be reopened without the query.
 
 Use the returned `next_call` to continue on the same connection. For a family
 directory, add the chosen ID as `family` to `open_family.arguments`. Pass
-`query` as the original text string alongside `selection`. To inspect inputs,
-call `manage_tools(action="describe", tool=name, operation=action)`. For an
-actionless tool, omit `operation`. When a result includes `describe_call`, invoke
-its `tool` with its `arguments` unchanged. Read `operation.input_fields` for the
+`query` as the original text string alongside `selection`. Follow the selected
+row's `describe_call` to inspect its inputs. When you have only a tool name,
+call `manage_tools(action="describe", tool=name)`. Follow `next_call` for more
+choices, then invoke the chosen `operation_choices` entry with its supplied
+arguments. A tool without a selector can be described by name alone. If the
+tool has no operation for the requested effect, compare other published routes.
+Read `operation.input_fields` for the
 selected action's input shapes and `input_variants` when present. Fields in
 `other_tool_parameters` have no confirmed membership in this action.
 A concrete resource's `read_call` contains its URI and project binding.
