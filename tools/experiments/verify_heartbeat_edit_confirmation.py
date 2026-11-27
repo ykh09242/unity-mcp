@@ -143,6 +143,7 @@ CONNECTION_OBSERVATION = "6f616ae8e881f5632f9b6d56d93e535c656335abb72492b57fa155
 RESOURCE_BINDINGS = "4ae752132916146b0f3a8c50ebc481bb76b3e1bdb74bb80815fd1570191b316c"
 OPERATION_DISCOVERY = "68b1093bef6a9920d39e2dbafbe376f6488298c8eb4f113e82cfd6055f0cf1ce"
 APPLY_ROUTE = "3fbbaf1ed3eb03a18bf539b6ef64138db9b659f2947f2a16d680ab0a5121c490"
+PROJECT_SCOPE = "cf6cab0ed521f44be658e57ac80a606e438b4ccd55f0be9e081e5c348967cc2b"
 STUDIES = {
     PUBLISHED: ("compact_edit_confirmation_results.json", prior.PUBLISHED, FROZEN_PINS),
     EDITOR_CATALOG: (
@@ -247,6 +248,15 @@ STUDIES = {
     APPLY_ROUTE: (
         "operation_discovery_confirmation_results.json",
         OPERATION_DISCOVERY,
+        {
+            "package": "21ef2c610cb233a2260ef668d785b88520db38b2",
+            "runtime": "b721756f3fc275be670334f69ee0f2be21ac9042",
+            "skill": "3dace93bfe6cfce8f8e7aa2dcea4fac440377fba",
+        },
+    ),
+    PROJECT_SCOPE: (
+        "apply_route_confirmation_results.json",
+        APPLY_ROUTE,
         {
             "package": "21ef2c610cb233a2260ef668d785b88520db38b2",
             "runtime": "b721756f3fc275be670334f69ee0f2be21ac9042",

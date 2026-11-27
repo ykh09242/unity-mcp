@@ -22,6 +22,7 @@ from tools.experiments.verify_heartbeat_edit_confirmation import (
     EDITOR_TARGET,
     OPERATION_DISCOVERY,
     PREVIEW_CONTINUATION,
+    PROJECT_SCOPE,
     RESOURCE_BINDINGS,
     STRUCTURED_SEARCH,
     verified_archives,
@@ -62,6 +63,10 @@ STUDIES = {
     "c11466455d7243be7d4414fb30ea9a1d893e8d55a5aee884269a26838ed5f4c9": (
         "apply_route_confirmation_results.json",
         APPLY_ROUTE,
+    ),
+    "4bac4ef47574a2d8a7e35a684dc55554c58a882506895b83d49ec2a48ea5867a": (
+        "project_scope_confirmation_results.json",
+        PROJECT_SCOPE,
     ),
 }
 
