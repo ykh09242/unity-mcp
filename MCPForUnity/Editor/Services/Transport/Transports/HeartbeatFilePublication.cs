@@ -24,24 +24,29 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             try
             {
 #if UNITY_EDITOR_OSX || UNITY_EDITOR_LINUX
-                if (replacing)
-                {
-                    // Rename checks directory permissions. Retain the former writer's requirement for file write access.
-                    const int checkFlags = 1 | 0x800 | 0x20000 | 0x80000; // O_WRONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
-                    int original = OpenHeartbeatFile(path, checkFlags, 0);
-                    if (original < 0 || close(original) != 0)
-                        throw new Win32Exception(Marshal.GetLastWin32Error());
-                }
                 // Mode 000 prevents a retained read descriptor via mode bits before setting the existing policy.
-                const int flags = 1 | 0x40 | 0x80 | 0x80000; // Mono.Posix O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC
-                int fd = OpenHeartbeatFile(stage, flags, replacing ? 0u : 438u); // First publication uses 0666 subject to umask.
+                int fd = CreateUnixStage(stage, replacing ? 0 : 438); // First publication uses 0666 subject to umask.
                 if (fd < 0)
                     throw new Win32Exception(Marshal.GetLastWin32Error());
                 created = true;
                 try
                 {
                     if (replacing)
-                        PreserveHeartbeatAccess(path, stage, fd);
+                    {
+                        // A replacement requires write access to the original. Read its policy through that same descriptor.
+                        int original = OpenWritableHeartbeat(path);
+                        if (original < 0)
+                            throw new Win32Exception(Marshal.GetLastWin32Error());
+                        try
+                        {
+                            PreserveHeartbeatAccess(original, fd);
+                        }
+                        finally
+                        {
+                            if (close(original) != 0)
+                                throw new Win32Exception(Marshal.GetLastWin32Error());
+                        }
+                    }
                     var bytes = System.Text.Encoding.UTF8.GetBytes(json);
                     if (write(fd, bytes, (UIntPtr)bytes.Length).ToInt64() != bytes.Length)
                         throw new IOException("Incomplete heartbeat stage write.");
@@ -108,9 +113,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         }
 
 #if UNITY_EDITOR_OSX || UNITY_EDITOR_LINUX
-        // The Editor's Mono shim also handles the native variadic open ABI on Apple Silicon.
+        // Each runtime's fixed-signature shim handles the native variadic open ABI, including on Apple Silicon.
+#if ENABLE_CORECLR
+        [DllImport("libSystem.Native", EntryPoint = "SystemNative_Open", SetLastError = true)]
+        private static extern IntPtr OpenStage(string path, int flags, int mode);
+
+        private static int CreateUnixStage(string path, int mode) => OpenStage(path, 0x1 | 0x10 | 0x20 | 0x40, mode).ToInt32(); // PAL_O_WRONLY | CLOEXEC | CREAT | EXCL
+#else
         [DllImport("MonoPosixHelper", EntryPoint = "Mono_Posix_Syscall_open_mode", SetLastError = true)]
-        private static extern int OpenHeartbeatFile(string path, int flags, uint mode);
+        private static extern int OpenStage(string path, int flags, uint mode);
+
+        private static int CreateUnixStage(string path, int mode) => OpenStage(path, 1 | 0x40 | 0x80 | 0x80000, (uint)mode); // Mono.Posix O_WRONLY | CREAT | EXCL | CLOEXEC
+#endif
 
         [DllImport("libc", SetLastError = true)]
         private static extern IntPtr write(int fd, byte[] bytes, UIntPtr count);
@@ -124,52 +138,83 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
 #if UNITY_EDITOR_OSX
         [DllImport("libc", SetLastError = true)]
-        private static extern int getattrlist(string path, uint[] attributes, [Out] byte[] buffer, UIntPtr size, uint options);
+        private static extern int openx_np(string path, int flags, IntPtr security);
+
+        private static int OpenWritableHeartbeat(string path) => openx_np(path, 1 | 4 | 0x100 | 0x1000000, IntPtr.Zero); // O_WRONLY | NONBLOCK | NOFOLLOW | CLOEXEC
 
         [DllImport("libc", SetLastError = true)]
-        private static extern int fchmod(int fd, uint mode);
+        private static extern int fgetattrlist(int fd, uint[] attributes, [Out] byte[] buffer, UIntPtr size, UIntPtr options);
 
         [DllImport("libc", SetLastError = true)]
-        private static extern int fsetattrlist(int fd, uint[] attributes, byte[] buffer, UIntPtr size, uint options);
+        private static extern int fchmod(int fd, ushort mode);
 
-        private static byte[] MacHeartbeatAccess(string path)
+        [DllImport("libc", SetLastError = true)]
+        private static extern int fsetattrlist(int fd, uint[] attributes, byte[] buffer, UIntPtr size, UIntPtr options);
+
+        private static byte[] MacHeartbeatAccess(int fd)
         {
-            // attr.h: owner, group, access mask and extended security (ACL).
-            var attributes = new uint[] { 5, 0x438000, 0, 0, 0, 0 };
+            // attr.h: vnode type, owner, group, access mask and extended security (ACL).
+            var attributes = new uint[] { 5, 0x438008, 0, 0, 0, 0 };
             var buffer = new byte[4096];
-            if (getattrlist(path, attributes, buffer, (UIntPtr)buffer.Length, 4) != 0)
+            if (fgetattrlist(fd, attributes, buffer, (UIntPtr)buffer.Length, (UIntPtr)4) != 0)
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             uint size = BitConverter.ToUInt32(buffer, 0);
-            if (size < 24 || size > buffer.Length)
+            if (size < 28 || size > buffer.Length || BitConverter.ToUInt32(buffer, 4) != 1) // VREG
                 throw new IOException("Unsupported heartbeat access metadata.");
             Array.Resize(ref buffer, (int)size);
             return buffer;
         }
 
-        private static void PreserveHeartbeatAccess(string path, string stage, int fd)
+        private static void PreserveHeartbeatAccess(int original, int fd)
         {
-            var expected = MacHeartbeatAccess(path);
-            var initial = MacHeartbeatAccess(stage);
-            if (BitConverter.ToUInt32(initial, 20) == 0 && BitConverter.ToUInt32(expected, 20) != 0)
+            const int modeOffset = 16;
+            const int aclReference = 20;
+            var expected = MacHeartbeatAccess(original);
+            var initial = MacHeartbeatAccess(fd);
+            if (BitConverter.ToUInt32(initial, aclReference + 4) == 0 && BitConverter.ToUInt32(expected, aclReference + 4) != 0)
             {
                 // Install just the ACL while mode is still 000. Darwin's packed attrreference offset is relative to itself.
-                const int aclReference = 16;
                 var acl = new byte[expected.Length - aclReference];
                 Buffer.BlockCopy(expected, aclReference, acl, 0, acl.Length);
-                if (fsetattrlist(fd, new uint[] { 5, 0x400000, 0, 0, 0, 0 }, acl, (UIntPtr)acl.Length, 0) != 0)
+                if (fsetattrlist(fd, new uint[] { 5, 0x400000, 0, 0, 0, 0 }, acl, (UIntPtr)acl.Length, UIntPtr.Zero) != 0)
                     throw new Win32Exception(Marshal.GetLastWin32Error());
-                initial = MacHeartbeatAccess(stage);
+                initial = MacHeartbeatAccess(fd);
             }
             // An inherited ACL could have admitted early readers. Never replace a different one.
-            Buffer.BlockCopy(expected, 12, initial, 12, sizeof(uint)); // Compare everything except the initial mode.
+            Buffer.BlockCopy(expected, modeOffset, initial, modeOffset, sizeof(uint)); // Compare everything except the initial mode.
             if (!expected.SequenceEqual(initial))
                 throw new IOException("Cannot preserve the heartbeat owner, group or ACL.");
-            if (fchmod(fd, BitConverter.ToUInt32(expected, 12) & 0x1ff) != 0)
+            if (fchmod(fd, (ushort)(BitConverter.ToUInt32(expected, modeOffset) & 0x1ff)) != 0)
                 throw new Win32Exception(Marshal.GetLastWin32Error());
-            if (!expected.SequenceEqual(MacHeartbeatAccess(stage)))
+            if (!expected.SequenceEqual(MacHeartbeatAccess(fd)))
                 throw new IOException("Cannot preserve the heartbeat owner, group or ACL.");
         }
 #elif UNITY_EDITOR_LINUX
+        // glibc's fixed two-argument open entry point is available on supported Linux Editors, including Ubuntu 18.04.
+        [DllImport("libc", EntryPoint = "__open_2", SetLastError = true)]
+        private static extern int OpenExisting(string path, int flags);
+
+        private static int OpenWritableHeartbeat(string path) => OpenExisting(path, 1 | 0x800 | 0x20000 | 0x80000); // O_WRONLY | NONBLOCK | NOFOLLOW | CLOEXEC
+#if ENABLE_CORECLR
+        // dotnet/runtime System.Native/pal_io.h FileStatus on 64-bit Unix.
+        [StructLayout(LayoutKind.Explicit, Size = 120)]
+        private struct HeartbeatStat
+        {
+            [FieldOffset(4)]
+            internal int Mode;
+
+            [FieldOffset(8)]
+            internal uint Owner;
+
+            [FieldOffset(12)]
+            internal uint Group;
+        }
+
+        [DllImport("libSystem.Native", EntryPoint = "SystemNative_FStat", SetLastError = true)]
+        private static extern int FStatNative(IntPtr fd, out HeartbeatStat stat);
+
+        private static int FStat(int fd, out HeartbeatStat stat) => FStatNative((IntPtr)fd, out stat);
+#else
         // Unity's bundled Mono.Unix.Native.Stat layout (support/map.h) also works on Ubuntu 18.04.
         [StructLayout(LayoutKind.Explicit, Size = 120)]
         private struct HeartbeatStat
@@ -184,11 +229,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             internal uint Group;
         }
 
-        [DllImport("MonoPosixHelper", EntryPoint = "Mono_Posix_Syscall_lstat", SetLastError = true)]
-        private static extern int LStat(string path, out HeartbeatStat stat);
+        [DllImport("MonoPosixHelper", EntryPoint = "Mono_Posix_Syscall_fstat", SetLastError = true)]
+        private static extern int FStat(int fd, out HeartbeatStat stat);
+#endif
 
         [DllImport("libacl.so.1", SetLastError = true)]
-        private static extern IntPtr acl_get_file(string path, int type);
+        private static extern IntPtr acl_get_fd(int fd);
 
         [DllImport("libacl.so.1", SetLastError = true)]
         private static extern int acl_set_fd(int fd, IntPtr acl);
@@ -196,22 +242,22 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         [DllImport("libacl.so.1")]
         private static extern int acl_free(IntPtr acl);
 
-        private static HeartbeatStat LinuxHeartbeatAccess(string path)
+        private static HeartbeatStat LinuxHeartbeatAccess(int fd)
         {
-            if (LStat(path, out var stat) != 0)
+            if (FStat(fd, out var stat) != 0)
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             if ((stat.Mode & 0xf000) != 0x8000 || (stat.Mode & 0xe00) != 0)
                 throw new IOException("Unsupported heartbeat access metadata.");
             return stat;
         }
 
-        private static void PreserveHeartbeatAccess(string path, string stage, int fd)
+        private static void PreserveHeartbeatAccess(int original, int fd)
         {
-            var original = LinuxHeartbeatAccess(path);
-            var created = LinuxHeartbeatAccess(stage);
-            if (original.Owner != created.Owner || original.Group != created.Group)
+            var expected = LinuxHeartbeatAccess(original);
+            var created = LinuxHeartbeatAccess(fd);
+            if (expected.Owner != created.Owner || expected.Group != created.Group)
                 throw new IOException("Cannot preserve the heartbeat owner or group.");
-            IntPtr acl = acl_get_file(path, 0x8000); // ACL_TYPE_ACCESS includes the mode bits and any named entries.
+            IntPtr acl = acl_get_fd(original); // The access ACL includes the mode bits and any named entries.
             if (acl == IntPtr.Zero)
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             try
