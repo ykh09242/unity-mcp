@@ -40,11 +40,32 @@ def test_partition_preserves_every_existing_action_and_input_type():
                 counts = Counter(action for item in profiles for action in item.actions)
                 assert set(counts) == actions and set(counts.values()) == {1}, (source, counts, actions)
                 admitted = {name for item in profiles for name in item.parameters}
-                assert admitted == set(signature.parameters) - {"ctx", "action"}, (source, admitted ^ (set(signature.parameters) - {"ctx", "action"}))
+                source_parameters = set(signature.parameters) - {"ctx", "action"}
+                source_fields = schemas[source]["properties"]
+                usage = "x-unity-mcp-used-by-actions"
+                scoped = {
+                    name: source_fields[name][usage]
+                    for name in source_parameters - admitted
+                    if usage in source_fields[name]
+                }
+                assert admitted | scoped.keys() == source_parameters, (source, admitted, scoped.keys())
+                assert all(allowed and set(allowed) <= actions for allowed in scoped.values()), source
                 for profile in profiles:
                     schema = schemas[profile.name]
-                    assert set(schema["properties"]) == {"action", "unity_instance", *profile.parameters}
-                    for name in profile.parameters:
+                    expected = {name: source_fields[name] for name in profile.parameters}
+                    for name, allowed in scoped.items():
+                        applicable = [action for action in profile.actions if action in allowed]
+                        if applicable:
+                            source_field = source_fields[name]
+                            source_prefix = f"Used by {', '.join(allowed)}."
+                            assert source_field["description"].startswith(source_prefix)
+                            detail = source_field["description"].removeprefix(source_prefix)
+                            expected[name] = {
+                                **source_field, usage: applicable,
+                                "description": f"Used by {', '.join(applicable)}.{detail}",
+                            }
+                    assert set(schema["properties"]) == {"action", "unity_instance", *expected}, profile.name
+                    for name, field in expected.items():
                         if (profile.name, name) == ("gameobject_create", "name"):
                             assert schema["properties"][name] == {
                                 "description": "Nonempty initial GameObject name.",
@@ -52,7 +73,7 @@ def test_partition_preserves_every_existing_action_and_input_type():
                             }
                             assert "name" in schema["required"]
                         else:
-                            assert schema["properties"][name] == schemas[source]["properties"][name], (profile.name, name)
+                            assert schema["properties"][name] == field, (profile.name, name)
                     assert declared[profile.name]["unity_target"] == profile.name, profile.name
                     assert declared[profile.name]["group"] == profile.group
         asyncio.run(scenario())
