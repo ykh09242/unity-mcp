@@ -654,7 +654,7 @@ def private_check(data, root, disk_verdicts=None):
         bundle_path = work / "product/Server/src/services/skills_bundle.json"
         bundle = read(bundle_path)["payload"]
         entries = {item["path"]: item["digest"] for item in bundle["files"]}
-        skill_reads = 0
+        skill_reads = Counter()
         require(
             digest(bundle_path.read_bytes()) == run["local_skill_bundle"]["sha256"]
             and bundle["revision"] == run["product_pins"]["skill"],
@@ -686,12 +686,18 @@ def private_check(data, root, disk_verdicts=None):
             for row in group["cases"]:
                 spec = next(item for item in specs if item["task"] == row["task"])
                 verify_reviewed_verdict(row, run["catalogs"][row["profile"]])
-                skill_reads += verify_private_row(
+                skill_reads[row["profile"]] += verify_private_row(
                     work, panel, row, reviews.get(row["id"]), entries, sealed, spec, disk_verdicts
                 )
         require(
-            skill_reads == run["local_skill_bundle"]["confirmed_actor_reads"], "Skill read count"
+            sum(skill_reads.values()) == run["local_skill_bundle"]["confirmed_actor_reads"],
+            "Skill read count",
         )
+        if "confirmed_reads_by_catalog" in run["local_skill_bundle"]:
+            require(
+                dict(skill_reads) == run["local_skill_bundle"]["confirmed_reads_by_catalog"],
+                "Packaged skill reads differ by catalog",
+            )
 
 
 def main():

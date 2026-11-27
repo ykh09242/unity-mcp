@@ -119,15 +119,26 @@ FROZEN_PINS = {
     "skill": "5875fd66f318b16564e5e8c9760d652e445bf780",
 }
 PUBLISHED = "e3cdeb5b34d85fd1fc1413a19f586e3bd760e23bad3adf263c704f0ca1353725"
+EDITOR_CATALOG = "8f8b5a294014304475a6c13d075339a7f90a631f2dc3f139a75543e46f3745d6"
+CATALOG_DISCOVERY = "4c44cd9f4ea003fe8c4947ef9a573fc34a1731a500bda915404948a772d5723c"
 STUDIES = {
     PUBLISHED: ("compact_edit_confirmation_results.json", prior.PUBLISHED, FROZEN_PINS),
-    "8f8b5a294014304475a6c13d075339a7f90a631f2dc3f139a75543e46f3745d6": (
+    EDITOR_CATALOG: (
         "heartbeat_edit_confirmation_results.json",
         PUBLISHED,
         {
             "package": "79fc892df8d4ea35e49c206fa4bfd7886b68d9fb",
             "runtime": "bf92d33d3853cc1128ece25beddce5fb0b5dfbe3",
             "skill": "dad211b9228fc4f81a291a100e46f88cf5e24ac0",
+        },
+    ),
+    CATALOG_DISCOVERY: (
+        "editor_catalog_confirmation_results.json",
+        EDITOR_CATALOG,
+        {
+            "package": "41703d7e9d267817811e15bc68f0260394b1a74f",
+            "runtime": "a394fcb081b37a855c97e2d0d630f2ee8468c51b",
+            "skill": "a359961d00dbbc0161f9067f8955bd8516010fa0",
         },
     ),
 }
