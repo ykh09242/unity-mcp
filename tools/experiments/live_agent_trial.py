@@ -21,6 +21,7 @@ if not __package__:
 
 from tools.experiments import agent_family_evaluation as previous
 from tools.experiments import live_agent_wire as wire
+from tools.experiments.live_agent_workspace import project_scope_command, verify_project_scope
 
 HERE = Path(__file__).resolve().parent
 NEW_SHA = "cd8e8fd0edcf63a2b9a295066a2c0cc20ee6a53204fb925ac1f53d4f1d0905b9"
@@ -280,7 +281,7 @@ def run_actor(cmd, query, folder):
     )
 
 
-def run_case(row, lane, receipts, codex, server, instance):
+def run_case(row, lane, receipts, codex, server, instance, *, workspace_proof=None):
     from tools.experiments.live_editor_fixture.lane import request
 
     folder = receipts / row["id"]
@@ -288,6 +289,11 @@ def run_case(row, lane, receipts, codex, server, instance):
     result_path = folder / "row.json"
     prior = json.loads(result_path.read_bytes()) if result_path.exists() else {}
     attempts = prior.get("attempts", [])
+    submission = folder / "workspace-submission.json"
+    if workspace_proof and (submission.exists() or prior.get("turn_started")):
+        if prior:
+            return prior
+        raise RuntimeError(f"Already submitted {row['id']}; the host outcome is unavailable")
     if prior and (prior.get("delivered") or len(attempts) >= 2):
         return prior
     run_dir = folder / f"attempt-{len(attempts) + 1}"
@@ -320,6 +326,20 @@ def run_case(row, lane, receipts, codex, server, instance):
                 cmd = actor_command(
                     codex, Path(neutral), run_dir, server, instance, row, status_dir=lane / "status"
                 )
+                if workspace_proof:
+                    cmd = project_scope_command(cmd, project=lane / "project")
+                    # A timeout or process interruption can hide a completed external action.
+                    # Reserve this original before dispatch and never submit it a second time.
+                    original_sha256 = hashlib.sha256(row["query"].encode()).hexdigest()
+                    with submission.open("x", encoding="utf-8") as ledger:
+                        json.dump(
+                            {
+                                "original_sha256": original_sha256,
+                                "profile": row["profile"],
+                                "workspace_proof": workspace_proof,
+                            },
+                            ledger,
+                        )
                 commissioning = False
                 result.update(run_actor(cmd, row["query"], run_dir))
     except (OSError, ValueError, IndexError, KeyError, RuntimeError, TimeoutError) as exc:
@@ -348,7 +368,7 @@ def run_case(row, lane, receipts, codex, server, instance):
     return result
 
 
-def run_lane(lane, assigned, receipts, codex, server):
+def run_lane(lane, assigned, receipts, codex, server, *, project_workspace=False):
     from tools.experiments.live_editor_fixture.lane import request
 
     ping = request(lane, "ping")
@@ -359,6 +379,11 @@ def run_lane(lane, assigned, receipts, codex, server):
         or Path(ping["project_root"]).resolve() != (lane / "project").resolve()
     ):
         raise RuntimeError(f"Private editor identity unavailable for {lane.name}")
+    proof_name = None
+    if project_workspace:
+        proof = verify_project_scope(codex, lane / "project")
+        proof_name = f"{lane.name}-workspace-{proof['inside_marker_sha256']}.json"
+        write(receipts / proof_name, proof)
     inventories = {
         profile: asyncio.run(preflight(server, lane, instance, profile))
         for profile in ("core", "full")
@@ -367,7 +392,7 @@ def run_lane(lane, assigned, receipts, codex, server):
         raise RuntimeError("Core and full did not expose distinct expected inventories")
     write(receipts / (lane.name + "-inventories.json"), inventories)
     for row in assigned:
-        result = run_case(row, lane, receipts, codex, server, instance)
+        result = run_case(row, lane, receipts, codex, server, instance, workspace_proof=proof_name)
         print(
             row["id"],
             row["profile"],
@@ -393,6 +418,11 @@ def main():
     parser.add_argument("--case", action="append", help="Resume only the specified sealed case IDs")
     parser.add_argument("--codex", default="codex")
     parser.add_argument(
+        "--project-workspace",
+        action="store_true",
+        help="Verify a writable disposable Editor project and use it as the actor's workspace",
+    )
+    parser.add_argument(
         "--server",
         type=Path,
         default=Path(sys.executable).with_name(
@@ -412,6 +442,8 @@ def main():
             "An installed Codex CLI, production Unity MCP server and valid lane count are required"
         )
     fingerprint = actor_version(codex)
+    if args.project_workspace:
+        fingerprint["workspace"] = "owned_editor_project"
     record = root / "actor-version.json"
     if record.exists() and json.loads(record.read_bytes()) != fingerprint:
         raise RuntimeError("The actor executable or model settings changed within this run")
@@ -436,6 +468,7 @@ def main():
                         receipts,
                         codex,
                         args.server.resolve(),
+                        project_workspace=args.project_workspace,
                     )
                 )
         for future in futures:

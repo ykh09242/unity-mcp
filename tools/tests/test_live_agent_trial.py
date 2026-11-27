@@ -103,6 +103,22 @@ def test_profile_pairs_have_identical_originals_and_counterbalanced_order():
     assert 35 <= sum(pair[0]["profile"] == "core" for pair in pairs) <= 36
 
 
+def test_project_workspace_never_resubmits_an_uncertain_or_interrupted_turn(tmp_path):
+    row = {"id": "original", "query": "edit", "profile": "core"}
+    folder = tmp_path / row["id"]
+    folder.mkdir()
+    outcome = {"turn_started": True, "status": "timeout", "delivered": False, "attempts": [{}]}
+    receipt = folder / "row.json"
+    receipt.write_text(json.dumps(outcome))
+    args = row, tmp_path, tmp_path, "codex", "server", "owned"
+    assert trial.run_case(*args, workspace_proof="proof.json") == outcome
+    receipt.unlink()
+    (folder / "workspace-submission.json").write_text("{}")
+    with pytest.raises(RuntimeError, match="Already submitted"):
+        trial.run_case(*args, workspace_proof="proof.json")
+    assert list(folder.glob("attempt-*")) == []
+
+
 def test_actor_command_keeps_query_and_oracle_off_command_line(tmp_path):
     row = {"profile": "core", "task": "secret-scoring-task", "query": "各地的會議？"}
     cmd = trial.actor_command(
