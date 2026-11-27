@@ -11,8 +11,8 @@ from collections.abc import Callable, Collection, Mapping
 from copy import deepcopy
 from dataclasses import replace
 from functools import lru_cache
-from types import MappingProxyType, UnionType
-from typing import Annotated, Final, Literal, NotRequired, TypedDict, Union, get_args, get_origin
+from types import MappingProxyType
+from typing import Final, Literal, NotRequired, TypedDict, get_args, get_origin
 from urllib.parse import quote
 
 from mcp.types import ToolAnnotations
@@ -32,9 +32,11 @@ from services.operation_permissions import required_permissions
 from services.reference_graph.action_options import GRAPH_ACTION_OPTIONS
 from services.registry.action_contracts import (
     ACTION_RULES,
+    bind_parameter_scopes,
     declared_optional_parameters,
-    required_action_parameters,
     forbidden_action_parameters,
+    parameter_description,
+    required_action_parameters,
 )
 from services.registry.action_guidance_types import (
     ActionGuidance,
@@ -1538,17 +1540,6 @@ def browse_catalog(
     return response
 
 
-def _parameter_description(annotation):
-    """Recover published Annotated prose the SDK can omit beside other field metadata."""
-    if get_origin(annotation) in (Union, UnionType):
-        members = [member for member in get_args(annotation) if member is not type(None)]
-        if len(members) == 1:
-            return _parameter_description(members[0])
-    if get_origin(annotation) is Annotated:
-        return next((meta for meta in get_args(annotation)[1:] if isinstance(meta, str)), None)
-    return None
-
-
 def _describe_inputs(card, schema, function):
     """Highlight declared inputs; leave their full schema and cross-field conditions intact."""
     properties = schema.get("properties", {})
@@ -1598,7 +1589,7 @@ def _describe_inputs(card, schema, function):
         for name, param in inspect.signature(function, eval_str=True).parameters.items():
             field = fields.get(name)
             if isinstance(field, dict) and "description" not in field:
-                if description := _parameter_description(param.annotation):
+                if description := parameter_description(param.annotation):
                     fields[name] = {**field, "description": description}
     card["input_fields"] = fields
     excluded = {"action", "unity_instance", *card["forbidden_parameters"], *selected}
@@ -1637,6 +1628,7 @@ def describe_action(
         )
         action_schema.pop("default", None)
         properties["action"] = action_schema
+        bind_parameter_scopes(schema, operation)
         schema["required"] = list(
             dict.fromkeys([*schema.get("required", ()), "action", *card["required_parameters"]])
         )

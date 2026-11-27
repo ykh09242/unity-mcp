@@ -14,9 +14,12 @@ from pathlib import Path
 from typing import ParamSpec, TypeVar, get_args
 
 from mcp_types import CallToolResult
+from jsonschema import Draft202012Validator
 from pydantic import MISSING
 from pydantic_core import to_jsonable_python
 from pydantic.fields import FieldInfo
+from referencing import Registry
+from referencing.exceptions import Unresolvable
 
 from core.config import config
 from models.response_limits import response_size
@@ -30,6 +33,7 @@ from services.operation_permissions import (
     required_permissions,
 )
 from services.operation_policy import OperationMode, resolve_operation_policy
+from services.registry.action_contracts import conflicting_action_fields
 from services.registry.operation_context import active_operation, current_operation, scheduler
 from services.registry.operation_scheduler import (
     OperationAdmission,
@@ -322,6 +326,45 @@ async def _wait_for_pending_target(
             await asyncio.sleep(0.1)
 
 
+def _explain_rejected_fields(value, definition, params):
+    """Add a recovery hint to a handler's rejection when its output contract permits one."""
+    if isinstance(value, MCPResponse):
+        if value.success or value.hint:
+            return value
+    elif not isinstance(value, dict) or value.get("success") is not False or value.get("hint"):
+        return value
+    schema = getattr(definition, "parameters", None)
+    if not isinstance(schema, dict):
+        return value
+    conflicts = conflicting_action_fields(schema, params)
+    if not conflicts:
+        return value
+    hint = " ".join(
+        f"{item['field']} applies only to {', '.join(item['applies_to'])}." for item in conflicts
+    )
+    if isinstance(value, MCPResponse):
+        return value.model_copy(update={"hint": hint})
+    output = getattr(definition, "output_schema", None)
+    if output:
+        # In a plain dictionary each entry is independent. Validate only the new
+        # field, without revisiting unbounded response data or remote references.
+        if output.keys() - {
+            "type",
+            "additionalProperties",
+            "$defs",
+            "title",
+            "description",
+            "$schema",
+        }:
+            return value
+        try:
+            if not Draft202012Validator(output, registry=Registry()).is_valid({"hint": hint}):
+                return value
+        except (Unresolvable, RecursionError):
+            return value
+    return {**value, "hint": hint}
+
+
 def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> Callable:
     """Wrap once at registration; direct native senders retain their own admission."""
     signature = inspect.signature(function)
@@ -374,11 +417,14 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
         check_public_authority = None
         target = None
 
-        async def validate_enabled() -> None:
+        async def validate_enabled():
             server = getattr(ctx, "fastmcp", None)
             lookup = getattr(server, "get_tool", None)
-            if lookup is not None and await lookup(name) is None:
-                raise OperationScopeChanged()
+            if lookup is not None:
+                definition = await lookup(name)
+                if definition is None:
+                    raise OperationScopeChanged()
+                return definition
 
         async def call():
             from transport.command_resume import queued_origin
@@ -407,9 +453,9 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                 from transport.response_limit_middleware import prepare_raw_tool_result
 
                 return await prepare_raw_tool_result(value)
-            return value
+            return _explain_rejected_fields(value, definition, params) if trusted else value
 
-        await validate_enabled()
+        definition = await validate_enabled()
         if unity_target is None or ctx is None:
             return await call()
         from services.tools import get_unity_instance_from_context

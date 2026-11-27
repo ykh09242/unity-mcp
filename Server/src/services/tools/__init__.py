@@ -15,6 +15,7 @@ from services.registry.action_contracts import (
     ACTION_RULES,
     action_input_schema,
     parameter_conditions,
+    publish_parameter_scopes,
 )
 from services.registry.routing_schema import with_unity_instance
 from services.registry.response_schema import direct_object_output_schema
@@ -102,6 +103,7 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
             registered.parameters = with_search_request(
                 registered.parameters, managed=tool_name == "manage_tools"
             )
+        registered.parameters = publish_parameter_scopes(registered.parameters, func)
         if tool_name != "get_execution_receipt":
             registered.parameters = with_unity_instance(registered.parameters)
         mcp.add_tool(registered)

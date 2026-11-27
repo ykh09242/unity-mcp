@@ -1,11 +1,112 @@
 """Build calls using the current connection's public schema, before Unity dispatch."""
 
 import json
+from copy import deepcopy
+from typing import Annotated, Literal
 
 import pytest
 from fastmcp import Client
+from fastmcp.tools import FunctionTool
+from jsonschema import Draft202012Validator
 
 from core.config import config
+
+
+def test_unseen_family_keeps_identical_flat_and_selected_constraints():
+    from services.registry.action_contracts import (
+        bind_parameter_scopes,
+        conflicting_action_fields,
+        input_actions,
+        parameter_conditions,
+        publish_parameter_scopes,
+        required_for_actions,
+        used_by_actions,
+    )
+    from services.registry.call_preparation import prepare_tool_call
+
+    def sample(
+        action: Literal["locate", "measure"],
+        label: Annotated[str | None, required_for_actions("locate"), "Name in the source."] = None,
+        detail: Annotated[bool | int, input_actions("measure", inactive_value=False)] = False,
+        style: Annotated[str | None, used_by_actions("measure")] = None,
+    ) -> dict:
+        return {}
+
+    flat = publish_parameter_scopes(FunctionTool.from_function(sample).parameters, sample)
+    flat["allOf"] = parameter_conditions(flat)
+    bound = deepcopy(flat)
+    bind_parameter_scopes(bound, "locate")
+    assert bound["properties"]["label"]["description"].endswith("Name in the source.")
+    assert "default" not in bound["properties"]["label"]
+    assert "Used by measure" in flat["properties"]["style"]["description"]
+    assert "const" not in bound["properties"]["style"]
+    assert "const" not in flat["properties"]["detail"]
+    for args, allowed in [
+        ({"label": "point"}, True),
+        ({"label": "point", "detail": False, "style": "old"}, True),
+        ({"label": "point", "detail": 0}, False),
+        ({"label": None}, False),
+        ({}, False),
+    ]:
+        draft = {"action": "locate", **args}
+        assert Draft202012Validator(flat).is_valid(draft) is allowed
+        assert Draft202012Validator(bound).is_valid(draft) is allowed
+        result = prepare_tool_call("sample", bound, draft)
+        assert result["ready"] is allowed
+        if type(args.get("detail")) is int:
+            assert result["action_field_conflicts"] == [
+                {"field": "detail", "applies_to": ["measure"]}
+            ]
+    assert not conflicting_action_fields(flat, {"action": "locate", "detail": False})
+    # An existing constant remains in force even when Python treats it as equal
+    # to the selected neutral value (0 and false have different JSON types).
+    bound["properties"]["detail"]["const"] = 0
+    bind_parameter_scopes(bound, "locate")
+    assert not Draft202012Validator(bound["properties"]["detail"]).is_valid(False)
+    # A nullable ref need not expose a literal anyOf branch on the field.
+    referenced = {
+        "$defs": {"label": {"type": ["string", "null"]}},
+        "properties": {
+            "label": {"$ref": "#/$defs/label", "x-unity-mcp-required-for-actions": ["locate"]}
+        },
+    }
+    bind_parameter_scopes(referenced, "locate")
+    assert not Draft202012Validator(referenced).is_valid({"label": None})
+    assert Draft202012Validator(referenced).is_valid({"label": "landmark"})
+
+
+@pytest.mark.asyncio
+async def test_publication_covers_all_declared_action_scopes(server):
+    from services.registry import get_registered_tools
+    from services.registry.action_catalog import declared_actions, describe_action
+    from services.registry.action_contracts import required_action_parameters, scoped_parameters
+
+    entries = {entry["name"]: entry for entry in get_registered_tools()}
+    examined = set()
+    async with Client(server, mode="legacy") as client:
+        for definition in await client.list_tools():
+            schema = definition.input_schema
+            scopes = scoped_parameters(schema)
+            required = required_action_parameters(schema)
+            if not (scopes or required):
+                continue
+            entry = {**entries[definition.name], "input_schema": schema}
+            for action in declared_actions(entry):
+                contract = describe_action(entry, {"input_schema": schema}, action)
+                selected = contract["tool"]["input_schema"]
+                for name, actions in scopes.items():
+                    raw = schema["properties"][name]
+                    assert all(choice in raw["description"] for choice in actions)
+                    if action not in actions:
+                        field = selected["properties"][name]
+                        assert field["const"] == raw.get("x-unity-mcp-inactive-value")
+                        assert name not in contract["operation"]["input_fields"]
+                for name, actions in required.items():
+                    if action in actions:
+                        assert name in selected["required"]
+                        assert not Draft202012Validator(selected["properties"][name]).is_valid(None)
+            examined.add(definition.name)
+    assert len(examined) > 1
 
 
 @pytest.fixture
@@ -229,11 +330,18 @@ async def test_family_operations_offer_callable_input_contracts(server, mode):
                 "max_nodes",
             }
             schema = result["tool"]["input_schema"]
+            assert schema["properties"]["max_depth"]["const"] is None
+            assert schema["properties"]["strict_read"]["const"] is False
+            assert "Omit for get_hierarchy" in schema["properties"]["max_depth"]["description"]
             assert Draft202012Validator(schema).is_valid(
                 {"action": "get_hierarchy", "target": 17, "strict_read": False}
             )
 
         advertised = {t.name: t.input_schema for t in await client.list_tools()}
+        depth = advertised["manage_ugui"]["properties"]["max_depth"]
+        depth_actions = depth["x-unity-mcp-input-actions"]
+        assert f"Set only for {', '.join(depth_actions)}" in depth["description"]
+        assert "const" not in depth
         hierarchy = {"action": "get_hierarchy", "target": 17}
         for draft in (
             {"action": "get_hierarchy"},
@@ -247,6 +355,17 @@ async def test_family_operations_offer_callable_input_contracts(server, mode):
                 raise_on_error=False,
             )
             assert prepared.structured_content["ready"] is False
+            if "max_depth" in draft:
+                assert prepared.structured_content["action_field_conflicts"] == [
+                    {"field": "max_depth", "applies_to": depth_actions}
+                ]
+                response = await client.call_tool("manage_ugui", draft, raise_on_error=False)
+                assert response.is_error
+                assert response.structured_content["message"] == "invalid_projection_request"
+                assert (
+                    f"max_depth applies only to {', '.join(depth_actions)}"
+                    in response.structured_content["hint"]
+                )
         filtered = await client.call_tool(
             "search_unity_tools",
             {"selection": "agent", "family": "manage_ugui", "host_tool_names": ["manage_ugui"]},

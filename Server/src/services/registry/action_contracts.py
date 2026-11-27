@@ -2,8 +2,11 @@
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+import inspect
+from types import UnionType
+from typing import Annotated, Any, Union, get_args, get_origin
 
+from jsonschema import Draft202012Validator
 from pydantic import Field
 
 from services.action_inputs import INPUT_ACTION_REQUIRED, REFLECTION_REQUIRED, TERRAIN_REQUIRED
@@ -65,6 +68,93 @@ def required_action_parameters(schema):
         for name, field in schema.get("properties", {}).items()
         if isinstance(field, dict) and isinstance(field.get(_REQUIRED_ACTIONS), list)
     }
+
+
+def parameter_description(annotation):
+    """Recover Annotated prose the SDK can omit beside other field metadata."""
+    if get_origin(annotation) in (Union, UnionType):
+        members = [member for member in get_args(annotation) if member is not type(None)]
+        if len(members) == 1:
+            return parameter_description(members[0])
+    if get_origin(annotation) is Annotated:
+        return next((meta for meta in get_args(annotation)[1:] if isinstance(meta, str)), None)
+    return None
+
+
+def publish_parameter_scopes(schema, function):
+    """Keep action conditions visible to clients that render only individual fields."""
+    properties = schema.get("properties", {})
+    updated = {}
+    parameters = None
+    for name, field in properties.items():
+        if not isinstance(field, dict):
+            continue
+        notes = []
+        for key, prefix in (
+            (_INPUT_ACTIONS, "Set only for"),
+            (_REQUIRED_ACTIONS, "Required for"),
+            (_USED_ACTIONS, "Used by"),
+        ):
+            if actions := field.get(key):
+                notes.append(f"{prefix} {', '.join(actions)}.")
+        if notes:
+            description = field.get("description")
+            if not description:
+                if parameters is None:
+                    parameters = inspect.signature(function, eval_str=True).parameters
+                if name in parameters:
+                    description = parameter_description(parameters[name].annotation)
+            description = " ".join([*notes, description or ""]).rstrip()
+            updated[name] = {**field, "description": description}
+    return {**schema, "properties": {**properties, **updated}} if updated else schema
+
+
+def bind_parameter_scopes(schema, action):
+    """Project declared conditions onto a selected action without relaxing its wire schema."""
+    fields = schema.get("properties", {})
+    for name, actions in scoped_parameters(schema).items():
+        if action not in actions:
+            field = fields[name]
+            inactive = field.get(_INACTIVE_VALUE)
+            restriction = {"const": inactive}
+            # Intersect with the field's own constraints, including an existing constant.
+            if "const" in field:
+                restriction = {"allOf": [*field.get("allOf", ()), restriction]}
+            fields[name] = {**field, **restriction, "description": f"Omit for {action}."}
+    for name, actions in required_action_parameters(schema).items():
+        if action not in actions:
+            continue
+        field = dict(fields[name])
+        if field.get("default") is None:
+            field.pop("default", None)
+        if "anyOf" in field:
+            options = [option for option in field["anyOf"] if option != {"type": "null"}]
+            if options:
+                field["anyOf"] = options
+        # A referenced type or another composition may itself allow null.
+        # Keep the non-null rule local to the field as well as on the full request.
+        non_null = {"not": {"type": "null"}}
+        if "not" in field:
+            field["allOf"] = [*field.get("allOf", ()), non_null]
+        else:
+            field.update(non_null)
+        fields[name] = field
+
+
+def conflicting_action_fields(schema, arguments):
+    """Name submitted values that conflict with a declared action condition."""
+    action = arguments.get("action")
+    if not isinstance(action, str):
+        return []
+    return [
+        {"field": name, "applies_to": actions}
+        for name, actions in scoped_parameters(schema).items()
+        if name in arguments
+        and action not in actions
+        and not Draft202012Validator(
+            {"const": schema["properties"][name].get(_INACTIVE_VALUE)}
+        ).is_valid(arguments[name])
+    ]
 
 
 def parameter_conditions(schema):

@@ -8,6 +8,7 @@ from referencing import Registry
 from referencing.exceptions import Unresolvable
 
 from models.custom_tool_schema import SchemaContractError, bounded_json, validation_details
+from services.registry.action_contracts import conflicting_action_fields
 
 
 PAGE_SIZE = "x-unity-mcp-page-size"
@@ -148,6 +149,8 @@ def prepare_tool_call(
     except (Unresolvable, RecursionError):
         return not_prepared("The advertised input schema could not be resolved locally.")
     if details["validation_errors"]:
+        if conflicts := conflicting_action_fields(schema, args):
+            details["action_field_conflicts"] = conflicts
         return not_prepared("The draft does not satisfy this input schema.", **details)
 
     result = {
