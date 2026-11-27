@@ -13,10 +13,21 @@ from tools.experiments.verify_agent_outcome_holdout import canonical, require, s
 from tools.experiments.verify_agent_outcome_holdout_confirmation import STRICT_ZERO
 from tools.experiments.verify_compact_edit_confirmation import host_tool_calls
 from tools.experiments.verify_compact_edit_followup import disk_valid, read_pair
-from tools.experiments.verify_heartbeat_edit_confirmation import EDITOR_TARGET, verified_archives
+from tools.experiments.verify_heartbeat_edit_confirmation import (
+    CONNECTION_GUIDE,
+    EDITOR_TARGET,
+    verified_archives,
+)
 
 DIRECTORY = Path(__file__).resolve().parent
 PUBLISHED = "4cc9c82322d3875805b2a20fd2ba40b41f0a29f7488e56656d403fc15aa5a01a"
+STUDIES = {
+    PUBLISHED: ("editor_target_confirmation_results.json", EDITOR_TARGET),
+    "66583af47086d808cbde617dd604c36874fbd39162011cd199fb2ad9d2548102": (
+        "connection_guide_confirmation_results.json",
+        CONNECTION_GUIDE,
+    ),
+}
 
 
 def verify_private(data, request, root):
@@ -72,15 +83,30 @@ def verify_private(data, request, root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "report", nargs="?", type=Path, default=DIRECTORY / "korean_edit_confirmation_results.json"
+    )
     parser.add_argument("--private-root", type=Path)
+    parser.add_argument(
+        "--include-primary",
+        action="store_true",
+        help="Combine catalogs measured on the same product revision.",
+    )
     parser.add_argument("--require-perfect", action="store_true")
     args = parser.parse_args()
     request_path = DIRECTORY / "korean_edit_request.json"
     request = edit.read(request_path)
-    data = edit.read(DIRECTORY / "korean_edit_confirmation_results.json")
-    primary = edit.read(DIRECTORY / "editor_target_confirmation_results.json")
-    require(canonical(data) == PUBLISHED, "Published supplement changed")
-    require(data["primary_sha256"] == canonical(primary) == EDITOR_TARGET, "Primary study")
+    data = edit.read(args.report)
+    frozen = canonical(data)
+    require(frozen in STUDIES, "Unknown language supplement")
+    primary_file, expected = STUDIES[frozen]
+    primary = edit.read(DIRECTORY / primary_file)
+    require(data["primary_sha256"] == canonical(primary) == expected, "Primary study")
+    if frozen != PUBLISHED:
+        require(
+            data["product_pins"] == primary["runs"]["followup"]["product_pins"],
+            "Matched product revision",
+        )
     require(data["request_sha256"] == edit.digest(request_path.read_bytes()), "Frozen request")
     require(
         request["id"] not in primary["languages"]
@@ -110,7 +136,23 @@ def main():
             )
     if args.private_root:
         verify_private(data, request, args.private_root)
+    if args.include_primary:
+        run = primary["runs"]["followup"]
+        require(
+            data["product_pins"] == run["product_pins"],
+            "Cannot combine different product revisions",
+        )
+        rows = [*rows, *(row for panel in run["panels"].values() for row in panel["cases"])]
     totals = summary(rows)
+    for profile, counts in totals.items():
+        selected = [row for row in rows if row["profile"] == profile]
+        calls = [call for row in selected for call in row["calls"]]
+        document_reads = [row["calls"][i] for row in selected for i in row["skill_document_reads"]]
+        counts["tool_calls"] = sum(call["method"] == "tools/call" for call in calls)
+        counts["skill_document_reads"] = len(document_reads)
+        counts["failed_skill_document_reads"] = sum(
+            call["reply"] != "success" for call in document_reads
+        )
     print(json.dumps(totals, indent=2))
     if args.require_perfect and any(
         t["completed"] != t["scheduled"] or any(t[k] for k in STRICT_ZERO) for t in totals.values()
