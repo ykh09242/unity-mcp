@@ -52,9 +52,9 @@ from services.registry.call_preparation import MAX_ORIGINAL_REQUEST_LENGTH
 from services.registry.capability_catalog import CAPABILITIES, READ_ONLY_EFFECTS, CapabilityEffects
 from services.registry.editor_action_guidance import EDITOR_ACTIONS
 from services.registry.input_choices import (
+    advertised_actions,
     advertised_input_choices,
     local_definition,
-    selector_values,
 )
 from services.registry.integration_action_guidance import INTEGRATION_ACTIONS
 from services.registry.open_shader_graph_observation import OPEN_GRAPH_OBSERVATION
@@ -958,21 +958,19 @@ def _wire_variants(schema):
         if variant is False:
             continue
         body = variant if isinstance(variant, dict) else {}
-        selectors = selector_values(body.get("properties", {}).get("action"), definitions)
+        selectors = advertised_actions({**body, "$defs": definitions})
         yield path, body, selectors
 
 
 def declared_actions(entry: CatalogEntry) -> list[str]:
-    """Prefer bounded wire selectors, then registered capabilities and Python literals."""
-    schema = entry.get("input_schema", {})
-    definitions = schema.get("$defs", {})
-    direct = selector_values(schema.get("properties", {}).get("action"), definitions)
-    variants = [selectors for _, _, selectors in _wire_variants(schema)]
-    if variants and all(group is not None for group in variants):
-        selectors = list(dict.fromkeys(value for group in variants for value in group))
-        return [value for value in selectors if direct is None or value in direct]
-    if direct is not None:
-        return direct
+    """Prefer verified public selectors, with a registration fallback for open schemas."""
+    schema = entry.get("input_schema")
+    if isinstance(schema, dict):
+        return advertised_actions(schema, lambda: _registered_actions(entry)) or []
+    return _registered_actions(entry)
+
+
+def _registered_actions(entry: CatalogEntry) -> list[str]:
     if entry.get("wire_only"):
         return []
     capability = _CAPABILITIES.get(entry["name"])
