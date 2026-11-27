@@ -1,6 +1,6 @@
 ---
 name: unity-mcp-orchestrator
-description: Inspect and edit a connected Unity Editor. Open the packaged MCP guide with manage_tools(action="read_skill"). Open a local SKILL.md path with the host's file reader. Use for scene objects, assets, scripts and test jobs.
+description: Inspect and edit a connected Unity Editor, including scene objects, assets, scripts and test jobs. The connection's read_unity_resource tool opens its packaged operator guide with no arguments.
 ---
 
 # Unity MCP Operator
@@ -17,7 +17,7 @@ Operate the user's selected Unity project through the capabilities actually expo
 - Tests that must preserve an already-running game: [current Play state](references/workflows.md#tests-in-the-current-play-state).
 - Editable mesh topology with installed ProBuilder: [probuilder-guide.md](references/probuilder-guide.md).
 
-Load the reference needed for the request. A local path in the host's skill listing belongs to the host's skill loader or file reader. For the guide shipped by the MCP connection, call `manage_tools(action="read_skill")`. For another published file, follow its `read_tool` or `read_call` from `manage_tools(action="catalog", group="skills")`. Use the URI the connection publishes. Examples use logical tool names. Check the live schema for the selected binding.
+Load the reference needed for the request. On a connected Editor, call `read_unity_resource` with `{}` for its packaged guide. Older catalogs offer `manage_tools(action="read_skill")`. For another document, follow its `preferred_read_tool`, `read_tool` or `read_call` from `manage_tools(action="catalog", group="skills")`. Use the URI published by that connection. Open paths from the host's installed skill list with the host's file reader. Examples use logical tool names. Check the live schema for the selected binding.
 
 ## Keep Context Bounded
 

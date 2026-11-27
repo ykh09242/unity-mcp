@@ -20,7 +20,7 @@ selected action's input shapes and `input_variants` when present. Fields in
 `other_tool_parameters` have no confirmed membership in this action.
 A concrete resource's `read_call` contains its URI and project binding.
 Use `manage_tools(action="catalog", group="skills")` for skill files published on
-this connection. Invoke a catalog row's `read_tool` with its supplied arguments
+this connection. Invoke a row's `preferred_read_tool` or `read_tool` with its supplied arguments
 to receive the document through the current tool connection. Resource clients
 can follow the row's `read_call`, or use `resources/list` and pass the listed
 URI and applicable project selector to `resources/read`.
