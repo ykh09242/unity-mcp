@@ -23409,6 +23409,39 @@
                 "if": {
                   "properties": {
                     "action": {
+                      "const": "catalog"
+                    },
+                    "operation": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "operation"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "group": {
+                      "type": "null"
+                    },
+                    "operation": {
+                      "pattern": "\\S"
+                    },
+                    "tool": {
+                      "maxLength": 128,
+                      "pattern": "\\S",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "tool"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
                       "const": "prepare"
                     }
                   }
@@ -53480,6 +53513,39 @@
                       "maximum": 20
                     }
                   }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "catalog"
+                    },
+                    "operation": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "operation"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "group": {
+                      "type": "null"
+                    },
+                    "operation": {
+                      "pattern": "\\S"
+                    },
+                    "tool": {
+                      "maxLength": 128,
+                      "pattern": "\\S",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "tool"
+                  ]
                 }
               },
               {

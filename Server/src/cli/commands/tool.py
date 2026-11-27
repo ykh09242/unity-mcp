@@ -170,6 +170,7 @@ def search(
     help="Select a tool group, resources for fixed URIs, or resource_templates for parameterized Unity observations.",
 )
 @click.option("--tool", "tool_name", help="List actions of one exact tool.")
+@click.option("--operation", help="Select one declared action of --tool.")
 @click.option("--offset", type=click.IntRange(min=0), default=0, show_default=True)
 @click.option("--limit", type=click.IntRange(1, 20), default=20, show_default=True)
 @click.option(
@@ -178,7 +179,12 @@ def search(
     help="Browse classified actions of the selected tool or group.",
 )
 def catalog(
-    group: str | None, tool_name: str | None, offset: int, limit: int, intent: str | None
+    group: str | None,
+    tool_name: str | None,
+    operation: str | None,
+    offset: int,
+    limit: int,
+    intent: str | None,
 ) -> None:
     """Browse the complete offline catalog for agent semantic selection.
 
@@ -196,7 +202,12 @@ def catalog(
 
     try:
         request = CatalogRequest(
-            group=group, tool=tool_name, offset=offset, limit=limit, intent=intent
+            group=group,
+            tool=tool_name,
+            operation=operation,
+            offset=offset,
+            limit=limit,
+            intent=intent,
         )
         list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
         if request.includes_resources:

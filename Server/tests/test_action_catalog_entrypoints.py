@@ -21,6 +21,26 @@ def server(monkeypatch, request):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_catalog_selects_one_declared_operation_within_the_current_inventory(server, mode):
+    async with Client(server, mode=mode) as client:
+        before = {tool.name for tool in await client.list_tools()}
+        args = {"action": "catalog", "tool": "prefab_inspect", "operation": "get_hierarchy"}
+        page = (await client.call_tool("manage_tools", args)).structured_content
+        assert [row["action"] for row in page["actions"]] == ["get_hierarchy"]
+        assert page["total"] == 1 and page["next_offset"] is None
+        assert page["tool"]["advertised"] == ("prefab_inspect" in before)
+        for filters in ({"intent": "edit"}, {"offset": 1}):
+            other = (await client.call_tool("manage_tools", {**args, **filters})).structured_content
+            assert other["actions"] == []
+        unknown = (
+            await client.call_tool("manage_tools", {**args, "operation": "unpublished"})
+        ).structured_content
+        assert unknown["success"] is False
+        assert {tool.name for tool in await client.list_tools()} == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 async def test_discovery_caps_requested_pages_and_routes_unscoped_catalog_text(server, mode):
     async with Client(server, mode=mode) as client:
         before = {tool.name for tool in await client.list_tools()}
@@ -391,6 +411,22 @@ def test_cli_browses_offline_and_preserves_pagination(monkeypatch):
     assert payload["tool"]["advertised"] is None
     assert payload["next_offset"] == 2
     assert len(payload["actions"]) == 2
+    exact = CliRunner().invoke(
+        cli,
+        [
+            "--no-project-context",
+            "--format",
+            "json",
+            "tool",
+            "catalog",
+            "--tool",
+            "manage_shader",
+            "--operation",
+            "inspect_graph",
+        ],
+    )
+    assert exact.exit_code == 0, exact.output
+    assert [row["action"] for row in json.loads(exact.stdout)["actions"]] == ["inspect_graph"]
 
 
 @pytest.mark.parametrize(

@@ -436,6 +436,20 @@ async def search_unity_tools(
             "then": {"properties": {"limit": {"maximum": _MAX_DISCOVERY_PAGE}}},
         },
         {
+            "if": {
+                "required": ["operation"],
+                "properties": {"action": {"const": "catalog"}, "operation": {"type": "string"}},
+            },
+            "then": {
+                "required": ["tool"],
+                "properties": {
+                    "tool": {"type": "string", "pattern": r"\S", "maxLength": 128},
+                    "operation": {"pattern": r"\S"},
+                    "group": {"type": "null"},
+                },
+            },
+        },
+        {
             "if": {"properties": {"action": {"const": "prepare"}}},
             "then": {
                 "required": ["tool", "arguments"],
@@ -526,7 +540,7 @@ async def manage_tools(
     operation: Annotated[
         str | None,
         Field(min_length=1, max_length=128),
-        "For describe, omit to list catalog.actions. For describe or prepare, select an exact action from that list.",
+        "With an exact tool, select a declared action for catalog, describe or prepare. Omit to browse the tool.",
     ] = None,
     intent: Annotated[
         ActionIntent | None,
@@ -679,8 +693,8 @@ async def manage_tools(
         return {"success": False, "error": "selection and family are supported only for search."}
     if offset and action not in {"catalog", "search"}:
         return {"success": False, "error": "offset requires catalog or selection=agent search."}
-    if operation is not None and action != "describe":
-        return {"success": False, "error": "operation is supported only for describe."}
+    if operation is not None and action not in {"catalog", "describe"}:
+        return {"success": False, "error": "Select an operation with catalog, describe or prepare."}
     if include_schema and (action not in {"activate", "describe"} or not tool or group is not None):
         return {
             "success": False,
@@ -697,7 +711,12 @@ async def manage_tools(
             }
         try:
             request = CatalogRequest(
-                group=group, tool=tool, offset=offset, limit=limit, intent=intent
+                group=group,
+                tool=tool,
+                operation=operation,
+                offset=offset,
+                limit=limit,
+                intent=intent,
             )
             if request.group == "skills":
                 resources = await _catalog_resources(ctx, concrete_scheme="skill")

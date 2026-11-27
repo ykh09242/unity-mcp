@@ -62,6 +62,9 @@ async def test_preparation_keeps_validation_failures_and_host_filter_explicit(se
             ("manage_tools", {"action": "search", "query": "camera", "operation": "edit"}, {}),
             ("manage_tools", {"action": "activate", "group": "ui", "limit": 100}, {}),
             ("manage_tools", {"action": "catalog", "query": "camera", "group": "core"}, {}),
+            ("manage_tools", {"action": "catalog", "tool": " ", "operation": "read"}, {}),
+            ("manage_tools", {"action": "catalog", "tool": "x" * 129, "operation": "read"}, {}),
+            ("manage_tools", {"action": "catalog", "tool": "read_console", "operation": " "}, {}),
             (
                 "manage_tools",
                 {"action": "catalog", "query": "camera", "selection": "agent", "intent": "edit"},

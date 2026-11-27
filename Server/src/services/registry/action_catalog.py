@@ -1248,11 +1248,12 @@ class CatalogRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     group: StrictStr | None = Field(default=None, min_length=1, max_length=128)
     tool: StrictStr | None = Field(default=None, min_length=1, max_length=128)
+    operation: StrictStr | None = Field(default=None, min_length=1, max_length=128)
     intent: ActionIntent | None = None
     offset: StrictInt = Field(default=0, ge=0)
     limit: StrictInt = Field(default=20, ge=1, le=20)
 
-    @field_validator("group", "tool")
+    @field_validator("group", "tool", "operation")
     @classmethod
     def nonempty_selector(cls, value: str | None) -> str | None:
         if value is not None:
@@ -1263,6 +1264,8 @@ class CatalogRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_scope(self):
+        if self.operation is not None and self.tool is None:
+            raise ValueError("Select one exact catalog tool to inspect an operation.")
         if self.intent and self.includes_resources:
             raise ValueError("Select a tool or tool group to browse actions by intent.")
         if self.group is not None and self.tool is not None:
@@ -1270,6 +1273,13 @@ class CatalogRequest(BaseModel):
         if self.group is None and self.tool is None and self.offset:
             raise ValueError("The complete group index uses offset 0.")
         return self
+
+    def select_operations(self, actions: list[str]) -> list[str | None]:
+        if self.operation is None:
+            return list(actions) or [None]
+        if self.operation not in actions:
+            raise ValueError(f"Unknown operation {self.operation!r} on {self.tool!r}.")
+        return [self.operation]
 
     @property
     def includes_resources(self) -> bool:
@@ -1406,7 +1416,7 @@ def browse_catalog(
         candidates = []
         for entry in selected:
             summary = tool_capability(entry, visible_names=visible_names)
-            for operation in summary["actions"] or [None]:
+            for operation in request.select_operations(summary["actions"]):
                 if action_intent(action_guidance(entry, operation), summary) == request.intent:
                     candidates.append((entry, operation, summary["advertised"]))
         response.update(view="intent_actions", group=request.group, intent=request.intent)
@@ -1473,7 +1483,7 @@ def browse_catalog(
         response["tool"] = tool_capability(entry, visible_names=visible_names)
         # Retain action-specific constraints anywhere in the declared description.
         response["tool"]["description"] = tool_description(entry)
-        actions = declared_actions(entry) or [None]
+        actions = request.select_operations(declared_actions(entry))
         total = len(actions)
         rows = [
             action_card(entry, action)
