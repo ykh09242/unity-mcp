@@ -49,6 +49,8 @@ READ_ONLY = {
     # Reads the existing Shader Graph window's backing fields and never opens or saves an asset.
     "inspect_open_shader_graph",
     "inspect_editor_state",
+    # Serves immutable guide bytes or registered observation callbacks. Getter execution is rejected.
+    "read_unity_resource",
     "inspect_scene_cameras",
     "list_menu_declarations",
     "inspect_ugui_hit_order",
