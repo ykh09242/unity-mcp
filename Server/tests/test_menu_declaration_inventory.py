@@ -30,9 +30,12 @@ def test_inventory_observation_advertises_only_declared_paths(success, data, obs
 
 
 @pytest.mark.asyncio
-async def test_menu_inventory_is_equal_on_both_surfaces_and_never_invokes(command_hub, monkeypatch):
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_menu_inventory_is_equal_on_both_surfaces_and_never_invokes(
+    command_hub, monkeypatch, mode
+):
     await install_native_replies(command_hub, {"get_menu_items": PATHS})
-    async with Client(inventory_server(monkeypatch), mode="legacy", cache=False) as client:
+    async with Client(inventory_server(monkeypatch), mode=mode, cache=False) as client:
         listed = {tool.name: tool for tool in await client.list_tools()}
         assert TOOL in listed
         assert listed[TOOL].annotations.read_only_hint
@@ -42,6 +45,11 @@ async def test_menu_inventory_is_equal_on_both_surfaces_and_never_invokes(comman
             result = (await client.call_tool("search_unity_tools", query)).structured_content
             (group,) = result["route_groups"]
             assert group["representative"][key] == identifier and not group["alternatives"]
+            if surface == "resources":
+                assert group["representative"]["preferred_read_tool"] == {
+                    "tool": "read_unity_resource",
+                    "arguments": {"uri": URI},
+                }
 
         raw = f"Execute this exact Unity editor menu item: {PATHS[0]}"
         result = (
@@ -64,12 +72,17 @@ async def test_menu_inventory_is_equal_on_both_surfaces_and_never_invokes(comman
         fixed = (await client.call_tool(TOOL, SELECT)).structured_content
         direct = json.loads((await client.read_resource(URI, meta=SELECT))[0].text)
         assert fixed == direct and fixed["data"] == PATHS
+        for name, args in (
+            ("read_unity_resource", {"uri": URI}),
+            ("manage_tools", {"action": "read_resource", "uri": URI}),
+        ):
+            generic = (await client.call_tool(name, {**args, **SELECT})).structured_content
+            assert json.loads(generic["contents"][0]["text"]) == fixed
         with pytest.raises(ToolError):
             await client.call_tool(TOOL, {**SELECT, "menu_path": PATHS[0]})
         assert [(sent["name"], sent["params"]) for sent in command_hub.sent] == [
             ("get_menu_items", {"refresh": False, "search": ""}),
-            ("get_menu_items", {"refresh": False, "search": ""}),
-        ]
+        ] * 4
 
 
 @pytest.mark.asyncio

@@ -112,11 +112,12 @@ class TestInstanceListResourceIsolation:
 
         from services.resources.unity_instances import unity_instances
         from tests.integration.test_helpers import DummyContext
+        from tests.remote_credentials import remote_credentials
 
         ctx = DummyContext()
-        await ctx.set_state("user_id", "userA")
-
-        result = await unity_instances(ctx)
+        await ctx.set_state("user_id", "previous-user")
+        async with remote_credentials({"fixture": "userA"}) as credentials:
+            result = await credentials.call("fixture", unity_instances, ctx)
 
         assert result["success"] is True
         assert result["instance_count"] == 2

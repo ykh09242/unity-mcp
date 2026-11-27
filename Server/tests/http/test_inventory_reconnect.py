@@ -15,6 +15,7 @@ from services.credential_lease import bind_credential_lease, CredentialLeaseErro
 from services.resources import register_all_resources
 from services.resources.unity_instances import unity_instances
 from services.tools.manage_tools import manage_tools
+from services.tools.read_unity_resource import read_unity_resource
 from services.tools.set_active_instance import set_active_instance
 from tests.http.test_remote_permissions import permission_service
 from tests.integration.test_helpers import DummyContext
@@ -32,6 +33,7 @@ async def test_tools_only_editor_inventory_uses_the_connections_resource(command
     app.add_middleware(UnityInstanceMiddleware())
     register_all_resources(app)
     app.tool(name="manage_tools")(manage_tools)
+    app.tool(read_unity_resource)
     await command_hub.registry.register("second", "Second", "other", "6000.3")
     async with Client(app, mode=mode, cache=False) as client:
         # A host may expose callable tools while omitting its resource browser.
@@ -44,6 +46,12 @@ async def test_tools_only_editor_inventory_uses_the_connections_resource(command
         ).structured_content
         resource = json.loads((await client.read_resource("mcpforunity://instances"))[0].text)
         assert result == resource and result["success"]
+        for tool, arguments in (
+            ("read_unity_resource", {"uri": "mcpforunity://instances"}),
+            ("manage_tools", {"action": "read_resource", "uri": "mcpforunity://instances"}),
+        ):
+            observed = (await client.call_tool(tool, arguments)).structured_content
+            assert json.loads(observed["contents"][0]["text"]) == resource
         assert {row["id"] for row in result["instances"]} == {"Fixture@hash", "Second@other"}
         scoped = await client.call_tool(
             "manage_tools",
@@ -57,6 +65,48 @@ async def test_tools_only_editor_inventory_uses_the_connections_resource(command
             await client.call_tool("manage_tools", {"action": "list_instances"})
         ).structured_content
         assert empty["success"] and empty["instance_count"] == 0 and empty["instances"] == []
+        observed = await client.call_tool("read_unity_resource", {"uri": "mcpforunity://instances"})
+        assert json.loads(observed.structured_content["contents"][0]["text"]) == empty
+    assert command_hub.sent == []
+
+
+@pytest.mark.asyncio
+async def test_pushed_editor_state_keeps_native_read_grants_on_both_leases(
+    command_hub, monkeypatch
+):
+    import time
+    from services.operation_permissions import OperationPermissionError
+    from tests.test_editor_state_store import message
+    from transport.plugin_hub import PluginHub
+    from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
+
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    await command_hub.registry.unregister("session")
+    await command_hub.registry.register("session", "Fixture", "hash", "6000", user_id="alice")
+    socket = command_hub.websocket
+    socket.state.user_id = "alice"
+    socket.state.plugin_features = frozenset({"editor_state_v1"})
+    now = int(time.time() * 1000)
+    PluginHub._editor_states.register_session("session", "alice")
+    assert PluginHub._editor_states.accept("session", message(observed=now))
+    async with permission_service(
+        monkeypatch,
+        {
+            "reader": {"unity_mcp_permissions": ["read"]},
+            "editor": {"unity_mcp_permissions": ["edit"]},
+        },
+    ) as fixture:
+        reader = (await fixture.service.validate("reader")).lease
+        editor = (await fixture.service.validate("editor")).lease
+        for requester, plugin in ((reader, reader), (reader, editor), (editor, reader)):
+            setattr(socket.state, AUTHENTICATED_LEASE_STATE, plugin)
+            with bind_credential_lease(requester):
+                if requester is reader and plugin is reader:
+                    state = await PluginHub.get_cached_editor_state("Fixture@hash", user_id="alice")
+                    assert state["sequence"] == 1
+                else:
+                    with pytest.raises(OperationPermissionError):
+                        await PluginHub.get_cached_editor_state("Fixture@hash", user_id="alice")
     assert command_hub.sent == []
 
 
@@ -229,3 +279,72 @@ async def test_read_instances_checks_authority_and_ignores_stale_project_and_pri
     assert await middleware.get_active_instance(ctx) == "Offline@offline"
     assert await ctx.get_state("unity_session_id") is None
     assert await ctx.get_state("user_id") == "alice"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_general_connection_inventory_needs_only_the_requesters_read_grant(
+    command_hub, monkeypatch, mode
+):
+    from mcp.shared.exceptions import MCPError
+    from fastmcp.exceptions import ToolError
+    from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
+
+    app = FastMCP("hosted instance discovery")
+    middleware = UnityInstanceMiddleware()
+    app.add_middleware(middleware)
+    register_all_resources(app)
+    app.tool(manage_tools)
+    app.tool(set_active_instance)
+    app.tool(read_unity_resource)
+    monkeypatch.setattr(
+        "transport.unity_instance_middleware._unity_instance_middleware", middleware
+    )
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    await command_hub.registry.unregister("session")
+    await command_hub.registry.register("session", "Fixture", "hash", "6000", user_id="alice")
+    await command_hub.registry.register("private", "Other", "other", "6000", user_id="bob")
+    grants = {
+        "reader": {"unity_mcp_permissions": ["read"]},
+        "editor": {"unity_mcp_permissions": ["edit"]},
+    }
+    async with permission_service(monkeypatch, grants) as fixture:
+        reader = (await fixture.service.validate("reader")).lease
+        editor = (await fixture.service.validate("editor")).lease
+        command_hub.websocket.state.user_id = "alice"
+        setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, reader)
+        async with Client(app, mode=mode, cache=False) as client:
+            if mode == "legacy":
+                with bind_credential_lease(reader):
+                    saved = await client.call_tool(
+                        "set_active_instance", {"instance": "Fixture@hash"}
+                    )
+                    assert saved.structured_content["success"]
+            setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, editor)
+            uri = "mcpforunity://instances"
+            for name, args in (
+                ("manage_tools", {"action": "read_resource", "uri": uri}),
+                ("read_unity_resource", {"uri": uri}),
+            ):
+                with bind_credential_lease(reader):
+                    enumerated = await client.call_tool(
+                        "manage_tools", {"action": "list_instances"}
+                    )
+                    actual = await client.call_tool(name, args)
+                    payload = json.loads(actual.structured_content["contents"][0]["text"])
+                    assert payload == enumerated.structured_content
+                    assert [row["id"] for row in payload["instances"]] == ["Fixture@hash"]
+                    with pytest.raises((MCPError, ToolError)):
+                        await client.call_tool(name, {**args, "unity_instance": "Other@other"})
+                    with pytest.raises((MCPError, ToolError)):
+                        await client.call_tool(
+                            name,
+                            {
+                                **args,
+                                "uri": "mcpforunity://menu-items",
+                                "unity_instance": "Fixture@hash",
+                            },
+                        )
+                with bind_credential_lease(editor), pytest.raises((MCPError, ToolError)):
+                    await client.call_tool(name, args)
+    assert command_hub.sent == []

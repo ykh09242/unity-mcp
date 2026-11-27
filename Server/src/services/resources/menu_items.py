@@ -20,6 +20,8 @@ class GetMenuItemsResponse(MCPResponse):
 @mcp_for_unity_resource(
     uri=MENU_DECLARATIONS_URI,
     name="menu_items",
+    catalog_observation=True,
+    read_scope="editor",
     inventory_reader=MENU_DECLARATIONS_TOOL,
     meta={
         OBSERVATION_META: MENU_INVENTORY_OBSERVATION,

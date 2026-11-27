@@ -231,6 +231,8 @@ async def test_legacy_instance_diagnostics_preserve_user_scoping_and_errors(
     caplog: pytest.LogCaptureFixture,
     failed: bool,
 ) -> None:
+    from tests.remote_credentials import remote_credentials
+
     monkeypatch.setattr(config, "transport_mode", "http")
     monkeypatch.setattr(config, "http_remote_hosted", True)
     sessions = SimpleNamespace(
@@ -257,8 +259,13 @@ async def test_legacy_instance_diagnostics_preserve_user_scoping_and_errors(
         return result
 
     caplog.set_level(logging.INFO, logger="mcp-for-unity-server")
-    async with Client(server, mode="legacy") as client:
-        result = (await client.call_tool("instance_probe")).structured_content
+    async with (
+        remote_credentials({"fixture": "owned-user"}) as credentials,
+        Client(server, mode="legacy") as client,
+    ):
+        result = (
+            await credentials.call("fixture", client.call_tool, "instance_probe")
+        ).structured_content
 
     assert result["success"] is not failed
     assert result["instance_count"] == (0 if failed else 1)

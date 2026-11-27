@@ -17,6 +17,8 @@ class LayersResponse(MCPResponse):
 @mcp_for_unity_resource(
     uri="mcpforunity://project/layers",
     name="project_layers",
+    catalog_observation=True,
+    read_scope="editor",
     description=(
         "List the name and number of every named layer in the project. "
         "The result maps layer indices (0-31) to names and omits unused slots."

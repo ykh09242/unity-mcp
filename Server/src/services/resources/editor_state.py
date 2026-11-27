@@ -461,6 +461,8 @@ def _enrich_advice_and_staleness(
 @mcp_for_unity_resource(
     uri="mcpforunity://editor/state",
     name="editor_state",
+    catalog_observation=True,
+    read_scope="editor",
     meta={OBSERVATION_META: EDITOR_STATE_OBSERVATION},
     description=(
         "Read current Play Mode, active scene, compilation and Editor readiness. Includes advice, server-computed staleness, "

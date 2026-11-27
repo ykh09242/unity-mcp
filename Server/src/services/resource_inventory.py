@@ -2,6 +2,7 @@
 
 import json
 from types import FunctionType
+from typing import NamedTuple
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 from weakref import WeakKeyDictionary
@@ -34,7 +35,16 @@ class PublishedSnapshotResource(Resource):
 
 
 _observation_callbacks = WeakKeyDictionary()
+
+
+class _ObservationOwner(NamedTuple):
+    binding: Resource | ResourceTemplate
+    scope: str | None
+
+
+_observation_owners = WeakKeyDictionary()
 CATALOG_READ = "manage_tools.read_resource"
+_EDITOR_READ = "selected_editor_observation"
 _PACKAGED_GUIDE = "packaged_guide"
 _packaged_guides = WeakKeyDictionary()
 
@@ -45,7 +55,14 @@ def register_packaged_guide(server: FastMCP, guide: PublishedSnapshotResource) -
 
 
 def register_catalog_observation(
-    server: FastMCP, uri: str, callback, *, readers=(CATALOG_READ,), **options
+    server: FastMCP,
+    uri: str,
+    callback,
+    *,
+    readers=(CATALOG_READ,),
+    inventory_reader=None,
+    read_scope: str | None = None,
+    **options,
 ) -> None:
     """Record the SDK's exact serving callback at trusted application registration."""
     if "{" in uri:
@@ -55,9 +72,34 @@ def register_catalog_observation(
         descriptor = FunctionResource.from_function(callback, uri, **options)
         server.add_resource(descriptor)
     callbacks = _observation_callbacks.setdefault(server, WeakKeyDictionary())
+    if read_scope is not None or inventory_reader:
+        versions = _observation_owners.setdefault(server, {}).setdefault(uri, {})
+        versions[descriptor.key] = _ObservationOwner(descriptor.model_copy(), read_scope)
+    if inventory_reader:
+        readers = {*readers, inventory_reader}
+    if read_scope == "editor":
+        readers = {*readers, _EDITOR_READ}
     callbacks.setdefault(descriptor.fn, set()).update(
         (descriptor.key, reader) for reader in readers
     )
+
+
+def connection_inventory(server: FastMCP, uri: object) -> bool:
+    if not isinstance(server, FastMCP) or not isinstance(uri, str):
+        return False
+    versions = _observation_owners.get(server, {}).get(uri)
+    return bool(versions) and all(owner.scope == "connection" for owner in versions.values())
+
+
+def connection_inventory_call(server: FastMCP, name: str, params: dict) -> bool:
+    """Select identity-only routing only for the registered connection inventory."""
+    if name == "manage_tools" and params.get("action") == "list_instances":
+        return True
+    return (
+        name == "read_unity_resource"
+        or name == "manage_tools"
+        and params.get("action") == "read_resource"
+    ) and connection_inventory(server, params.get("uri"))
 
 
 def catalog_observation(
@@ -65,13 +107,23 @@ def catalog_observation(
 ) -> bool:
     if reader == _PACKAGED_GUIDE:
         return same_resource_binding(_packaged_guides.get(server), binding)
+    # A safe static substitute or an unrelated observation cannot speak for a
+    # registered inventory after readers have discovered that URI's authority.
+    uri = str(binding.uri) if isinstance(binding, Resource) else binding.uri_template
+    versions = _observation_owners.get(server, {}).get(uri)
+    if versions is not None:
+        owner = versions.get(binding.key)
+        if owner is None or not same_resource_binding(owner.binding, binding):
+            return False
     if reader == CATALOG_READ and type(binding) in (TextResource, PublishedSnapshotResource):
         return True
-    return (
-        type(binding) in (FunctionResource, FunctionResourceTemplate)
-        and type(binding.fn) is FunctionType
-        and (binding.key, reader) in _observation_callbacks.get(server, {}).get(binding.fn, ())
-    )
+    if (
+        type(binding) not in (FunctionResource, FunctionResourceTemplate)
+        or type(binding.fn) is not FunctionType
+    ):
+        return False
+    admitted = _observation_callbacks.get(server, {}).get(binding.fn, ())
+    return (binding.key, reader) in admitted
 
 
 def observation_uri_allowed(uri: str) -> bool:
@@ -176,7 +228,7 @@ async def read_listed_resource(
     server = ctx.fastmcp
     with internal_resource_read(server, uri, instance):
         await server._check_resource_access(uri)
-        return await _read_observation(server, uri, label, allow_templates, reader)
+        return await _read_observation(server, uri, label, allow_templates, reader, instance)
 
 
 async def read_published_document(
@@ -213,7 +265,7 @@ async def _listed_binding(
             published = selected is not None and any(
                 same_resource_binding(selected, listed) for listed in await server.list_resources()
             )
-        elif allow_templates:
+        elif allow_templates and uri not in _observation_owners.get(server, {}):
             selected = await server.get_resource_template(uri)
             published = selected is not None and any(
                 same_resource_binding(selected, listed)
@@ -227,7 +279,7 @@ async def _listed_binding(
 
 
 async def _read_observation(
-    server: FastMCP, uri: str, label: str, allow_templates: bool, reader: str
+    server: FastMCP, uri: str, label: str, allow_templates: bool, reader: str, instance: str | None
 ) -> ResourceResult:
     """Use native read middleware with the admitted descriptor pinned through dispatch."""
     native = "Use native resources/read for this resource or its requested options."
@@ -240,6 +292,10 @@ async def _read_observation(
         selected = await _listed_binding(server, uri, label, allow_templates)
         if not catalog_observation(server, selected, reader):
             raise AuthorizationError(native)
+        if catalog_observation(server, selected, _EDITOR_READ):
+            current = await context.fastmcp_context.get_state("unity_instance")
+            if not instance or instance != current:
+                raise AuthorizationError("Select a Unity instance to read this observation")
         if isinstance(selected, Resource):
             return await selected._read()
         # The SDK ignores undeclared query options, fragments and repeated scalar

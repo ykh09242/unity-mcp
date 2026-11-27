@@ -24,6 +24,7 @@ from pydantic import Field, ValidationError
 from transport.protocol import internal_catalog, internal_resource_catalog, is_sessionless
 
 from models.host_tool_inventory import HostToolEvidence, HostToolNames, input_schema_digest
+from services.resource_inventory import connection_inventory, connection_inventory_call
 from services.registry import (
     mcp_for_unity_tool,
     TOOL_GROUPS,
@@ -208,6 +209,7 @@ async def _resource_readers(ctx: Context, request=None) -> set[str]:
 
 
 def _bind_resource_read(
+    ctx: Context,
     row: dict,
     project: dict[str, str],
     *,
@@ -241,6 +243,8 @@ def _bind_resource_read(
             )
         return
     uri = row["uri"]
+    if connection_inventory(ctx.fastmcp, uri):
+        project = {}
     row["read_call"] = _resource_read_call(uri, project)
     if uri not in observations:
         return
@@ -456,7 +460,9 @@ async def search_unity_tools(
                 ):
                     binding["invoke"]["arguments"].update(project)
             if binding["kind"] in {"resource", "resource_template"}:
-                _bind_resource_read(binding, project, readers=readers, observations=observations)
+                _bind_resource_read(
+                    ctx, binding, project, readers=readers, observations=observations
+                )
                 if binding["kind"] == "resource_template":
                     binding["input_contract"] = RESOURCE_TEMPLATE_EXPANSION
         return outcome
@@ -468,7 +474,7 @@ async def search_unity_tools(
         project = await _retry_project_binding(ctx)
         readers = await _resource_readers(ctx, request)
         for row in resource_rows:
-            _bind_resource_read(row, project, readers=readers, observations=observations)
+            _bind_resource_read(ctx, row, project, readers=readers, observations=observations)
     if (
         outcome["matching"] == "observation"
         and "no_match" in outcome
@@ -932,7 +938,7 @@ async def manage_tools(
                 readers = await _resource_readers(ctx) if observations else set()
                 for item in page["skills"]:
                     _bind_resource_read(
-                        item, project, readers=readers, observations=observations, skill=True
+                        ctx, item, project, readers=readers, observations=observations, skill=True
                     )
                 return page
             if request.query is not None and not request.includes_resources:
@@ -960,6 +966,7 @@ async def manage_tools(
                     readers = await _resource_readers(ctx) if observations else set()
                     for item in page[request.group]:
                         _bind_resource_read(
+                            ctx,
                             item,
                             project,
                             readers=readers,
@@ -1298,7 +1305,9 @@ async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=
     )
     project = (await _retry_project_binding(ctx)).get("unity_instance")
     selector = selected_action if operation is not None else draft.get("action")
-    if "unity_instance" in forbidden_action_parameters(name if func else None, selector, schema):
+    if "unity_instance" in forbidden_action_parameters(
+        name if func else None, selector, schema
+    ) or (func and connection_inventory_call(ctx.fastmcp, name, {**draft, "action": selector})):
         if draft.get("unity_instance") is not None:
             return not_prepared("This operation does not accept a target unity_instance.")
         project = None

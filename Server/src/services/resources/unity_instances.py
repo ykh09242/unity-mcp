@@ -7,6 +7,8 @@ import logging
 from typing import Any
 
 from fastmcp import Context
+from services.credential_lease import require_credential_lease
+from services.operation_permissions import authorize_resource
 from services.registry import mcp_for_unity_resource
 from transport.legacy.unity_connection import get_unity_connection_pool, run_discovery
 from transport.plugin_hub import PluginHub
@@ -18,7 +20,9 @@ logger = logging.getLogger("mcp-for-unity-server")
 @mcp_for_unity_resource(
     uri="mcpforunity://instances",
     name="unity_instances",
+    catalog_observation=True,
     inventory_reader="manage_tools.list_instances",
+    read_scope="connection",
     description="Lists all running Unity Editor instances with their details.\n\nURI: mcpforunity://instances",
 )
 async def unity_instances(ctx: Context) -> dict[str, Any]:
@@ -40,14 +44,15 @@ async def unity_instances(ctx: Context) -> dict[str, Any]:
         Dictionary containing list of instances and metadata
     """
     logger.info("Listing Unity instances")
-
+    lease = await require_credential_lease() if config.http_remote_hosted else None
+    if lease is not None:
+        authorize_resource(lease.permissions)
     try:
         transport = (config.transport_mode or "stdio").lower()
-        if transport == "http":
-            # HTTP/WebSocket transport: query PluginHub
-            # In remote-hosted mode, filter sessions by user_id
-            user_id = (await ctx.get_state("user_id")) if config.http_remote_hosted else None
-            sessions_data = await PluginHub.get_sessions(user_id=user_id)
+        if transport == "http" or lease is not None:
+            sessions_data = await PluginHub.get_sessions(user_id=lease.user_id if lease else None)
+            if lease is not None:
+                await lease.check()
             sessions = sessions_data.sessions
 
             instances = []

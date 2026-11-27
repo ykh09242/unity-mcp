@@ -84,9 +84,15 @@ def register_all_resources(mcp: FastMCP, *, project_scoped_tools: bool = True):
             from services.resource_inventory import CATALOG_READ, register_catalog_observation
 
             readers = {CATALOG_READ} if resource_info.get("catalog_observation") else set()
-            if reader := resource_info.get("inventory_reader"):
-                readers.add(reader)
-            register_catalog_observation(mcp, uri, wrapped, readers=readers, **options)
+            register_catalog_observation(
+                mcp,
+                uri,
+                wrapped,
+                readers=readers,
+                inventory_reader=resource_info.get("inventory_reader"),
+                read_scope=resource_info.get("read_scope"),
+                **options,
+            )
         else:
             mcp.resource(uri, **options)(wrapped)
         logger.debug(f"Registered resource: {resource_name} - {uri}")

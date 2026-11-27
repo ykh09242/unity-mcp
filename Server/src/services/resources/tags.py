@@ -18,6 +18,8 @@ class TagsResponse(MCPResponse):
 @mcp_for_unity_resource(
     uri="mcpforunity://project/tags",
     name="project_tags",
+    catalog_observation=True,
+    read_scope="editor",
     description="List the names of all tags currently defined in the project.",
 )
 async def get_tags(ctx: Context) -> TagsResponse | MCPResponse:

@@ -1718,6 +1718,8 @@ class PluginHub(WebSocketEndpoint):
         if cls._registry is None or cls._lock is None:
             return None
         requester = await require_credential_lease(user_id) if config.http_remote_hosted else None
+        if requester is not None:
+            user_id = requester.user_id
         try:
             session_id = await cls._resolve_session_id(
                 unity_instance, user_id=user_id, retry_on_reload=False
@@ -1736,6 +1738,12 @@ class PluginHub(WebSocketEndpoint):
                 return None
             if websocket is None or not cls._supports(websocket, "editor_state_v1"):
                 return None
+            if requester is not None:
+                plugin = cls._socket_lease(websocket)
+                if plugin is None or plugin.user_id != requester.user_id:
+                    raise CredentialLeaseError()
+                for authority in (requester, plugin):
+                    authorize_operation(authority.permissions, "get_editor_state", {}, native=True)
             if (
                 websocket.application_state != WebSocketState.CONNECTED
                 or websocket.client_state != WebSocketState.CONNECTED

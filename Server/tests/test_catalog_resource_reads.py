@@ -639,15 +639,16 @@ async def test_fixed_inventory_adapters_pin_the_registered_owner(
         assert {tool for tool, _ in calls.values()} <= initial
         for uri, (tool, args) in calls.items():
             target = {} if tool == "manage_tools" else {"unity_instance": "Fixture@hash"}
-            # These owners were registered only for their fixed inventory operations.
             if replacement_time == "before_call":
-                generic = await client.call_tool(
-                    "manage_tools",
-                    {"action": "read_resource", "uri": uri, **target},
-                    raise_on_error=False,
-                )
-                assert generic.is_error
                 replace(uri)
+            for name, arguments in (
+                ("manage_tools", {"action": "read_resource", "uri": uri}),
+                ("read_unity_resource", {"uri": uri}),
+            ):
+                generic = await client.call_tool(
+                    name, {**arguments, **target}, raise_on_error=False
+                )
+                assert generic.is_error and uri not in reads
             denied = await client.call_tool(tool, {**args, **target}, raise_on_error=False)
             assert denied.is_error and uri not in reads
             native = await client.read_resource(uri, meta=target)
@@ -661,8 +662,150 @@ async def test_fixed_inventory_adapters_pin_the_registered_owner(
             "manage_tools", {"action": "list_instances"}, raise_on_error=False
         )
         assert refused.is_error
+        for uri in calls:
+            app.add_resource(TextResource(uri=uri, text="unrelated replacement"))
+            refused = await client.call_tool(
+                "read_unity_resource", {"uri": uri}, raise_on_error=False
+            )
+            assert refused.is_error
     assert reads == list(calls)
     assert command_hub.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_published_project_inventories_follow_the_selected_editor(
+    command_hub, monkeypatch, mode
+):
+    from fastmcp.resources import TextResource
+    from tests.http.test_project_capabilities import install_native_replies
+    from tests.test_camera_inventory_tool import inventory_server
+
+    selected = {"unity_instance": "Fixture@hash"}
+    uri = "mcpforunity://editor/state"
+    await install_native_replies(
+        command_hub,
+        {
+            "get_editor_state": {"sequence": 19, "compilation": {"is_compiling": False}},
+            "get_tags": ["Player"],
+            "get_layers": {"6": "Fixture"},
+        },
+    )
+    server = inventory_server(monkeypatch)
+    async with Client(server, mode=mode, cache=False) as client:
+        sole = await client.call_tool("read_unity_resource", {"uri": uri})
+        sole_state = json.loads(sole.structured_content["contents"][0]["text"])["data"]
+        assert sole_state["unity"]["instance_id"] == selected["unity_instance"]
+        assert sole_state["sequence"] == 19
+    await command_hub.registry.register("other", "Other", "other", "6000.3")
+    async with Client(server, mode=mode, cache=False) as client:
+        for resource, native in (
+            (uri, "get_editor_state"),
+            ("mcpforunity://project/tags", "get_tags"),
+            ("mcpforunity://project/layers", "get_layers"),
+        ):
+            args = {"uri": resource}
+            discovery = {"selection": "agent", "family": resource, **selected}
+            catalog = await client.call_tool("search_unity_tools", discovery)
+            (listed,) = catalog.structured_content["operations"]
+            assert listed["preferred_read_tool"]["arguments"] == {**args, **selected}
+            refused = await client.call_tool("read_unity_resource", args, raise_on_error=False)
+            assert refused.is_error
+            reply = await client.call_tool("read_unity_resource", {**args, **selected})
+            payload = json.loads(reply.structured_content["contents"][0]["text"])
+            assert payload["success"]
+            assert command_hub.sent[-1]["name"] == native
+            resource_data = json.loads(
+                (await client.read_resource(resource, meta=selected))[0].text
+            )["data"]
+            if resource == uri:
+                dedicated = (
+                    await client.call_tool("inspect_editor_state", selected)
+                ).structured_content
+                for data in (resource_data, payload["data"], dedicated["data"]):
+                    assert data["sequence"] == 19 and data["compilation"]["is_compiling"] is False
+                    assert data["unity"]["instance_id"] == selected["unity_instance"]
+            else:
+                assert payload["data"] == resource_data
+            server.add_resource(TextResource(uri=resource, text="substitute"))
+            denied = await client.call_tool(
+                "read_unity_resource", {**args, **selected}, raise_on_error=False
+            )
+            assert denied.is_error
+            catalog = await client.call_tool("search_unity_tools", discovery)
+            (listed,) = catalog.structured_content["operations"]
+            assert "read_tool" not in listed and "preferred_read_tool" not in listed
+        refused = await client.call_tool(
+            "read_unity_resource",
+            {"uri": "mcpforunity://scene/cameras", **selected},
+            raise_on_error=False,
+        )
+        assert refused.is_error
+    assert all(
+        item["name"] in {"get_editor_state", "get_tags", "get_layers"} for item in command_hub.sent
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_reserved_concrete_uri_cannot_fall_back_to_an_observational_template(
+    command_hub, monkeypatch, mode
+):
+    from tests.test_camera_inventory_tool import inventory_server
+
+    server = inventory_server(monkeypatch)
+    uri = "mcpforunity://editor/state"
+    server.local_provider.remove_resource(uri)
+
+    @partial(register_catalog_observation, server, "mcpforunity://editor/{part}")
+    def published(part: str) -> str:
+        return part
+
+    async with Client(server, mode=mode, cache=False) as client:
+        assert (await client.read_resource(uri))[0].text == "state"
+        denied = await client.call_tool("read_unity_resource", {"uri": uri}, raise_on_error=False)
+        assert denied.is_error
+        ordinary = await client.call_tool(
+            "read_unity_resource", {"uri": "mcpforunity://editor/unreserved"}
+        )
+        assert ordinary.structured_content["contents"][0]["text"] == "unreserved"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_connection_inventory_prepared_with_selected_editor_can_be_called(
+    command_hub, monkeypatch, mode
+):
+    from tests.test_camera_inventory_tool import inventory_server
+
+    uri = "mcpforunity://instances"
+    selected = {"unity_instance": "Fixture@hash"}
+    async with Client(inventory_server(monkeypatch), mode=mode, cache=False) as client:
+        result = await client.call_tool(
+            "search_unity_tools", {"selection": "agent", "family": uri, **selected}
+        )
+        (row,) = result.structured_content["operations"]
+        for binding in ("read_tool", "preferred_read_tool"):
+            assert "unity_instance" not in row[binding]["arguments"]
+        for tool, operation, args in (
+            ("read_unity_resource", {}, {"uri": uri}),
+            ("manage_tools", {"operation": "read_resource"}, {"uri": uri}),
+            ("manage_tools", {}, {"action": "read_resource", "uri": uri}),
+        ):
+            result = await client.call_tool(
+                "manage_tools",
+                {"action": "prepare", "tool": tool, **operation, "arguments": args, **selected},
+            )
+            preview = result.structured_content
+            assert preview["ready"], preview
+            call = preview["prepared_call"]
+            assert "unity_instance" not in call["arguments"]
+            assert preview["execution"]["request_unity_instance"] is None
+            payload = (await client.call_tool(call["tool"], call["arguments"])).structured_content
+            assert (
+                json.loads(payload["contents"][0]["text"])["instances"][0]["id"]
+                == selected["unity_instance"]
+            )
 
 
 @pytest.mark.asyncio

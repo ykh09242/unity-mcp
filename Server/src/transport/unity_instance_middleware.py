@@ -44,6 +44,7 @@ from transport.local_project_context import full_hash
 from transport.local_http_target import configured_default, select_local_session
 from transport.legacy.port_discovery import match_bare_selector, selector_port
 from services.registry import get_registered_tools
+from services.resource_inventory import connection_inventory_call
 from services.registry.capability_catalog import RESOURCE_INVENTORIES
 from services.registry.tool_registry import FIXED_OBSERVATION_ACTIONS
 from services.registry.operation_invocation import trusted_tool, wrap_tool
@@ -827,16 +828,14 @@ class UnityInstanceMiddleware(Middleware):
         receipt = None
         options = execution_options(ctx)
         selector = params.get("unity_instance")
-        if (
-            name == "manage_tools"
-            and params.get("action") == "list_instances"
-            and _trusted_builtin_callback(getattr(resolved_tool, "fn", None), name, None)
+        if connection_inventory_call(server, name, params) and _trusted_builtin_callback(
+            getattr(resolved_tool, "fn", None), name, None
         ):
             # Enumerate with the caller's identity even when its last Editor has disconnected.
             # The nested resource read still runs its own visibility and access policies.
             if selector is not None:
                 raise ValidationError(
-                    "list_instances enumerates this connection. Omit unity_instance."
+                    "This inventory enumerates the connection. Omit unity_instance."
                 )
             if options is not None:
                 raise ReceiptUnavailable("connection_inventory_has_no_receipt_project")

@@ -2,7 +2,7 @@
 Resource registry for auto-discovery of MCP resources.
 """
 
-from typing import Callable, Any
+from typing import Callable, Any, Literal
 
 # Global registry to collect decorated resources
 _resource_registry: list[dict[str, Any]] = []
@@ -15,6 +15,7 @@ def mcp_for_unity_resource(
     *,
     catalog_observation: bool = False,
     inventory_reader: str | None = None,
+    read_scope: Literal["connection", "editor"] | None = None,
     **kwargs,
 ) -> Callable:
     """
@@ -25,8 +26,9 @@ def mcp_for_unity_resource(
     Args:
         name: Resource name (defaults to function name)
         description: Resource description
-        catalog_observation: Permit reads through manage_tools under its observation-only policy.
+        catalog_observation: Allow generic tool reads of this callback under its observation-only policy.
         inventory_reader: Fixed inventory operation allowed to read this registered callback.
+        read_scope: Bind a tool read to the requesting connection or its selected Editor.
         **kwargs: Additional arguments passed to @mcp.resource()
 
     Example:
@@ -36,6 +38,10 @@ def mcp_for_unity_resource(
     """
 
     def decorator(func: Callable) -> Callable:
+        if read_scope == "connection" and (not inventory_reader or "{" in uri):
+            raise ValueError(
+                "A connection-scoped inventory needs a concrete URI and a fixed reader."
+            )
         resource_name = name if name is not None else func.__name__
         _resource_registry.append(
             {
@@ -45,6 +51,7 @@ def mcp_for_unity_resource(
                 "description": description,
                 "catalog_observation": catalog_observation,
                 "inventory_reader": inventory_reader,
+                "read_scope": read_scope,
                 "kwargs": kwargs,
             }
         )

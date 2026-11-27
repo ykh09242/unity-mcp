@@ -62,6 +62,8 @@ def not_prepared(reason: str, **details) -> dict:
 
 async def prepared_execution(ctx, name, arguments, schema):
     """Observe public grants for this request without issuing a tool or native command."""
+    from services.resource_inventory import connection_inventory_call
+
     # Match the public middleware's defaults, including defaults that change the grant floor.
     params = {
         key: field["default"]
@@ -69,7 +71,12 @@ async def prepared_execution(ctx, name, arguments, schema):
         if "default" in field
     }
     params.update(arguments)
-    instance = arguments.get("unity_instance") or await ctx.get_state("unity_instance")
+    connection_scoped = connection_inventory_call(ctx.fastmcp, name, params)
+    instance = (
+        None
+        if connection_scoped
+        else arguments.get("unity_instance") or await ctx.get_state("unity_instance")
+    )
     hosted = config.http_remote_hosted
     check = {
         "scope": "public_operation_grants",
@@ -103,7 +110,11 @@ async def prepared_execution(ctx, name, arguments, schema):
         pass
     else:
         check["requester"] = "allowed"
-        check["selected_target"] = await _selected_target_grant(ctx, name, params, instance)
+        check["selected_target"] = (
+            "not_applicable"
+            if connection_scoped
+            else await _selected_target_grant(ctx, name, params, instance)
+        )
     return execution
 
 
@@ -137,8 +148,6 @@ async def prepared_binding_execution(ctx, registered, listed, arguments):
 async def _selected_target_grant(ctx, name, params, instance) -> str:
     from transport.plugin_hub import PluginHub
 
-    if name == "manage_tools" and params.get("action") == "list_instances":
-        return "not_applicable"
     # Selecting an Editor checks the destination, which can differ from the prepare route.
     if not isinstance(instance, str) or not instance:
         return "not_checked"
