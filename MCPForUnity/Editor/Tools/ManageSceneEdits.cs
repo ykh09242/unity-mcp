@@ -39,6 +39,7 @@ namespace MCPForUnity.Editor.Tools
             internal int TargetId;
             internal int ComponentId;
             internal string Property;
+            internal string RequestedProperty;
             internal JToken Before;
             internal JToken After;
 
@@ -67,6 +68,7 @@ namespace MCPForUnity.Editor.Tools
                     ["component_id"] = ComponentId,
                     ["component_index"] = ComponentIndex,
                     ["property"] = Property,
+                    ["requested_property"] = RequestedProperty,
                     ["before"] = Before.DeepClone(),
                     ["after"] = After.DeepClone(),
                 };
@@ -193,12 +195,13 @@ namespace MCPForUnity.Editor.Tools
                 if (index < 0 || index >= components.Length || components[index].GetType() != type)
                     throw new ArgumentException("An existing exact component and valid component_index are required.");
                 Component component = components[index];
-                string path = SceneEditValues.ResolvePath(type, RequiredString(request, "property"));
-                if (!keys.Add(component.GetInstanceIDCompat() + ":" + path))
-                    throw new ArgumentException("Duplicate edits to the same component property are not supported.");
+                string requested = RequiredString(request, "property");
                 using (var serialized = new SerializedObject(component))
                 {
-                    SerializedProperty property = serialized.FindProperty(path);
+                    string path = SceneEditValues.ResolvePath(serialized, requested);
+                    if (!keys.Add(component.GetInstanceIDCompat() + ":" + path))
+                        throw new ArgumentException("Duplicate edits to the same component property are not supported.");
+                    using var property = serialized.FindProperty(path);
                     if (property == null || !property.editable)
                         throw new ArgumentException($"Serialized property '{path}' is unavailable or read-only in this Unity version.");
                     JToken before = SceneEditValues.Read(property);
@@ -222,6 +225,7 @@ namespace MCPForUnity.Editor.Tools
                             TargetId = target.GetInstanceIDCompat(),
                             ComponentId = component.GetInstanceIDCompat(),
                             Property = path,
+                            RequestedProperty = requested,
                             Before = before,
                             After = after,
                         }

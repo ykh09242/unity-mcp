@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -10,42 +12,59 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
     // reflection setters or custom MonoBehaviour serialization callbacks from this tool.
     internal static class SceneEditValues
     {
-        internal static readonly Dictionary<string, Type> Types = new Dictionary<string, Type>(StringComparer.Ordinal)
+        private static readonly Dictionary<Type, string[]> Paths = new Dictionary<Type, string[]>
         {
-            ["Transform"] = typeof(Transform),
+            [typeof(Transform)] = new[] { "m_LocalPosition", "m_LocalRotation", "m_LocalScale" },
 #if MCP_FOR_UNITY_PHYSICS
-            ["BoxCollider"] = typeof(BoxCollider),
-            ["SphereCollider"] = typeof(SphereCollider),
-            ["CapsuleCollider"] = typeof(CapsuleCollider),
-            ["Rigidbody"] = typeof(Rigidbody),
+            [typeof(BoxCollider)] = new[] { "m_Center", "m_Size", "m_IsTrigger", "m_Enabled" },
+            [typeof(SphereCollider)] = new[] { "m_Center", "m_Radius", "m_IsTrigger", "m_Enabled" },
+            [typeof(CapsuleCollider)] = new[] { "m_Center", "m_Radius", "m_Height", "m_IsTrigger", "m_Enabled" },
+            [typeof(Rigidbody)] = new[] { "m_Mass", "m_UseGravity", "m_IsKinematic" },
 #endif
         };
 
-        internal static string ResolvePath(Type type, string property)
+        internal static readonly Dictionary<string, Type> Types = Paths.Keys.ToDictionary(type => type.Name, StringComparer.Ordinal);
+
+        internal static string ResolvePath(SerializedObject serialized, string requested)
         {
-            if (type == typeof(Transform))
-                return property switch
-                {
-                    "localPosition" or "m_LocalPosition" => "m_LocalPosition",
-                    "localRotation" or "m_LocalRotation" => "m_LocalRotation",
-                    "localScale" or "m_LocalScale" => "m_LocalScale",
-                    _ => throw new ArgumentException("Transform supports localPosition, localRotation (quaternion), and localScale only."),
-                };
-#if MCP_FOR_UNITY_PHYSICS
-            if (type == typeof(BoxCollider) && (property == "m_Center" || property == "m_Size" || property == "m_IsTrigger" || property == "m_Enabled"))
-                return property;
-            if (type == typeof(SphereCollider) && (property == "m_Center" || property == "m_Radius" || property == "m_IsTrigger" || property == "m_Enabled"))
-                return property;
-            if (
-                type == typeof(CapsuleCollider)
-                && (property == "m_Center" || property == "m_Radius" || property == "m_Height" || property == "m_IsTrigger" || property == "m_Enabled")
-            )
-                return property;
-            if (type == typeof(Rigidbody) && (property == "m_Mass" || property == "m_UseGravity" || property == "m_IsKinematic"))
-                return property;
-#endif
-            throw new ArgumentException($"Property '{property}' is outside the scene-edit allowlist for {type.Name}.");
+            if (requested.Length > 128)
+                throw new ArgumentException("property must be at most 128 characters.");
+            Type type = serialized.targetObject.GetType();
+            string[] paths = Paths[type];
+            if (Array.IndexOf(paths, requested) >= 0)
+                return requested;
+            var names = new List<(string path, string label)>();
+            foreach (string path in paths)
+            {
+                using var property = serialized.FindProperty(path);
+                if (property == null || !property.editable)
+                    continue;
+                names.Add((path, property.propertyPath));
+                names.Add((path, property.displayName));
+                names.Add((path, ObjectNames.NicifyVariableName(property.name)));
+            }
+            return MatchPropertyLabel(requested, names)
+                ?? throw new ArgumentException(
+                    $"Property '{requested}' is outside the scene-edit allowlist for {type.Name}. Supported paths: {string.Join(", ", paths)}."
+                );
         }
+
+        internal static string MatchPropertyLabel(string requested, IEnumerable<(string path, string label)> names)
+        {
+            string key = LabelKey(requested);
+            string match = null;
+            foreach (var (path, label) in names)
+            {
+                if (!string.Equals(key, LabelKey(label), StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (match != null && match != path)
+                    throw new ArgumentException($"Ambiguous serialized property '{requested}'; specify an exact supported path.");
+                match = path;
+            }
+            return match;
+        }
+
+        private static string LabelKey(string label) => label.Normalize(NormalizationForm.FormC).Replace(" ", "");
 
         internal static JToken Read(SerializedProperty property)
         {

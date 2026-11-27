@@ -1,6 +1,8 @@
 """Bounded preview/apply of native serialized scene properties."""
 
 import json
+import re
+import unicodedata
 from typing import Annotated, Literal, assert_never
 
 from fastmcp import Context
@@ -23,7 +25,7 @@ from transport.unity_transport import send_with_unity_instance
 
 
 class SceneEdit(BaseModel):
-    """One existing component field, with optional optimistic concurrency value."""
+    """One requested write to an existing component field."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
@@ -42,7 +44,14 @@ class SceneEdit(BaseModel):
         "UnityEngine.CapsuleCollider",
     ]
     component_index: Annotated[StrictInt, Field(ge=0)] | None = None
-    property: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+    property: Annotated[
+        StrictStr,
+        Field(
+            min_length=1,
+            max_length=128,
+            description="Exact allowlisted serialized path or its unique Unity field label.",
+        ),
+    ]
     value: JsonValue
     expected_old: JsonValue = None
 
@@ -118,6 +127,11 @@ def _same_structure_plan(params, data):
     return True
 
 
+def _scene_field_key(spelling):
+    # Only endorse labels independently recognizable from the native serialized path.
+    return unicodedata.normalize("NFC", spelling).replace(" ", "").lower().removeprefix("m_")
+
+
 def _same_scene_fields(requested, rows):
     if not isinstance(requested, list) or not has_field_edits(rows) or len(requested) != len(rows):
         return False
@@ -134,9 +148,12 @@ def _same_scene_fields(requested, rows):
             or type(row.get("component_index")) is not int
         ):
             return False
-        component = row.get("component_type"), row["component_index"], row["property"]
-        if not isinstance(component[0], str):
+        path_name = row["property"]
+        if not isinstance(row.get("component_type"), str) or not re.fullmatch(
+            r"m_[A-Za-z][A-Za-z0-9]*", path_name
+        ):
             return False
+        component = row["component_type"], row["component_index"], _scene_field_key(path_name)
         target_id = str(row["target_id"])
         if paths.setdefault(target_id, path) != path:
             return False
@@ -170,12 +187,27 @@ def _same_scene_fields(requested, rows):
             target = next(iter(candidates))
         name = edit["component_type"].removeprefix("UnityEngine.")
         prop = edit["property"]
-        if name == "Transform" and prop in {"localPosition", "localRotation", "localScale"}:
-            prop = "m_L" + prop[1:]
-        index = lookup.get((target, "UnityEngine." + name, edit.get("component_index") or 0, prop))
+        index = lookup.get(
+            (
+                target,
+                "UnityEngine." + name,
+                edit.get("component_index") or 0,
+                _scene_field_key(prop),
+            )
+        )
         if index is None or index in matched:
             return False
         row = rows[index]
+        if "requested_property" in row:
+            if row["requested_property"] != prop:
+                return False
+        elif prop != row["property"] and not (
+            name == "Transform"
+            and prop in {"localPosition", "localRotation", "localScale"}
+            and row["property"] == "m_L" + prop[1:]
+        ):
+            # Older Editors reported only canonical paths and accepted these three aliases.
+            return False
         if not matches_serialized_edit(edit["value"], row):
             return False
         if edit.get("expected_old") is not None and not same_serialized_value(
@@ -214,7 +246,8 @@ def _scene_plan_apply(params, data):
     preview_contracts={"preview": _scene_plan_apply, "preview_structure": _scene_plan_apply},
     description=(
         "Preview or apply 1-1000 allowlisted native Transform, BoxCollider, SphereCollider, "
-        "Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene. Preview returns "
+        "Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene. "
+        "Include only fields the user asked to change. Verify preserved values with a separate readback when needed. Preview returns "
         "before/after values and a one-attempt token valid for 10 minutes. Apply accepts "
         "preview_id, or edits with expected_old for every field. Rejects drift before mutation; "
         "apply returns receipt_id. Use undo with this receipt to restore unchanged applied fields "

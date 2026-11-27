@@ -553,6 +553,60 @@ def test_prefab_plan_rejects_wrong_targets_values_fields_and_duplicate_impact():
         assert _prefab_plan_apply(expected, {**data, "impact": rows}) is None
 
 
+@pytest.mark.parametrize(
+    ("component", "spelling", "canonical"),
+    [
+        ("BoxCollider", "isTrigger", "m_IsTrigger"),
+        ("Rigidbody", "Use Gravity", "m_UseGravity"),
+        ("SphereCollider", " eNABLed ", "m_Enabled"),
+        ("CapsuleCollider", "M_ISTRIGGER", "m_IsTrigger"),
+    ],
+)
+def test_scene_continuation_requires_one_verifiable_binding_per_requested_field(
+    component, spelling, canonical
+):
+    from services.tools.manage_scene_edits import _scene_plan_apply
+
+    edit = {"target": 42, "component_type": component, "property": spelling, "value": True}
+    row = {
+        "target_id": 42,
+        "target_path": "Root/Item",
+        "component_type": "UnityEngine." + component,
+        "component_index": 0,
+        "requested_property": spelling,
+        "property": canonical,
+        "before": False,
+        "after": True,
+    }
+    params = {"action": "preview", "edits": [edit]}
+    data = {"preview_id": "a" * 32, "expires_in_seconds": 600, "edits": [row]}
+    assert _scene_plan_apply(params, data).arguments == {
+        "action": "apply",
+        "preview_id": data["preview_id"],
+    }
+    assert _scene_plan_apply(
+        {"action": "preview", "edits": [{**edit, "property": canonical}]},
+        {**data, "edits": [{**row, "requested_property": canonical}]},
+    )
+    dimension = {**row, "property": "m_Size", "before": [3, 4, 5], "after": [1, 1, 1]}
+    for rows in (
+        [dimension],
+        [row, dimension],
+        [{**row, "property": "m_OtherField"}],
+        [{**row, "property": spelling}],
+        [{**row, "requested_property": canonical}],
+        [{key: value for key, value in row.items() if key != "requested_property"}],
+    ):
+        assert _scene_plan_apply(params, {**data, "edits": rows}) is None
+    assert (
+        _scene_plan_apply(
+            {**params, "edits": [edit, {**edit, "property": canonical}]},
+            {**data, "edits": [row, {**row, "requested_property": canonical}]},
+        )
+        is None
+    )
+
+
 def test_console_readiness_timeout_guides_wait_without_extending_the_clock():
     budget = _CommandBudget(123, phase="readiness", command="read_console")
     result = budget.timeout_response("read_console")

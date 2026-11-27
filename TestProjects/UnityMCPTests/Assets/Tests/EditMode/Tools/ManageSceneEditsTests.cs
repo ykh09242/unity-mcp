@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.SceneEdits;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -212,6 +213,79 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void TriggerLabelBindsOnlyOneFieldThroughPreviewApplyAndReceiptUndo()
+        {
+            var go = Create("sparse-trigger-edit");
+            var box = go.AddComponent<BoxCollider>();
+            box.size = new Vector3(3, 4, 5);
+            box.center = new Vector3(1, 2, 3);
+            var preview = Preview(Edit(go, "isTrigger", true, "BoxCollider"));
+            string token = Token(preview);
+            var edits = (JArray)preview["data"]["edits"];
+            Assert.AreEqual(1, edits.Count);
+            Assert.AreEqual("isTrigger", (string)edits[0]["requested_property"]);
+            Assert.AreEqual("m_IsTrigger", (string)edits[0]["property"]);
+            Assert.IsFalse((bool)edits[0]["before"]);
+            Assert.IsTrue((bool)edits[0]["after"]);
+            Assert.IsFalse(box.isTrigger);
+
+            var applied = Apply(token);
+            Assert.IsTrue(applied.Value<bool>("success"), applied.ToString());
+            Assert.IsTrue(JToken.DeepEquals(edits, applied["data"]["edits"]));
+            Assert.IsTrue(box.isTrigger);
+            Assert.AreEqual(new Vector3(3, 4, 5), box.size);
+            Assert.AreEqual(new Vector3(1, 2, 3), box.center);
+            box.size = new Vector3(6, 7, 8);
+            var undo = Send(new JObject { ["action"] = "undo", ["receipt_id"] = applied["data"]["receipt_id"] });
+            Assert.IsTrue(undo.Value<bool>("success"), undo.ToString());
+            Assert.AreEqual("m_IsTrigger", (string)undo["data"]["restored_fields"][0]["property"]);
+            Assert.IsFalse(box.isTrigger);
+            Assert.AreEqual(new Vector3(6, 7, 8), box.size);
+            Assert.AreEqual(new Vector3(1, 2, 3), box.center);
+        }
+
+        [TestCase(typeof(Rigidbody), "uSe Gravity", "m_UseGravity")]
+        [TestCase(typeof(CapsuleCollider), "IS TRIGGER", "m_IsTrigger")]
+        [TestCase(typeof(SphereCollider), " Enabled ", "m_Enabled")]
+        [TestCase(typeof(BoxCollider), "m_IsTrigger", "m_IsTrigger")]
+        public void SupportedFieldSpellingsResolveOnSelectedComponent(Type type, string spelling, string canonical)
+        {
+            var go = Create("scene-edit-label");
+            var component = go.AddComponent(type);
+            using var serialized = new SerializedObject(component);
+            using var field = serialized.FindProperty(canonical);
+            bool before = field.boolValue;
+            foreach (string name in new[] { spelling, field.displayName })
+            {
+                var preview = Preview(Edit(go, name, !before, type.Name));
+                Token(preview);
+                Assert.AreEqual(canonical, (string)preview["data"]["edits"][0]["property"]);
+                Assert.AreEqual(name, (string)preview["data"]["edits"][0]["requested_property"]);
+            }
+        }
+
+        [Test]
+        public void UnlistedFieldsAndDuplicateSpellingsRejectTheEntirePreview()
+        {
+            var go = Create("scene-edit-unsupported-label");
+            var box = go.AddComponent<BoxCollider>();
+            var edit = Edit(go, "isTrigger", true, "BoxCollider");
+            foreach (string property in new[] { " m_IsTrigger ", "material", "m_Material", "radius", "m_Size.x", "trigger", "is_Trigger" })
+                Assert.IsFalse(Preview(edit, Edit(go, property, false, "BoxCollider")).Value<bool>("success"), property);
+            Assert.IsFalse(box.isTrigger);
+            Assert.AreEqual(0, Cache().Count);
+        }
+
+        [Test]
+        public void LabelMatchingUsesCanonicalUnicodeAndRejectsAmbiguityAcrossPaths()
+        {
+            var names = new[] { ("first", "Café"), ("first", "Café") };
+            Assert.AreEqual("first", SceneEditValues.MatchPropertyLabel("CAFE\u0301", names));
+            Assert.IsNull(SceneEditValues.MatchPropertyLabel("Cafe", names));
+            Assert.Throws<ArgumentException>(() => SceneEditValues.MatchPropertyLabel("Café", new[] { ("first", "CAFE\u0301"), ("second", "Café") }));
+        }
+
+        [Test]
         public void Apply_MultipleComponentsAndObjects_RestoredByOneUndo()
         {
             var first = Create("scene-edit-a");
@@ -336,7 +410,7 @@ namespace MCPForUnityTests.Editor.Tools
             object later = edits[1];
             later.GetType().GetField("After", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(later, new JArray("invalid", 2, 2));
             var method = typeof(ManageSceneEdits).GetMethod("Apply", BindingFlags.Static | BindingFlags.NonPublic);
-            JObject result = JObject.FromObject(method.Invoke(null, new[] { plan, "Scene edit failure" }));
+            JObject result = JObject.FromObject(method.Invoke(null, new[] { plan, "Scene edit failure", true }));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.IsTrue(result["data"].Value<bool>("rollback_verified"), result.ToString());
             Assert.AreEqual(Vector3.zero, go.transform.localPosition);
