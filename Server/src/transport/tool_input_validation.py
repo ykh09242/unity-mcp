@@ -2,13 +2,20 @@
 
 from enum import Enum, EnumType
 from functools import lru_cache
-from typing import Any, Callable
+import logging
+from typing import Any, Callable, get_args
 
 from fastmcp.exceptions import ValidationError
 from fastmcp.server.dependencies import without_injected_parameters
 from fastmcp.tools.function_tool import FunctionTool
 from fastmcp.utilities.types import get_cached_typeadapter
-from pydantic_core import SchemaValidator, ValidationError as PydanticValidationError
+from pydantic_core import ErrorType, SchemaValidator, ValidationError as PydanticValidationError
+
+from models.custom_tool_schema import SchemaContractError, bounded_json
+
+
+_ERROR_CODES = frozenset(get_args(ErrorType))
+_SCHEMA_HINT = "Use tools/list on this connection to find a visible tool and its inputSchema."
 
 
 def _structural_schema(value: Any) -> Any:
@@ -68,7 +75,11 @@ def _argument_validator(function: Callable) -> SchemaValidator:
 
 
 def validate_tool_arguments(
-    tool: object, arguments: dict[str, object], *, strict: bool | None = None
+    tool: object,
+    arguments: dict[str, object],
+    *,
+    strict: bool | None = None,
+    show_guidance: bool = False,
 ) -> None:
     """Reuse FunctionTool's argument schema; never invoke handler/dependency code."""
     if not isinstance(tool, FunctionTool):
@@ -76,15 +87,66 @@ def validate_tool_arguments(
     try:
         _argument_validator(tool.fn).validate_python(arguments, strict=strict)
     except PydanticValidationError as exc:
-        # Input and arbitrary validator context must not enter logs/error text.
-        errors = exc.errors(include_input=False, include_context=False, include_url=False)
-        declared = tool.parameters.get("properties", {})
-        locations = []
-        for error in errors[:8]:
-            location = error["loc"]
-            field = location[0] if location and location[0] in declared else "arguments"
-            # Dictionary keys and unknown keywords can contain caller data.
-            suffix = "".join(f"[{part}]" if type(part) is int else "[*]" for part in location[1:])
-            locations.append(f"{field}{suffix}: {error['type']}")
-        details = "; ".join(locations)
-        raise ValidationError(f"Invalid arguments for tool '{tool.name}': {details}") from None
+        raise tool_argument_error(tool, exc, show_guidance=show_guidance, structural=True) from None
+
+
+def sdk_argument_validation_cause(error: ValidationError) -> PydanticValidationError | None:
+    """Recognize the SDK's separate pre-handler argument validation error."""
+    cause = error.__cause__
+    if (
+        isinstance(cause, PydanticValidationError)
+        and error.log_level == logging.WARNING
+        and cause.title.startswith("call[")
+    ):
+        return cause
+    return None
+
+
+def tool_argument_error(
+    tool: object,
+    error: PydanticValidationError,
+    *,
+    show_guidance: bool = False,
+    structural: bool = False,
+) -> ValidationError:
+    """Render declared fields and schema examples without reflecting rejected data."""
+    declared = tool.parameters.get("properties", {}) if isinstance(tool, FunctionTool) else {}
+    prefix = (
+        f"Invalid arguments for tool '{tool.name}'"
+        if isinstance(tool, FunctionTool)
+        else "Invalid tool arguments"
+    )
+    locations, fields = [], {}
+    for detail in error.errors(include_input=False, include_context=False, include_url=False)[:8]:
+        location = detail["loc"]
+        field = location[0] if location and location[0] in declared else None
+        if field is not None:
+            fields[field] = declared[field]
+        # Model/dictionary keys and unknown keywords may contain caller data.
+        suffix = "".join(
+            f"[{part}]" if structural and type(part) is int else "[*]" for part in location[1:9]
+        )
+        code = detail["type"] if detail["type"] in _ERROR_CODES else "invalid_input"
+        locations.append(f"{field or 'arguments'}{suffix}: {code}")
+
+    messages = [f"{prefix}: {'; '.join(locations)}"]
+    if show_guidance:
+        remaining = 2
+        for field, schema in fields.items():
+            examples = schema.get("examples") if isinstance(schema, dict) else None
+            if not isinstance(examples, list) or not examples:
+                continue
+            try:
+                example = bounded_json(examples[0], max_bytes=512, max_nodes=64, max_depth=6)
+            except SchemaContractError:
+                continue
+            description = schema.get("description")
+            if isinstance(description, str) and 0 < len(description) <= 512:
+                messages.append(description)
+            messages.append(f"Published example for {field}: {example}")
+            remaining -= 1
+            if not remaining:
+                break
+        if len(messages) == 1:
+            messages.append(_SCHEMA_HINT)
+    return ValidationError("\n".join(messages))

@@ -1,9 +1,16 @@
 """Check caller-selected exact text through the installed MCP SDK."""
 
+import json
+from typing import Annotated
+from unittest.mock import AsyncMock
+
 import pytest
 from fastmcp import Client
+from pydantic import BaseModel, Field, StrictStr
 
 from .test_agent_call_preparation import server as server
+from transport.execution_receipts import META_KEY
+from transport.unity_instance_middleware import UnityInstanceMiddleware
 
 
 def _script_edit(content):
@@ -12,6 +19,171 @@ def _script_edit(content):
         "edits": [{"startLine": 3, "startCol": 1, "endLine": 3, "endCol": 1, "newText": content}],
         "options": {"preview": True},
     }
+
+
+class RecoveryDraft(BaseModel):
+    name: StrictStr
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("example_size", [10, 600])
+async def test_unrelated_nested_validation_uses_published_example_or_same_connection_schema(
+    server, example_size
+):
+    example = {"name": "R" * example_size}
+    calls = []
+
+    @server.tool
+    async def recovery_example(draft: Annotated[RecoveryDraft, Field(examples=[example])]):
+        calls.append(draft.name)
+        return {"accepted": True}
+
+    private = "private-unknown-key"
+    async with Client(server) as client:
+        published = next(
+            item for item in await client.list_tools() if item.name == "recovery_example"
+        )
+        result = await client.call_tool(
+            published.name, {"draft": {private: "value"}}, raise_on_error=False
+        )
+
+    message = result.content[0].text
+    assert result.is_error and "draft[*]: missing" in message
+    assert private not in message and calls == []
+    sample = published.input_schema["properties"]["draft"]["examples"][0]
+    if example_size < 512:
+        assert json.dumps(sample, separators=(",", ":")) in message
+    else:
+        assert sample["name"] not in message and "tools/list" in message
+
+
+@pytest.mark.asyncio
+async def test_unpublished_fallback_schema_does_not_add_retry_guidance(server):
+    server.disable(names={"manage_tools"})
+    async with Client(server) as client:
+        assert "manage_tools" not in {item.name for item in await client.list_tools()}
+        denial = await client.call_tool(
+            "manage_tools", {"action": "prepare", "exact_text": "malformed"}, raise_on_error=False
+        )
+
+    assert denial.is_error
+    message = denial.content[0].text
+    assert "Published example" not in message and "tools/list" not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_late_validation_omits_examples_for_an_unpublished_resource_tool(server, mode):
+    name = "list_menu_declarations"
+    uri = "mcpforunity://menu-items"
+    example = {"name": "unpublished-schema-example"}
+    server.local_provider.remove_resource(uri)
+    server.local_provider.remove_tool(name)
+
+    @server.tool(name=name)
+    async def resource_fixture(draft: Annotated[RecoveryDraft, Field(examples=[example])]):
+        raise AssertionError(f"Invalid draft entered the handler: {draft.name}")
+
+    async with Client(server, mode=mode) as client:
+        assert name not in {item.name for item in await client.list_tools()}
+        denied = await client.call_tool(name, {"draft": {"name": 42}}, raise_on_error=False)
+
+    assert denied.is_error and denied.structured_content is None
+    message = denied.content[0].text
+    assert "string_type" in message and "input_value" not in message
+    assert example["name"] not in message and "tools/list" not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize("scope", ["hidden", "explicit", "receipt"])
+async def test_early_errors_omit_guidance_when_the_requested_scope_is_unverified(
+    server, monkeypatch, mode, scope
+):
+    monkeypatch.setattr(
+        UnityInstanceMiddleware, "_maybe_autoselect_instance", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        UnityInstanceMiddleware,
+        "_resolve_enabled_tool_names_for_context",
+        AsyncMock(return_value=set()),
+    )
+    resolve = AsyncMock(side_effect=ValueError("test target unavailable"))
+    monkeypatch.setattr(UnityInstanceMiddleware, "_resolve_instance_value", resolve)
+    marker = "private-rejected-value"
+    name = "manage_tools"
+    arguments = {"action": "prepare", "exact_text": marker}
+    meta = None
+    if scope == "hidden":
+        name, arguments = "manage_terrain", {"action": {"wrong": marker}}
+    elif scope == "explicit":
+        arguments["unity_instance"] = "TestMissing@ab12cd34"
+    else:
+        meta = {META_KEY: {"version": 1, "store_id": "0" * 32, "project_hash": "1" * 32}}
+
+    async with Client(server, mode=mode) as client:
+        advertised = {item.name for item in await client.list_tools()}
+        assert "manage_tools" in advertised and "manage_terrain" not in advertised
+        result = await client.call_tool(name, arguments, meta=meta, raise_on_error=False)
+
+    assert result.is_error and result.structured_content is None
+    message = result.content[0].text
+    assert ("action" if scope == "hidden" else "exact_text: list_type") in message
+    assert (
+        marker not in message and "Published example" not in message and "tools/list" not in message
+    )
+    resolve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_malformed_assertions_return_the_published_retry_shape_without_echoing_input(
+    server, mode
+):
+    private = "do-not-echo-this-value"
+    attempts = [
+        private,
+        [{"field": private, "text": private}],
+        [{"path": private, "expected": private}],
+    ]
+    path = ["source_changes", "tooltip"]
+    draft = {
+        "path": "Assets/UI/Example.uxml",
+        "source_selector": "#next",
+        "source_changes": {"tooltip": "Continue."},
+    }
+    prepare = {
+        "action": "prepare",
+        "tool": "manage_ui",
+        "operation": "patch_source",
+        "arguments": draft,
+        "query": f'Change the tooltip to "Continue." This note is private: {private}',
+    }
+
+    async with Client(server, mode=mode) as client:
+        tool = next(item for item in await client.list_tools() if item.name == "manage_tools")
+        field = tool.input_schema["properties"]["exact_text"]
+        example = json.dumps(field["examples"][0], sort_keys=True, separators=(",", ":"))
+        for invalid in attempts:
+            error = await client.call_tool(
+                "manage_tools", {**prepare, "exact_text": invalid}, raise_on_error=False
+            )
+            assert error.is_error and error.structured_content is None
+            message = error.content[0].text
+            assert private not in message
+            assert example in message and field["description"] in message
+
+        assertion = json.loads(example)[0]
+        response = await client.call_tool(
+            "manage_tools",
+            {
+                **prepare,
+                "exact_text": [{**assertion, "path": path, "expected": "Continue."}],
+            },
+        )
+
+    result = response.structured_content
+    assert result["ready"] is True and result["exact_text_checked"] == 1
 
 
 @pytest.mark.asyncio

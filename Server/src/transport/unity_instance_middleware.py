@@ -29,6 +29,7 @@ from transport.execution_receipts import (
     PreparedExecution,
     component_version,
     execution_options,
+    has_execution_options,
     install_execution_receipts,
     reject_continuation,
 )
@@ -62,7 +63,11 @@ from transport.plugin_hub import (
     _HttpRequestBudget,
     http_request_budget,
 )
-from transport.tool_input_validation import validate_tool_arguments
+from transport.tool_input_validation import (
+    sdk_argument_validation_cause,
+    tool_argument_error,
+    validate_tool_arguments,
+)
 from transport.protocol import (
     internal_resource_read_target,
     is_internal_catalog_list,
@@ -683,6 +688,11 @@ class UnityInstanceMiddleware(Middleware):
         try:
             async with foreground_progress(context.fastmcp_context):
                 return await self._call_tool_with_receipts(context, call_next)
+        except ValidationError as error:
+            cause = sdk_argument_validation_cause(error)
+            if cause is None:
+                raise
+            raise tool_argument_error(None, cause) from None
         except OperationPermissionError as error:
             if (
                 not config.http_remote_hosted
@@ -748,8 +758,25 @@ class UnityInstanceMiddleware(Middleware):
                     raise ValidationError(
                         "unity_instance must be a string identifier or an integer port"
                     )
+                # Only the standalone local controls are published independently of Unity.
+                # A selected target or execution receipt still needs its own admission.
+                show_guidance = (
+                    resolved_tool is not None
+                    and not config.http_remote_hosted
+                    and selector is None
+                    and not has_execution_options(ctx.request_context)
+                    and name in _LOCAL_TARGET_CONTROL_TOOLS
+                    and _trusted_builtin_callback(
+                        getattr(resolved_tool, "fn", None),
+                        name,
+                        getattr(server, "_execution_receipts", None),
+                    )
+                )
                 validate_tool_arguments(
-                    tool, supplied, strict=True if server.strict_input_validation else None
+                    tool,
+                    supplied,
+                    strict=True if server.strict_input_validation else None,
+                    show_guidance=show_guidance,
                 )
         schema = getattr(tool, "parameters", {}) or {}
         params = {
@@ -1077,8 +1104,35 @@ class UnityInstanceMiddleware(Middleware):
                     ):
                         raise ReceiptUnavailable("execution_receipt_generation_changed")
 
-            return await receipt.execute(lambda: call_next(context), before_handler=before_handler)
-        return await call_next(context)
+            return await receipt.execute(
+                lambda: self._call_admitted_tool(context, call_next), before_handler=before_handler
+            )
+        return await self._call_admitted_tool(context, call_next)
+
+    async def _call_admitted_tool(self, context, call_next):
+        try:
+            return await call_next(context)
+        except ValidationError as error:
+            cause = sdk_argument_validation_cause(error)
+            if cause is None:
+                raise
+            name = context.message.name
+            # Admission plus SDK visibility proves the ordinary local projection.
+            # Hosted, resource-backed and projected observations have extra listing policy.
+            if (
+                config.http_remote_hosted
+                or name in RESOURCE_INVENTORIES
+                or name in FIXED_OBSERVATION_ACTIONS
+            ):
+                raise tool_argument_error(None, cause) from None
+            ctx = context.fastmcp_context
+            version = component_version(ctx)
+            tool = (
+                await ctx.fastmcp.get_tool(name, version=VersionSpec(eq=version))
+                if version is not None
+                else await ctx.fastmcp.get_tool(name)
+            )
+            raise tool_argument_error(tool, cause, show_guidance=tool is not None) from None
 
     async def _admit_selected_tool(self, context, tool_name, user_id):
         self._refresh_tool_visibility_metadata_from_registry()
