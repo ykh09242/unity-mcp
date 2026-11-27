@@ -25,18 +25,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-26, windows-2025]
+        os: [ubuntu-26.04, macos-26, windows-2025]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Prepare ACL utilities for Ubuntu's preinstalled Mono
+      - name: Install the Ubuntu tools for the native filesystem check
         if: runner.os == 'Linux'
         run: |
-          if ! command -v getfacl || ! command -v setfacl; then
-            sudo apt-get update
-            sudo apt-get install --no-install-recommends -y acl
-          fi
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y mono-devel acl
       - name: Verify and install Mono 6.14.1 for Apple Silicon
         if: runner.os == 'macOS'
         shell: bash
