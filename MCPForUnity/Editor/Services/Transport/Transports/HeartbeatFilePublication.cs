@@ -4,7 +4,6 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Security.AccessControl;
 using Microsoft.Win32.SafeHandles;
 
 namespace MCPForUnity.Editor.Services.Transport.Transports
@@ -287,6 +286,56 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             internal int InheritHandle;
         }
 
+        // WinNT.h SECURITY_DESCRIPTOR in absolute form. The protected DACL is borrowed from the source descriptor.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct AbsoluteSecurityDescriptor
+        {
+            internal byte Revision;
+            internal byte Reserved;
+            internal ushort Control;
+            internal IntPtr Owner;
+            internal IntPtr Group;
+            internal IntPtr Sacl;
+            internal IntPtr Dacl;
+        }
+
+        private sealed class LocalSecurityDescriptor : SafeHandleZeroOrMinusOneIsInvalid
+        {
+            public LocalSecurityDescriptor()
+                : base(true) { }
+
+            protected override bool ReleaseHandle() => LocalFree(handle) == IntPtr.Zero;
+        }
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr memory);
+
+        [DllImport("advapi32.dll")]
+        private static extern uint GetSecurityInfo(
+            SafeFileHandle file,
+            uint objectType,
+            uint sections,
+            out IntPtr owner,
+            out IntPtr group,
+            out IntPtr dacl,
+            IntPtr sacl,
+            out LocalSecurityDescriptor descriptor
+        );
+
+        [DllImport("advapi32.dll")]
+        private static extern bool EqualSid(IntPtr first, IntPtr second);
+
+        private static LocalSecurityDescriptor ReadWindowsSecurity(SafeFileHandle file, uint sections, out IntPtr owner, out IntPtr group, out IntPtr dacl)
+        {
+            uint error = GetSecurityInfo(file, 1, sections, out owner, out group, out dacl, IntPtr.Zero, out var descriptor); // SE_FILE_OBJECT
+            if (error == 0 && descriptor != null && !descriptor.IsInvalid && owner != IntPtr.Zero && group != IntPtr.Zero)
+                return descriptor;
+            descriptor?.Dispose();
+            if (error != 0)
+                throw new Win32Exception((int)error);
+            throw new IOException("Cannot read the heartbeat owner or group.");
+        }
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
         private static extern SafeFileHandle CreateFileW(
             string path,
@@ -302,14 +351,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             // Replacing a name also requires the original writer's permission to change this file's data.
             using var writable = File.Open(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-            const AccessControlSections identity = AccessControlSections.Owner | AccessControlSections.Group;
-            var original = File.GetAccessControl(path, identity | AccessControlSections.Access);
-            var access = new FileSecurity();
-            access.SetSecurityDescriptorBinaryForm(original.GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
-            access.SetAccessRuleProtection(true, true);
-
-            // Unity Mono ignores FileSecurity on its FileStream constructor. Supply the DACL in CREATE_NEW itself.
-            var pinned = GCHandle.Alloc(access.GetSecurityDescriptorBinaryForm(), GCHandleType.Pinned);
+            const uint identity = 1 | 2; // OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION
+            using var original = ReadWindowsSecurity(writable.SafeFileHandle, identity | 4, out var owner, out var group, out var dacl);
+            // Supply the original DACL in CREATE_NEW. Omit owner/group so the OS assigns them without WRITE_OWNER.
+            var access = new AbsoluteSecurityDescriptor
+            {
+                Revision = 1,
+                Control = 0x1004,
+                Dacl = dacl,
+            }; // SE_DACL_PROTECTED | SE_DACL_PRESENT
+            var pinned = GCHandle.Alloc(access, GCHandleType.Pinned);
             SafeFileHandle handle;
             try
             {
@@ -324,7 +375,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             try
             {
-                if (original.GetSecurityDescriptorSddlForm(identity) != File.GetAccessControl(stage, identity).GetSecurityDescriptorSddlForm(identity))
+                using var created = ReadWindowsSecurity(handle, identity, out var stageOwner, out var stageGroup, out _);
+                if (!EqualSid(owner, stageOwner) || !EqualSid(group, stageGroup))
                     throw new IOException("Cannot preserve the heartbeat owner or group.");
                 return handle;
             }

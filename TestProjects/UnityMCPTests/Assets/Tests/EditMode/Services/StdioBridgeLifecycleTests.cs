@@ -20,10 +20,6 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine.TestTools;
-#if UNITY_EDITOR_WIN
-using System.Security.AccessControl;
-using System.Security.Principal;
-#endif
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -137,13 +133,81 @@ namespace MCPForUnityTests.Editor.Services
             });
         }
 
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern uint GetNamedSecurityInfoW(
+            string path,
+            uint objectType,
+            uint sections,
+            IntPtr owner,
+            IntPtr group,
+            IntPtr dacl,
+            IntPtr sacl,
+            out IntPtr descriptor
+        );
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        private static extern bool ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            IntPtr descriptor,
+            uint revision,
+            uint sections,
+            out IntPtr sddl,
+            IntPtr length
+        );
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl, uint revision, out IntPtr descriptor, IntPtr length);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        private static extern bool SetFileSecurityW(string path, uint sections, IntPtr descriptor);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr memory);
+
+        private static string ReadHeartbeatSecurity(string path, uint sections = 4)
+        {
+            uint error = GetNamedSecurityInfoW(path, 1, sections, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out var descriptor);
+            if (error != 0)
+                throw new System.ComponentModel.Win32Exception((int)error);
+            IntPtr sddl = IntPtr.Zero;
+            try
+            {
+                if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1, sections, out sddl, IntPtr.Zero))
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                return Marshal.PtrToStringUni(sddl);
+            }
+            finally
+            {
+                LocalFree(sddl);
+                LocalFree(descriptor);
+            }
+        }
+
         private static string ProtectHeartbeatFile(string path)
         {
-            var policy = File.GetAccessControl(path);
-            policy.SetAccessRuleProtection(true, false);
-            policy.AddAccessRule(new FileSystemAccessRule(policy.GetOwner(typeof(SecurityIdentifier)), FileSystemRights.FullControl, AccessControlType.Allow));
-            File.SetAccessControl(path, policy);
-            return File.GetAccessControl(path).GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+            string owner = ReadHeartbeatSecurity(path, 1); // O:<owner SID or SDDL alias>
+            Assert.That(owner, Does.StartWith("O:"));
+            string policy = $"D:P(D;;FW;;;AN)(A;;FA;;;{owner.Substring(2)})";
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(policy, 1, out var descriptor, IntPtr.Zero))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            try
+            {
+                if (!SetFileSecurityW(path, 0x80000004, descriptor)) // PROTECTED_DACL_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            }
+            finally
+            {
+                LocalFree(descriptor);
+            }
+            string actual = ReadHeartbeatSecurity(path);
+            Assert.AreEqual(policy, ProtectedStagePolicy(actual));
+            return actual;
+        }
+
+        private static string ProtectedStagePolicy(string sddl)
+        {
+            // Windows can clear the auto-inherited history bit on a new protected object. Compare protection and all ACEs.
+            int firstAce = sddl.IndexOf('(');
+            return sddl.Substring(0, firstAce).Replace("AI", string.Empty) + sddl.Substring(firstAce);
         }
 
         [Test]
@@ -154,17 +218,17 @@ namespace MCPForUnityTests.Editor.Services
                 string expected = ProtectHeartbeatFile(path);
                 string stage = path + ".tmp";
                 using (File.Create(stage))
-                    Assert.AreNotEqual(expected, File.GetAccessControl(stage).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                    Assert.AreNotEqual(expected, ReadHeartbeatSecurity(stage));
                 File.Delete(stage);
                 using (var handle = HeartbeatFilePublication.CreateProtectedStage(path, stage))
                 using (var stream = new FileStream(handle, FileAccess.Write))
                 {
                     Assert.AreEqual(0, stream.Length);
-                    Assert.AreEqual(expected, File.GetAccessControl(stage).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                    Assert.AreEqual(ProtectedStagePolicy(expected), ProtectedStagePolicy(ReadHeartbeatSecurity(stage)));
                 }
                 File.Delete(stage);
                 StdioBridgeHost.WriteHeartbeat(true, "protected");
-                Assert.AreEqual(expected, File.GetAccessControl(path).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                Assert.AreEqual(expected, ReadHeartbeatSecurity(path));
                 Assert.AreEqual("protected", (string)JObject.Parse(File.ReadAllText(path))["reason"]);
             });
         }
@@ -192,7 +256,7 @@ namespace MCPForUnityTests.Editor.Services
                         reader = File.Open(previous, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                     });
                     Assert.AreEqual("installed", File.ReadAllText(path));
-                    Assert.AreEqual(expected, File.GetAccessControl(backup).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                    Assert.AreEqual(expected, ReadHeartbeatSecurity(backup));
                     CollectionAssert.AreEqual(original, File.ReadAllBytes(backup));
                     Assert.Catch<IOException>(() => HeartbeatFilePublication.Publish(path, "still locked"));
                     CollectionAssert.AreEquivalent(new[] { path, backup }, Directory.GetFiles(Path.GetDirectoryName(path)));
@@ -203,7 +267,7 @@ namespace MCPForUnityTests.Editor.Services
                 }
                 HeartbeatFilePublication.Publish(path, "recovered");
                 Assert.AreEqual("recovered", File.ReadAllText(path));
-                Assert.AreEqual(expected, File.GetAccessControl(path).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                Assert.AreEqual(expected, ReadHeartbeatSecurity(path));
                 Assert.IsFalse(File.Exists(backup));
             });
         }
@@ -233,7 +297,7 @@ namespace MCPForUnityTests.Editor.Services
                     string newerPolicy = ProtectHeartbeatFile(path);
                     HeartbeatFilePublication.Publish(path, "next heartbeat");
                     Assert.AreEqual("next heartbeat", File.ReadAllText(path));
-                    Assert.AreEqual(newerPolicy, File.GetAccessControl(path).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                    Assert.AreEqual(newerPolicy, ReadHeartbeatSecurity(path));
                     CollectionAssert.AreEqual(original, File.ReadAllBytes(backup));
                     Assert.AreEqual("staged", File.ReadAllText(stage));
                     File.Delete(path);
