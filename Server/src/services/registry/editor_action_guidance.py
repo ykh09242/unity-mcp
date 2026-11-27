@@ -82,11 +82,30 @@ _ASSET: Final = {
         "Delete the asset at path through the AssetDatabase. Supply reference_revision from preview_delete to recheck the same scan options, require complete scan coverage and reject reference drift before mutation; omitting it performs an unguarded delete.",
         "path",
     ),
-    "get_dependencies": _read(
-        "Find assets referenced by the selected asset in the imported dependency database.",
-        "path",
-        limit="Forward dependency edges can reach Assets files outside scan_root. "
+    "get_dependencies": ActionGuidance(
+        "Read the SHA-256 of the saved asset file bytes (sourceFileSha256) and its imported dependencies. "
+        "Compare the same path before and after an edit to verify source content preservation.",
+        required=("path",),
+        effects=READ_ONLY_EFFECTS,
+        intent="observe",
+        evidence_limit="Forward dependency edges can reach Assets files outside scan_root. "
         + _REFERENCE_LIMIT,
+        observation={
+            "source": "asset_file",
+            "values": ["sourceFileSha256"],
+            "unavailable": [],
+            "required_parameters": ["path"],
+            "fixed_arguments": {"recursive": False, "page_size": 1},
+            "conditions": "A fresh read of one imported file under Assets. The digest excludes its .meta and dependencies.",
+            "predicates": {
+                "all": [{"op": "equals", "path": "freshness", "value": "live"}],
+                "by_value": {
+                    "sourceFileSha256": [
+                        {"op": "type", "path": "sourceFileSha256", "type": "sha256"}
+                    ]
+                },
+            },
+        },
     ),
     "get_reverse_references": _read(
         "Find project assets that refer to the selected asset, including usages of a prefab.",

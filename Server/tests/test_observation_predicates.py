@@ -8,8 +8,25 @@ from services.registry.action_catalog import (
     POINTER_ORDER_OBSERVATION,
 )
 from services.registry.observation_predicates import evaluate_observation
+from services.registry.editor_action_guidance import EDITOR_ACTIONS
 from tests.test_compile_job_contracts import native_job
 from tests.test_ugui_raycast_diagnostics import sample
+
+
+@pytest.mark.parametrize(
+    ("freshness", "digest", "observed"),
+    [
+        ("live", "ab" * 32, True),
+        ("captured", "ab" * 32, False),
+        ("live", "ab" * 16, False),
+        ("live", "x" * 64, False),
+    ],
+)
+def test_saved_source_digest_requires_fresh_file_evidence(freshness, digest, observed):
+    contract = EDITOR_ACTIONS["manage_asset"]["get_dependencies"].observation
+    value = "sourceFileSha256"
+    reply = {"success": True, "data": {"freshness": freshness, value: digest}}
+    assert evaluate_observation(contract, reply, [value]) == {value: observed}
 
 
 def test_snapshot_reports_false_and_unsaved_path_only_while_fresh():

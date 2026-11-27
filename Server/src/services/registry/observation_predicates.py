@@ -19,7 +19,9 @@ class Choice(TypedDict):
 class FieldType(TypedDict):
     op: Literal["type"]
     path: str
-    type: Literal["string", "boolean", "array", "positive_integer", "nonnegative_integer", "hex32"]
+    type: Literal[
+        "string", "boolean", "array", "positive_integer", "nonnegative_integer", "hex32", "sha256"
+    ]
 
 
 class RelatedField(TypedDict):
@@ -92,11 +94,12 @@ def _satisfies(data: dict | list, clause: Predicate) -> bool:
                     return type(value) is int and value > 0
                 case "nonnegative_integer":
                     return type(value) is int and value >= 0
-                case "hex32":
+                case "hex32" | "sha256":
+                    length = 32 if clause["type"] == "hex32" else 64
                     return (
                         type(value) is str
-                        and len(value) == 32
-                        and re.fullmatch("[0-9a-f]{32}", value) is not None
+                        and len(value) == length
+                        and re.fullmatch("[0-9a-f]+", value) is not None
                     )
         case "single_item_equals":
             other = _field(data, clause.get("other_path"))

@@ -247,7 +247,8 @@ namespace MCPForUnity.Editor.Tools
                 )
                     observation.Add(value);
                 observation.Add(sourceRevision);
-                observation.Add(prepared?.SourceHash ?? FileHash(source, 8L * 1024 * 1024 * 1024));
+                string sourceFileSha256 = prepared?.SourceHash ?? FileHash(source, 8L * 1024 * 1024 * 1024);
+                observation.Add(sourceFileSha256);
                 observation.Add(prepared?.MetadataHash ?? FileHash(source + ".meta", 16L * 1024 * 1024));
                 if (destination != null)
                 {
@@ -396,7 +397,9 @@ namespace MCPForUnity.Editor.Tools
                     ["destination"] = destination,
                     ["scanRoot"] = root,
                     ["recursive"] = recursive,
+                    ["freshness"] = "live",
                     ["sourceRevision"] = sourceRevision,
+                    ["sourceFileSha256"] = sourceFileSha256,
                     ["referenceRevision"] = revision,
                     ["revisionMatches"] = expected == null ? JValue.CreateNull() : new JValue(true),
                     ["entries"] = entries,

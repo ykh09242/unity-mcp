@@ -40,6 +40,7 @@ ObservationValue = Literal[
     "shader_source",
     "contents",
     "encodedContents",
+    "sourceFileSha256",
     "nextOffset",
     "shader_graph_structure",
     "unsaved_source",

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Threading;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -124,6 +125,27 @@ namespace MCPForUnityTests.EditMode.Tools
             var response = JObject.FromObject(ManageAsset.HandleCommand(p));
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             return (JObject)response["data"];
+        }
+
+        [Test]
+        public void SourceDigestTracksSavedBytesAcrossMetadataAndContentEdits()
+        {
+            source = root + "/sample.bytes";
+            byte[] original = { 0, 255, 13, 10 };
+            File.WriteAllBytes(source, original);
+            AssetDatabase.ImportAsset(source, ImportAssetOptions.ForceSynchronousImport);
+            string expected;
+            using (var sha = SHA256.Create())
+                expected = BitConverter.ToString(sha.ComputeHash(original)).Replace("-", "").ToLowerInvariant();
+            JObject before = Data(Request("get_dependencies"));
+            Assert.AreEqual("live", (string)before["freshness"]);
+            Assert.AreEqual(expected, (string)before["sourceFileSha256"]);
+
+            AssetDatabase.SetLabels(AssetDatabase.LoadMainAssetAtPath(source), new[] { "metadata-only" });
+            Assert.AreEqual(expected, (string)Data(Request("get_dependencies"))["sourceFileSha256"]);
+            File.WriteAllBytes(source, new byte[] { 0, 254, 13, 10 });
+            AssetDatabase.ImportAsset(source, ImportAssetOptions.ForceSynchronousImport);
+            Assert.AreNotEqual(expected, (string)Data(Request("get_dependencies"))["sourceFileSha256"]);
         }
 
         [TestCase("get_dependencies")]

@@ -903,7 +903,10 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                return new SuccessResponse("Asset info retrieved.", GetAssetData(fullPath, generatePreview));
+                string message = "Asset info retrieved.";
+                if (fullPath.StartsWith("Assets/", StringComparison.Ordinal) && !AssetDatabase.IsValidFolder(fullPath))
+                    message += " To compare saved file contents, get_dependencies returns sourceFileSha256 for this path.";
+                return new SuccessResponse(message, GetAssetData(fullPath, generatePreview));
             }
             catch (Exception e)
             {
