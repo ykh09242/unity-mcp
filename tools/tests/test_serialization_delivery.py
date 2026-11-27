@@ -96,8 +96,8 @@ async def test_cancelled_write_remains_owned_until_real_flush_then_releases_sink
         return weak
 
     reference = await exercise()
-    # The finished task's callbacks and cancellation traceback settle separately.
-    for _ in range(5):
-        await asyncio.sleep(0)
-    gc.collect()
-    assert reference() is None
+    # The worker can report completion before it drops its last reference.
+    async with asyncio.timeout(10):
+        while reference() is not None:
+            await asyncio.sleep(0.01)
+            gc.collect()
