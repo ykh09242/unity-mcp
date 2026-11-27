@@ -27,3 +27,17 @@ The verifier checks the public ledger and predecessor. With the private evidence
 python tools/experiments/verify_heartbeat_edit_confirmation.py tools/experiments/editor_catalog_confirmation_results.json
 python tools/experiments/verify_heartbeat_edit_confirmation.py tools/experiments/editor_catalog_confirmation_results.json --require-perfect
 ```
+
+## Verification after the fixes
+
+Package `33a5d84fc` selects server `a394fcb08` and skill `a359961d0`. A fresh isolated Unity 6000.0.69f1 project loaded the committed package. A standard MCP client used each catalog over stdio. Its first inventory contained 61 tools in core and 91 in full. The following checks succeeded in each:
+
+| Contract | Observation in both catalogs |
+|---|---|
+| Skill discovery | The catalog and resource list exposed the root name and description from the packaged manifest. Following its published `read_call` returned the exact committed `SKILL.md` bytes. |
+| Search arguments | The JSON example from initialization accepted the recorded search text. Both agent browsing and ranked search accepted `query` and `selection` as sibling arguments. |
+| Scoped object listing | The original projection-only request returned six objects in the active scene, including `Dispatch Overlay` and `Reference Canvas`, with matching IDs and component types. The native scene snapshots matched before and after these reads. |
+
+The startup instructions, both skill distributions and the discovery tool now describe how to open the guide before its first read. The server publishes root metadata from the validated manifest and continues to check access to each listed resource. The search handler and Editor share the bounded pager for explicit scene scopes. The default legacy lookup and incomplete selectors continue to require a usable filter. [Skill metadata specification](https://skills.extensions.modelcontextprotocol.io/specification/beta/skills#resource-metadata) · [MCP resources](https://modelcontextprotocol.io/specification/2025-06-18/server/resources)
+
+The previously failing projection also failed on the original native Editor before the change. All 86 scoped-search EditMode cases passed after it. The server and SDK regression groups passed 150 tests. Bundle, skill and release-tool checks passed 97 tests with 383 subtests. The shipping Editor exited and all 130 shared tool preferences matched. Hosted first-attempt completion and failure rates in this report apply to `79fc892df`. The later checks used deterministic clients. [Native tests](../../TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/FindGameObjectsScopedSearchTests.cs) · [SDK search tests](../../Server/tests/test_search_intent_contract.py) · [HTTP skill tests](../../Server/tests/http/test_mcp_skills.py)
