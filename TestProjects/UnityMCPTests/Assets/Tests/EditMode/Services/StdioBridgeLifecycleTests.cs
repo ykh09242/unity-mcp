@@ -140,7 +140,7 @@ namespace MCPForUnityTests.Editor.Services
             uint sections,
             IntPtr owner,
             IntPtr group,
-            IntPtr dacl,
+            out IntPtr dacl,
             IntPtr sacl,
             out IntPtr descriptor
         );
@@ -163,28 +163,82 @@ namespace MCPForUnityTests.Editor.Services
         [DllImport("kernel32.dll")]
         private static extern IntPtr LocalFree(IntPtr memory);
 
-        private static string ReadHeartbeatSecurity(string path, uint sections = 4)
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetSecurityDescriptorControl(IntPtr descriptor, out ushort control, out uint revision);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct AclSizeInformation
         {
-            uint error = GetNamedSecurityInfoW(path, 1, sections, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out var descriptor);
+            public uint EntryCount;
+            public uint BytesUsed;
+            public uint BytesFree;
+        }
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetAclInformation(IntPtr acl, out AclSizeInformation info, uint size, uint informationClass);
+
+        private sealed class HeartbeatFilePolicy
+        {
+            public string Owner;
+            public string Group;
+            public string Dacl;
+            public int AccessFlags;
+            public byte AclRevision;
+            public uint EntryCount;
+            public byte[] Entries;
+        }
+
+        private static HeartbeatFilePolicy ReadHeartbeatPolicy(string path)
+        {
+            uint error = GetNamedSecurityInfoW(path, 1, 7, IntPtr.Zero, IntPtr.Zero, out var acl, IntPtr.Zero, out var descriptor);
             if (error != 0)
                 throw new System.ComponentModel.Win32Exception((int)error);
-            IntPtr sddl = IntPtr.Zero;
             try
             {
-                if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1, sections, out sddl, IntPtr.Zero))
+                Assert.AreNotEqual(IntPtr.Zero, acl, "Expected a DACL on the fixture file.");
+                if (
+                    !GetSecurityDescriptorControl(descriptor, out ushort control, out _)
+                    || !GetAclInformation(acl, out var info, (uint)Marshal.SizeOf<AclSizeInformation>(), 2)
+                ) // AclSizeInformation
                     throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                const int headerSize = 8; // WinNT.h ACL, followed by all used ACEs in evaluation order.
+                var entries = new byte[checked((int)info.BytesUsed - headerSize)];
+                Marshal.Copy(IntPtr.Add(acl, headerSize), entries, 0, entries.Length);
+                return new HeartbeatFilePolicy
+                {
+                    Owner = SecuritySddl(descriptor, 1),
+                    Group = SecuritySddl(descriptor, 2),
+                    Dacl = SecuritySddl(descriptor, 4),
+                    // PRESENT, DEFAULTED, AUTO_INHERIT_REQ and PROTECTED affect policy. AUTO_INHERITED records past processing.
+                    AccessFlags = control & 0x110c,
+                    AclRevision = Marshal.ReadByte(acl),
+                    EntryCount = info.EntryCount,
+                    Entries = entries,
+                };
+            }
+            finally
+            {
+                LocalFree(descriptor);
+            }
+        }
+
+        private static string SecuritySddl(IntPtr descriptor, uint sections)
+        {
+            if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1, sections, out var sddl, IntPtr.Zero))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            try
+            {
                 return Marshal.PtrToStringUni(sddl);
             }
             finally
             {
                 LocalFree(sddl);
-                LocalFree(descriptor);
             }
         }
 
-        private static string ProtectHeartbeatFile(string path)
+        private static HeartbeatFilePolicy ProtectHeartbeatFile(string path)
         {
-            string owner = ReadHeartbeatSecurity(path, 1); // O:<owner SID or SDDL alias>
+            string owner = ReadHeartbeatPolicy(path).Owner; // O:<owner SID or SDDL alias>
             Assert.That(owner, Does.StartWith("O:"));
             string policy = $"D:P(D;;FW;;;AN)(A;;FA;;;{owner.Substring(2)})";
             if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(policy, 1, out var descriptor, IntPtr.Zero))
@@ -198,16 +252,22 @@ namespace MCPForUnityTests.Editor.Services
             {
                 LocalFree(descriptor);
             }
-            string actual = ReadHeartbeatSecurity(path);
-            Assert.AreEqual(policy, ProtectedStagePolicy(actual));
+            var actual = ReadHeartbeatPolicy(path);
+            Assert.That(actual.Dacl, Does.StartWith("D:P"));
+            Assert.That(actual.EntryCount, Is.EqualTo(2));
+            Assert.AreEqual(policy.Substring(policy.IndexOf('(')), actual.Dacl.Substring(actual.Dacl.IndexOf('(')));
             return actual;
         }
 
-        private static string ProtectedStagePolicy(string sddl)
+        private static void AssertHeartbeatPolicy(HeartbeatFilePolicy expected, string path)
         {
-            // Windows can clear the auto-inherited history bit on a new protected object. Compare protection and all ACEs.
-            int firstAce = sddl.IndexOf('(');
-            return sddl.Substring(0, firstAce).Replace("AI", string.Empty) + sddl.Substring(firstAce);
+            var actual = ReadHeartbeatPolicy(path);
+            Assert.AreEqual(expected.Owner, actual.Owner, "Owner SID");
+            Assert.AreEqual(expected.Group, actual.Group, "Group SID");
+            Assert.AreEqual(expected.AccessFlags, actual.AccessFlags, "DACL policy flags");
+            Assert.AreEqual(expected.AclRevision, actual.AclRevision, "ACL revision");
+            Assert.AreEqual(expected.EntryCount, actual.EntryCount, "ACE count");
+            CollectionAssert.AreEqual(expected.Entries, actual.Entries, "Ordered binary ACEs");
         }
 
         [Test]
@@ -215,20 +275,26 @@ namespace MCPForUnityTests.Editor.Services
         {
             WithHeartbeatFile(path =>
             {
-                string expected = ProtectHeartbeatFile(path);
+                var expected = ProtectHeartbeatFile(path);
                 string stage = path + ".tmp";
                 using (File.Create(stage))
-                    Assert.AreNotEqual(expected, ReadHeartbeatSecurity(stage));
+                {
+                    var ordinary = ReadHeartbeatPolicy(stage);
+                    Assert.IsTrue(
+                        ordinary.AccessFlags != expected.AccessFlags || !ordinary.Entries.SequenceEqual(expected.Entries),
+                        "Expected a distinct directory default."
+                    );
+                }
                 File.Delete(stage);
                 using (var handle = HeartbeatFilePublication.CreateProtectedStage(path, stage))
                 using (var stream = new FileStream(handle, FileAccess.Write))
                 {
                     Assert.AreEqual(0, stream.Length);
-                    Assert.AreEqual(ProtectedStagePolicy(expected), ProtectedStagePolicy(ReadHeartbeatSecurity(stage)));
+                    AssertHeartbeatPolicy(expected, stage);
                 }
                 File.Delete(stage);
                 StdioBridgeHost.WriteHeartbeat(true, "protected");
-                Assert.AreEqual(expected, ReadHeartbeatSecurity(path));
+                AssertHeartbeatPolicy(expected, path);
                 Assert.AreEqual("protected", (string)JObject.Parse(File.ReadAllText(path))["reason"]);
             });
         }
@@ -238,7 +304,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             WithHeartbeatFile(path =>
             {
-                string expected = ProtectHeartbeatFile(path);
+                var expected = ProtectHeartbeatFile(path);
                 byte[] original = File.ReadAllBytes(path);
                 string stage = path + ".fixture.pending";
                 using (var handle = HeartbeatFilePublication.CreateProtectedStage(path, stage))
@@ -256,7 +322,7 @@ namespace MCPForUnityTests.Editor.Services
                         reader = File.Open(previous, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                     });
                     Assert.AreEqual("installed", File.ReadAllText(path));
-                    Assert.AreEqual(expected, ReadHeartbeatSecurity(backup));
+                    AssertHeartbeatPolicy(expected, backup);
                     CollectionAssert.AreEqual(original, File.ReadAllBytes(backup));
                     Assert.Catch<IOException>(() => HeartbeatFilePublication.Publish(path, "still locked"));
                     CollectionAssert.AreEquivalent(new[] { path, backup }, Directory.GetFiles(Path.GetDirectoryName(path)));
@@ -267,7 +333,7 @@ namespace MCPForUnityTests.Editor.Services
                 }
                 HeartbeatFilePublication.Publish(path, "recovered");
                 Assert.AreEqual("recovered", File.ReadAllText(path));
-                Assert.AreEqual(expected, ReadHeartbeatSecurity(path));
+                AssertHeartbeatPolicy(expected, path);
                 Assert.IsFalse(File.Exists(backup));
             });
         }
@@ -294,10 +360,10 @@ namespace MCPForUnityTests.Editor.Services
                 if (newerPublication)
                 {
                     Assert.AreEqual("newer", File.ReadAllText(path));
-                    string newerPolicy = ProtectHeartbeatFile(path);
+                    var newerPolicy = ProtectHeartbeatFile(path);
                     HeartbeatFilePublication.Publish(path, "next heartbeat");
                     Assert.AreEqual("next heartbeat", File.ReadAllText(path));
-                    Assert.AreEqual(newerPolicy, ReadHeartbeatSecurity(path));
+                    AssertHeartbeatPolicy(newerPolicy, path);
                     CollectionAssert.AreEqual(original, File.ReadAllBytes(backup));
                     Assert.AreEqual("staged", File.ReadAllText(stage));
                     File.Delete(path);
