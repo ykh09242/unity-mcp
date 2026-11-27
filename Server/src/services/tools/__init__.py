@@ -18,6 +18,7 @@ from services.registry.action_contracts import (
 )
 from services.registry.routing_schema import with_unity_instance
 from services.registry.response_schema import direct_object_output_schema
+from services.registry.search_arguments import with_search_request
 from services.registry.operation_invocation import wrap_tool
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -97,6 +98,10 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
                 **registered.parameters,
                 "allOf": [*registered.parameters.get("allOf", ()), *conditions],
             }
+        if isinstance(registered, SearchResultTool):
+            registered.parameters = with_search_request(
+                registered.parameters, managed=tool_name == "manage_tools"
+            )
         if tool_name != "get_execution_receipt":
             registered.parameters = with_unity_instance(registered.parameters)
         mcp.add_tool(registered)

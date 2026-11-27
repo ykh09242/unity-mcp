@@ -4,6 +4,7 @@ import json
 
 from click.testing import CliRunner
 from fastmcp import Client, FastMCP
+from jsonschema import Draft202012Validator
 import pytest
 
 
@@ -37,6 +38,86 @@ async def test_catalog_selects_one_declared_operation_within_the_current_invento
         ).structured_content
         assert unknown["success"] is False
         assert {tool.name for tool in await client.list_tools()} == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize("server", [True, False], indirect=True)
+async def test_structured_search_matches_flat_fields_on_the_advertised_connection(
+    server, mode, monkeypatch
+):
+    from core.config import config
+    from transport.plugin_hub import PluginHub
+    from transport.plugin_registry import PluginRegistry
+    from transport.unity_instance_middleware import UnityInstanceMiddleware
+
+    monkeypatch.setattr(config, "transport_mode", "http")
+    monkeypatch.setattr(PluginHub, "_registry", PluginRegistry())
+    server.add_middleware(UnityInstanceMiddleware())
+    # The first form reproduces the rejected search after a verified source edit.
+    requests = [
+        {
+            "query": "UI Toolkit hover pointer move mouse tooltip live UXML UI Builder",
+            "selection": "agent",
+        },
+        {
+            "query": "  요청 그대로؟  ",
+            "selection": "agent",
+            "limit": 100,
+            "route_surfaces": "resources",
+        },
+        {
+            "observation_source": "editor_live",
+            "intent": "observe",
+            "host_tool_names": ["manage_tools"],
+        },
+    ]
+    async with Client(server, mode=mode) as client:
+        inventory = {tool.name: tool.input_schema for tool in await client.list_tools()}
+        directory = (await client.call_tool("search_unity_tools", requests[0])).structured_content
+        requests.append(
+            {"selection": "agent", "family": directory["families"][0]["family"], "limit": 1}
+        )
+        for tool, prefix in (
+            ("search_unity_tools", {}),
+            ("manage_tools", {"action": "search"}),
+            ("manage_tools", {"action": "catalog"}),
+        ):
+            validator = Draft202012Validator(inventory[tool])
+            draft = {**prefix, "query": requests[0]}
+            prepared = (
+                await client.call_tool(
+                    "manage_tools", {"action": "prepare", "tool": tool, "arguments": draft}
+                )
+            ).structured_content
+            assert prepared["ready"] and prepared["prepared_call"]["arguments"] == draft
+            for fields in requests:
+                wrapped = {**prefix, "query": fields}
+                validator.validate(wrapped)
+                canonical = {"action": "search"} if prefix else {}
+                expected = (
+                    await client.call_tool(tool, {**canonical, **fields})
+                ).structured_content
+                received = (await client.call_tool(tool, wrapped)).structured_content
+                assert received == expected and received.get("success") is not False
+            for fields in (
+                {**prefix, "query": {"query": {"query": "ports"}}},
+                {**prefix, "query": {"query": "ports", "unity_instance": "Other@123"}},
+                {**prefix, "query": {"query": "ports", "action": "activate"}},
+                {
+                    **prefix,
+                    "query": {"selection": "agent", "query": "ports"},
+                    "selection": "ranked",
+                },
+                {**prefix, "query": {"query": "ports", "limit": 1}, "limit": 5},
+            ):
+                assert not validator.is_valid(fields)
+                assert (await client.call_tool(tool, fields, raise_on_error=False)).is_error
+        for action in ("activate", "prepare", "read_skill"):
+            fields = {"action": action, "query": {"query": "ports"}}
+            assert not Draft202012Validator(inventory["manage_tools"]).is_valid(fields)
+            assert (await client.call_tool("manage_tools", fields, raise_on_error=False)).is_error
+        assert {tool.name for tool in await client.list_tools()} == set(inventory)
 
 
 @pytest.mark.asyncio

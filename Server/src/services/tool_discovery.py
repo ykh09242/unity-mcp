@@ -15,11 +15,18 @@ from mcp_types.version import is_version_at_least
 
 from core.sdk_compatibility import is_reviewed_sdk
 from services.registry import DEFAULT_ENABLED_GROUPS, TOOL_GROUPS, capability_catalog
+from services.registry.search_arguments import unpack_search_request
 from transport.protocol import is_sessionless
 
 
 class SearchResultTool(FunctionTool):
-    """Keep the SDK's JSON result and link concrete reads on the requested surfaces."""
+    """Route search forms through one handler and link concrete reads on the requested surfaces."""
+
+    def search_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return unpack_search_request(arguments, managed=self.name == "manage_tools")
+
+    async def run(self, arguments: dict[str, Any]) -> ToolResult:
+        return await super().run(self.search_arguments(arguments))
 
     def convert_result(self, raw_value: Any) -> ToolResult:
         result = super().convert_result(raw_value)

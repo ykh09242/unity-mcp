@@ -23506,6 +23506,35 @@
                     "query"
                   ]
                 }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "query": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "search",
+                        "catalog"
+                      ]
+                    }
+                  },
+                  "propertyNames": {
+                    "enum": [
+                      "query",
+                      "unity_instance",
+                      "action"
+                    ]
+                  }
+                }
               }
             ],
             "properties": {
@@ -23755,6 +23784,370 @@
                   },
                   {
                     "type": "null"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "allOf": [
+                      {
+                        "else": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "query": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "query"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "observation_source": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "observation_source"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "required_values": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "required_values"
+                              ]
+                            }
+                          ],
+                          "properties": {
+                            "family": {
+                              "type": "null"
+                            },
+                            "offset": {
+                              "const": 0
+                            }
+                          }
+                        },
+                        "if": {
+                          "properties": {
+                            "selection": {
+                              "const": "agent"
+                            }
+                          },
+                          "required": [
+                            "selection"
+                          ]
+                        },
+                        "not": {
+                          "properties": {
+                            "host_tool_evidence": {
+                              "not": {
+                                "type": "null"
+                              }
+                            },
+                            "host_tool_names": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          },
+                          "required": [
+                            "host_tool_names",
+                            "host_tool_evidence"
+                          ]
+                        },
+                        "properties": {
+                          "catalog_query": {
+                            "pattern": "\\S"
+                          },
+                          "query": {
+                            "pattern": "\\S"
+                          }
+                        },
+                        "then": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "query": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "query"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "family": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "family"
+                              ]
+                            }
+                          ],
+                          "properties": {
+                            "catalog_query": {
+                              "type": "null"
+                            },
+                            "intent": {
+                              "type": "null"
+                            },
+                            "observation_source": {
+                              "type": "null"
+                            },
+                            "required_values": {
+                              "type": "null"
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "catalog_query": {
+                        "anyOf": [
+                          {
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "family": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "host_tool_evidence": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "candidates": {
+                                "items": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9_.-]+$",
+                                  "type": "string"
+                                },
+                                "maxItems": 20,
+                                "minItems": 1,
+                                "type": "array"
+                              },
+                              "complete": {
+                                "type": "boolean"
+                              },
+                              "present": {
+                                "items": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9_.-]+$",
+                                  "type": "string"
+                                },
+                                "maxItems": 20,
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "candidates",
+                              "present",
+                              "complete"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "host_tool_names": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9_.-]+$",
+                              "type": "string"
+                            },
+                            "maxItems": 512,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "intent": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "observe",
+                              "interact",
+                              "edit"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "limit": {
+                        "default": 5,
+                        "minimum": 1,
+                        "type": "integer",
+                        "x-unity-mcp-page-size": {
+                          "actions": [
+                            "search",
+                            "catalog"
+                          ],
+                          "maximum": 20
+                        }
+                      },
+                      "observation_source": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "editor_live",
+                              "asset_file",
+                              "imported_asset",
+                              "compile_job",
+                              "scenario_job"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "offset": {
+                        "default": 0,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "query": {
+                        "anyOf": [
+                          {
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "required_values": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "enum": [
+                                "unityCameras",
+                                "cinemachineCameras",
+                                "cinemachineInstalled",
+                                "render_size.width",
+                                "render_size.height",
+                                "current_size",
+                                "view_instance_id",
+                                "presets",
+                                "rendered_image",
+                                "pointer_hit_order",
+                                "console.entries",
+                                "menu.declared_paths",
+                                "active_scene.name",
+                                "active_scene.path",
+                                "compilation.is_compiling",
+                                "compile_job.outcome",
+                                "scenario_job.outcome",
+                                "nodeCount",
+                                "edgeCount",
+                                "nodes",
+                                "edges",
+                                "properties",
+                                "keywords",
+                                "unsaved_graph_structure",
+                                "property_values",
+                                "shader_source",
+                                "contents",
+                                "encodedContents",
+                                "sourceFileSha256",
+                                "nextOffset",
+                                "shader_graph_structure",
+                                "unsaved_source",
+                                "compilation",
+                                "passes",
+                                "subshader_count",
+                                "navigation.module_available",
+                                "navigation.package_available",
+                                "project_auditor.api_supported",
+                                "project_auditor.rules_available"
+                              ],
+                              "type": "string"
+                            },
+                            "maxItems": 32,
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "route_surfaces": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "both",
+                              "tools",
+                              "resources"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "selection": {
+                        "default": "ranked",
+                        "enum": [
+                          "ranked",
+                          "agent"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
                   }
                 ],
                 "default": null,
@@ -28387,6 +28780,26 @@
                     }
                   }
                 }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "query": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ]
+                },
+                "then": {
+                  "propertyNames": {
+                    "enum": [
+                      "query",
+                      "unity_instance"
+                    ]
+                  }
+                }
               }
             ],
             "properties": {
@@ -28530,6 +28943,366 @@
                   },
                   {
                     "type": "null"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "allOf": [
+                      {
+                        "else": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "query": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "query"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "observation_source": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "observation_source"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "required_values": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "required_values"
+                              ]
+                            }
+                          ],
+                          "properties": {
+                            "family": {
+                              "type": "null"
+                            },
+                            "offset": {
+                              "const": 0
+                            }
+                          }
+                        },
+                        "if": {
+                          "properties": {
+                            "selection": {
+                              "const": "agent"
+                            }
+                          },
+                          "required": [
+                            "selection"
+                          ]
+                        },
+                        "not": {
+                          "properties": {
+                            "host_tool_evidence": {
+                              "not": {
+                                "type": "null"
+                              }
+                            },
+                            "host_tool_names": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          },
+                          "required": [
+                            "host_tool_names",
+                            "host_tool_evidence"
+                          ]
+                        },
+                        "properties": {
+                          "catalog_query": {
+                            "pattern": "\\S"
+                          },
+                          "query": {
+                            "pattern": "\\S"
+                          }
+                        },
+                        "then": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "query": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "query"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "family": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "family"
+                              ]
+                            }
+                          ],
+                          "properties": {
+                            "catalog_query": {
+                              "type": "null"
+                            },
+                            "intent": {
+                              "type": "null"
+                            },
+                            "observation_source": {
+                              "type": "null"
+                            },
+                            "required_values": {
+                              "type": "null"
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "catalog_query": {
+                        "anyOf": [
+                          {
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "family": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "host_tool_evidence": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "candidates": {
+                                "items": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9_.-]+$",
+                                  "type": "string"
+                                },
+                                "maxItems": 20,
+                                "minItems": 1,
+                                "type": "array"
+                              },
+                              "complete": {
+                                "type": "boolean"
+                              },
+                              "present": {
+                                "items": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9_.-]+$",
+                                  "type": "string"
+                                },
+                                "maxItems": 20,
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "candidates",
+                              "present",
+                              "complete"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "host_tool_names": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9_.-]+$",
+                              "type": "string"
+                            },
+                            "maxItems": 512,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "intent": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "observe",
+                              "interact",
+                              "edit"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "limit": {
+                        "default": 5,
+                        "minimum": 1,
+                        "type": "integer",
+                        "x-unity-mcp-page-size": {
+                          "maximum": 20
+                        }
+                      },
+                      "observation_source": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "editor_live",
+                              "asset_file",
+                              "imported_asset",
+                              "compile_job",
+                              "scenario_job"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "offset": {
+                        "default": 0,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "query": {
+                        "anyOf": [
+                          {
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "required_values": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "enum": [
+                                "unityCameras",
+                                "cinemachineCameras",
+                                "cinemachineInstalled",
+                                "render_size.width",
+                                "render_size.height",
+                                "current_size",
+                                "view_instance_id",
+                                "presets",
+                                "rendered_image",
+                                "pointer_hit_order",
+                                "console.entries",
+                                "menu.declared_paths",
+                                "active_scene.name",
+                                "active_scene.path",
+                                "compilation.is_compiling",
+                                "compile_job.outcome",
+                                "scenario_job.outcome",
+                                "nodeCount",
+                                "edgeCount",
+                                "nodes",
+                                "edges",
+                                "properties",
+                                "keywords",
+                                "unsaved_graph_structure",
+                                "property_values",
+                                "shader_source",
+                                "contents",
+                                "encodedContents",
+                                "sourceFileSha256",
+                                "nextOffset",
+                                "shader_graph_structure",
+                                "unsaved_source",
+                                "compilation",
+                                "passes",
+                                "subshader_count",
+                                "navigation.module_available",
+                                "navigation.package_available",
+                                "project_auditor.api_supported",
+                                "project_auditor.rules_available"
+                              ],
+                              "type": "string"
+                            },
+                            "maxItems": 32,
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "route_surfaces": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "both",
+                              "tools",
+                              "resources"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "selection": {
+                        "default": "ranked",
+                        "enum": [
+                          "ranked",
+                          "agent"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
                   }
                 ],
                 "default": null,
@@ -53649,6 +54422,35 @@
                     "query"
                   ]
                 }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "query": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "search",
+                        "catalog"
+                      ]
+                    }
+                  },
+                  "propertyNames": {
+                    "enum": [
+                      "query",
+                      "unity_instance",
+                      "action"
+                    ]
+                  }
+                }
               }
             ],
             "properties": {
@@ -53898,6 +54700,370 @@
                   },
                   {
                     "type": "null"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "allOf": [
+                      {
+                        "else": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "query": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "query"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "observation_source": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "observation_source"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "required_values": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "required_values"
+                              ]
+                            }
+                          ],
+                          "properties": {
+                            "family": {
+                              "type": "null"
+                            },
+                            "offset": {
+                              "const": 0
+                            }
+                          }
+                        },
+                        "if": {
+                          "properties": {
+                            "selection": {
+                              "const": "agent"
+                            }
+                          },
+                          "required": [
+                            "selection"
+                          ]
+                        },
+                        "not": {
+                          "properties": {
+                            "host_tool_evidence": {
+                              "not": {
+                                "type": "null"
+                              }
+                            },
+                            "host_tool_names": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          },
+                          "required": [
+                            "host_tool_names",
+                            "host_tool_evidence"
+                          ]
+                        },
+                        "properties": {
+                          "catalog_query": {
+                            "pattern": "\\S"
+                          },
+                          "query": {
+                            "pattern": "\\S"
+                          }
+                        },
+                        "then": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "query": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "query"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "family": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "family"
+                              ]
+                            }
+                          ],
+                          "properties": {
+                            "catalog_query": {
+                              "type": "null"
+                            },
+                            "intent": {
+                              "type": "null"
+                            },
+                            "observation_source": {
+                              "type": "null"
+                            },
+                            "required_values": {
+                              "type": "null"
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "catalog_query": {
+                        "anyOf": [
+                          {
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "family": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "host_tool_evidence": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "candidates": {
+                                "items": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9_.-]+$",
+                                  "type": "string"
+                                },
+                                "maxItems": 20,
+                                "minItems": 1,
+                                "type": "array"
+                              },
+                              "complete": {
+                                "type": "boolean"
+                              },
+                              "present": {
+                                "items": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9_.-]+$",
+                                  "type": "string"
+                                },
+                                "maxItems": 20,
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "candidates",
+                              "present",
+                              "complete"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "host_tool_names": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9_.-]+$",
+                              "type": "string"
+                            },
+                            "maxItems": 512,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "intent": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "observe",
+                              "interact",
+                              "edit"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "limit": {
+                        "default": 5,
+                        "minimum": 1,
+                        "type": "integer",
+                        "x-unity-mcp-page-size": {
+                          "actions": [
+                            "search",
+                            "catalog"
+                          ],
+                          "maximum": 20
+                        }
+                      },
+                      "observation_source": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "editor_live",
+                              "asset_file",
+                              "imported_asset",
+                              "compile_job",
+                              "scenario_job"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "offset": {
+                        "default": 0,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "query": {
+                        "anyOf": [
+                          {
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "required_values": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "enum": [
+                                "unityCameras",
+                                "cinemachineCameras",
+                                "cinemachineInstalled",
+                                "render_size.width",
+                                "render_size.height",
+                                "current_size",
+                                "view_instance_id",
+                                "presets",
+                                "rendered_image",
+                                "pointer_hit_order",
+                                "console.entries",
+                                "menu.declared_paths",
+                                "active_scene.name",
+                                "active_scene.path",
+                                "compilation.is_compiling",
+                                "compile_job.outcome",
+                                "scenario_job.outcome",
+                                "nodeCount",
+                                "edgeCount",
+                                "nodes",
+                                "edges",
+                                "properties",
+                                "keywords",
+                                "unsaved_graph_structure",
+                                "property_values",
+                                "shader_source",
+                                "contents",
+                                "encodedContents",
+                                "sourceFileSha256",
+                                "nextOffset",
+                                "shader_graph_structure",
+                                "unsaved_source",
+                                "compilation",
+                                "passes",
+                                "subshader_count",
+                                "navigation.module_available",
+                                "navigation.package_available",
+                                "project_auditor.api_supported",
+                                "project_auditor.rules_available"
+                              ],
+                              "type": "string"
+                            },
+                            "maxItems": 32,
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "route_surfaces": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "both",
+                              "tools",
+                              "resources"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "selection": {
+                        "default": "ranked",
+                        "enum": [
+                          "ranked",
+                          "agent"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
                   }
                 ],
                 "default": null,
@@ -58530,6 +59696,26 @@
                     }
                   }
                 }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "query": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ]
+                },
+                "then": {
+                  "propertyNames": {
+                    "enum": [
+                      "query",
+                      "unity_instance"
+                    ]
+                  }
+                }
               }
             ],
             "properties": {
@@ -58673,6 +59859,366 @@
                   },
                   {
                     "type": "null"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "allOf": [
+                      {
+                        "else": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "query": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "query"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "observation_source": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "observation_source"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "required_values": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "required_values"
+                              ]
+                            }
+                          ],
+                          "properties": {
+                            "family": {
+                              "type": "null"
+                            },
+                            "offset": {
+                              "const": 0
+                            }
+                          }
+                        },
+                        "if": {
+                          "properties": {
+                            "selection": {
+                              "const": "agent"
+                            }
+                          },
+                          "required": [
+                            "selection"
+                          ]
+                        },
+                        "not": {
+                          "properties": {
+                            "host_tool_evidence": {
+                              "not": {
+                                "type": "null"
+                              }
+                            },
+                            "host_tool_names": {
+                              "not": {
+                                "type": "null"
+                              }
+                            }
+                          },
+                          "required": [
+                            "host_tool_names",
+                            "host_tool_evidence"
+                          ]
+                        },
+                        "properties": {
+                          "catalog_query": {
+                            "pattern": "\\S"
+                          },
+                          "query": {
+                            "pattern": "\\S"
+                          }
+                        },
+                        "then": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "query": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "query"
+                              ]
+                            },
+                            {
+                              "properties": {
+                                "family": {
+                                  "not": {
+                                    "type": "null"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "family"
+                              ]
+                            }
+                          ],
+                          "properties": {
+                            "catalog_query": {
+                              "type": "null"
+                            },
+                            "intent": {
+                              "type": "null"
+                            },
+                            "observation_source": {
+                              "type": "null"
+                            },
+                            "required_values": {
+                              "type": "null"
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "properties": {
+                      "catalog_query": {
+                        "anyOf": [
+                          {
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "family": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "host_tool_evidence": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "candidates": {
+                                "items": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9_.-]+$",
+                                  "type": "string"
+                                },
+                                "maxItems": 20,
+                                "minItems": 1,
+                                "type": "array"
+                              },
+                              "complete": {
+                                "type": "boolean"
+                              },
+                              "present": {
+                                "items": {
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z0-9_.-]+$",
+                                  "type": "string"
+                                },
+                                "maxItems": 20,
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "candidates",
+                              "present",
+                              "complete"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "host_tool_names": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z0-9_.-]+$",
+                              "type": "string"
+                            },
+                            "maxItems": 512,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "intent": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "observe",
+                              "interact",
+                              "edit"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "limit": {
+                        "default": 5,
+                        "minimum": 1,
+                        "type": "integer",
+                        "x-unity-mcp-page-size": {
+                          "maximum": 20
+                        }
+                      },
+                      "observation_source": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "editor_live",
+                              "asset_file",
+                              "imported_asset",
+                              "compile_job",
+                              "scenario_job"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "offset": {
+                        "default": 0,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "query": {
+                        "anyOf": [
+                          {
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "required_values": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "enum": [
+                                "unityCameras",
+                                "cinemachineCameras",
+                                "cinemachineInstalled",
+                                "render_size.width",
+                                "render_size.height",
+                                "current_size",
+                                "view_instance_id",
+                                "presets",
+                                "rendered_image",
+                                "pointer_hit_order",
+                                "console.entries",
+                                "menu.declared_paths",
+                                "active_scene.name",
+                                "active_scene.path",
+                                "compilation.is_compiling",
+                                "compile_job.outcome",
+                                "scenario_job.outcome",
+                                "nodeCount",
+                                "edgeCount",
+                                "nodes",
+                                "edges",
+                                "properties",
+                                "keywords",
+                                "unsaved_graph_structure",
+                                "property_values",
+                                "shader_source",
+                                "contents",
+                                "encodedContents",
+                                "sourceFileSha256",
+                                "nextOffset",
+                                "shader_graph_structure",
+                                "unsaved_source",
+                                "compilation",
+                                "passes",
+                                "subshader_count",
+                                "navigation.module_available",
+                                "navigation.package_available",
+                                "project_auditor.api_supported",
+                                "project_auditor.rules_available"
+                              ],
+                              "type": "string"
+                            },
+                            "maxItems": 32,
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "route_surfaces": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "both",
+                              "tools",
+                              "resources"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
+                      },
+                      "selection": {
+                        "default": "ranked",
+                        "enum": [
+                          "ranked",
+                          "agent"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
                   }
                 ],
                 "default": null,

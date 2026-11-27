@@ -14,7 +14,7 @@ description: "Search Unity tools, actions and readable resources without changin
 
 ## Description
 
-Search Unity tools, actions and readable resources without changing selection or invoking Unity. For exhaustive browsing, pass sibling arguments "selection": "agent" and "query": the original text string. To open a family, set "family" to its returned ID in open_family.arguments. Follow next_offset. For lexical or required evidence searches, use selection=ranked. catalog_query, intent, observation_source and required_values are ranked only. Inspect route_groups for invocations and evidence limits, or no_match for scoped alternatives.
+Search Unity tools, actions and readable resources without changing selection or invoking Unity. For exhaustive browsing, pass "selection": "agent" and "query": the original text. Supply all search fields together at the top level or in one query object. To open a family, set "family" to its returned ID in open_family.arguments. Follow next_offset. For lexical or required evidence searches, use selection=ranked. catalog_query, intent, observation_source and required_values are ranked only. Inspect route_groups for invocations and evidence limits, or no_match for scoped alternatives.
 
 ## Parameters
 

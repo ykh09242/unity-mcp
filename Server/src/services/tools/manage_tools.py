@@ -41,6 +41,7 @@ from services.registry.call_preparation import (
     prepare_tool_call,
 )
 from services.registry.task_search import RANKED_SEARCH_FIELDS, RequiredValues, RouteSurfaces
+from services.registry.search_arguments import SEARCH_INPUT
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -92,33 +93,6 @@ def _prepare_exact_text_example() -> dict[str, Any]:
     }
 
 
-def _one_search_value(*names):
-    return {
-        "anyOf": [
-            {"required": [name], "properties": {name: {"not": {"type": "null"}}}} for name in names
-        ]
-    }
-
-
-_SEARCH_INPUT = {
-    "properties": {"query": {"pattern": r"\S"}, "catalog_query": {"pattern": r"\S"}},
-    "not": {
-        "required": ["host_tool_names", "host_tool_evidence"],
-        "properties": {
-            "host_tool_names": {"not": {"type": "null"}},
-            "host_tool_evidence": {"not": {"type": "null"}},
-        },
-    },
-    "if": {"required": ["selection"], "properties": {"selection": {"const": "agent"}}},
-    "then": {
-        **_one_search_value("query", "family"),
-        "properties": {name: {"type": "null"} for name in RANKED_SEARCH_FIELDS},
-    },
-    "else": {
-        **_one_search_value("query", "observation_source", "required_values"),
-        "properties": {"family": {"type": "null"}, "offset": {"const": 0}},
-    },
-}
 _CatalogQuery = Annotated[
     str | None,
     Field(
@@ -153,8 +127,9 @@ _INTENT_DESCRIPTION = (
     "interact for operating the Editor or running game, edit for changing project content."
 )
 _SEARCH_DESCRIPTION = (
-    'For exhaustive browsing, pass sibling arguments "selection": "agent" and "query": the original '
-    'text string. To open a family, set "family" to its returned ID in open_family.arguments. '
+    'For exhaustive browsing, pass "selection": "agent" and "query": the original text. '
+    "Supply all search fields together at the top level or in one query object. "
+    'To open a family, set "family" to its returned ID in open_family.arguments. '
     "Follow next_offset. For lexical or required evidence searches, "
     "use selection=ranked. catalog_query, intent, observation_source and required_values are ranked only."
 )
@@ -189,7 +164,7 @@ def _resource_read_call(uri: str, project: dict[str, str]) -> dict:
 @mcp_for_unity_tool(
     unity_target=None,
     group=None,
-    input_conditions=(_SEARCH_INPUT,),
+    input_conditions=(SEARCH_INPUT,),
     description=(
         "Search Unity tools, actions and readable resources without changing selection or invoking "
         "Unity. "
@@ -426,7 +401,7 @@ async def search_unity_tools(
                 ]
             },
             "then": {
-                "allOf": [_SEARCH_INPUT],
+                "allOf": [SEARCH_INPUT],
                 "properties": {
                     **{
                         field: {"type": "null"}
@@ -479,7 +454,7 @@ async def search_unity_tools(
         },
     ),
     description=(
-        'Find Unity tools and resources. If the guide is listed, read it with manage_tools(action="read_skill"). '
+        'Find Unity tools and resources. If the guide is listed, call manage_tools(action="read_skill") without a document selector. '
         "When unavailable, use the host's installed skill loader. "
         'For another published skill file, follow read_tool from manage_tools(action="catalog",group="skills"). '
         "Actions: list_instances (list connected Editors on this connection, even without a resource browser), "

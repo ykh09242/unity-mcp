@@ -25,6 +25,7 @@ from core.logging_decorator import log_execution
 from core.telemetry_decorator import telemetry_tool
 from transport.legacy.unity_connection import current_stdio_catalog_pool, run_discovery
 from services.command_progress import foreground_progress
+from services.tool_discovery import SearchResultTool
 from transport.execution_receipts import (
     PreparedExecution,
     component_version,
@@ -770,6 +771,8 @@ class UnityInstanceMiddleware(Middleware):
                 if discovery is not None:
                     tool = discovery.definitions.get(name)
             if tool is not None:
+                if isinstance(tool, SearchResultTool) and arguments is not None:
+                    arguments = tool.search_arguments(arguments)
                 supplied = dict(arguments or {})
                 selector = supplied.pop("unity_instance", None)
                 if (
@@ -863,7 +866,8 @@ class UnityInstanceMiddleware(Middleware):
                 options=options,
                 surface="mcp-tool",
                 name=name,
-                arguments=arguments or {},
+                # Receipt identity binds the submitted representation, including a structured query.
+                arguments=context.message.arguments or {},
                 semantic_context={},
                 policy_params=public_params,
                 custom=public_custom,

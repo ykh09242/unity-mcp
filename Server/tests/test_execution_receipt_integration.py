@@ -56,7 +56,14 @@ def options(runtime, *, key=KEY, retain=True, project=PROJECT):
 
 @asynccontextmanager
 async def sdk_wire(
-    tmp_path, monkeypatch, protocol="2026-07-28", *, enabled=True, tasks=False, scene=False
+    tmp_path,
+    monkeypatch,
+    protocol="2026-07-28",
+    *,
+    enabled=True,
+    tasks=False,
+    scene=False,
+    search=False,
 ):
     """Use the installed public SDK wire adapter and actual receipt middleware/store."""
     monkeypatch.setattr(config, "transport_mode", "stdio")
@@ -127,6 +134,11 @@ async def sdk_wire(
         return ToolResult(structured_content={"action": action, "path": path})
 
     server.tool(name="scene_lifecycle")(scene_load)
+    if search:
+        from services.tool_discovery import SearchResultTool
+        from services.tools.manage_tools import search_unity_tools
+
+        server.add_tool(SearchResultTool.from_function(search_unity_tools))
 
     async def select(context, **kwargs):
         # Controlled project selection only; ordinary receipt+SDK execution is real.
@@ -230,6 +242,23 @@ async def test_same_key_replays_real_wire_without_callbacks_or_handler(
         assert original["isError"] is repeated["isError"] is as_error
         assert original["_meta"]["application"] == repeated["_meta"]["application"]
         assert repeated["_meta"][META_KEY]["replayed"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["2025-11-25", "2026-07-28"])
+async def test_search_receipt_binds_the_submitted_form(tmp_path, monkeypatch, protocol):
+    async with sdk_wire(tmp_path, monkeypatch, protocol, search=True) as (runtime, _, call):
+        params = {"name": "search_unity_tools", "_meta": {META_KEY: options(runtime)}}
+        flat = {"query": "ports", "selection": "agent"}
+        nested = {**params, "arguments": {"query": flat}}
+        first = (await call("tools/call", nested))["result"]
+        assert first["structuredContent"]["view"] == "families"
+        replay = (await call("tools/call", nested))["result"]
+        assert replay["_meta"][META_KEY]["replayed"] is True
+        conflict = (await call("tools/call", {**params, "arguments": flat}))["result"]
+        assert conflict["isError"] and conflict["content"] == [
+            {"type": "text", "text": "idempotency_conflict"}
+        ]
 
 
 @pytest.mark.asyncio
