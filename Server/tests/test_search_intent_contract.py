@@ -24,19 +24,36 @@ def search_server(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
 async def test_initialize_search_example_is_callable_as_published(search_server, mode):
+    tool = "search_unity_tools"
     instructions = search_server.instructions
-    example = instructions.split("search_unity_tools with arguments ", 1)[1]
-    args, _ = json.JSONDecoder().raw_decode(example)
+    _, marker, example = instructions.partition(f"{tool}(")
+    assert marker, f"Initialization instructions must publish a {tool} call"
+    example = example.lstrip()
+    args, end = json.JSONDecoder().raw_decode(example)
+    assert example[end:].lstrip().startswith(")"), "The example call must close after its arguments"
     assert args == {"query": "<original text>", "selection": "agent"}
     args["query"] = "Inspect a saved asset file"
     async with Client(search_server, mode=mode) as client:
         for selection in ("agent", "ranked"):
             args["selection"] = selection
-            found = await client.call_tool("search_unity_tools", args)
+            found = await client.call_tool(tool, args)
             assert found.structured_content.get("success") is not False
+            structured = {"query": args}
+            prepared = await client.call_tool(
+                "manage_tools", {"action": "prepare", "tool": tool, "arguments": structured}
+            )
+            assert prepared.structured_content["ready"] is True
+            call = prepared.structured_content["prepared_call"]
+            assert call == {"tool": tool, "arguments": structured}
+            nested = await client.call_tool(call["tool"], call["arguments"])
+            assert nested.structured_content == found.structured_content
         invalid = await client.call_tool(
             "manage_tools",
-            {"action": "prepare", "tool": "search_unity_tools", "arguments": {"query": args}},
+            {
+                "action": "prepare",
+                "tool": tool,
+                "arguments": {"query": args, "selection": "agent"},
+            },
             raise_on_error=False,
         )
         assert invalid.is_error and invalid.structured_content["ready"] is False
