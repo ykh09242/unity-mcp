@@ -72,7 +72,16 @@ async def test_skill_directory_returns_readable_advertised_uris(server, mode, mo
             assert (await client.read_resource(**call["params"]))[0].text == "contents of " + row[
                 "uri"
             ]
-        assert reads == visible
+            binding = row["read_tool"]
+            result = await client.call_tool(binding["tool"], binding["arguments"])
+            assert result.structured_content["contents"][0]["text"] == "contents of " + row["uri"]
+        assert reads == [uri for uri in visible for _ in range(2)]
+        for uri in (hidden, denied, local, "skill://first/templates/unlisted"):
+            result = await client.call_tool(
+                "manage_tools", {"action": "read_skill", "skill_uri": uri}, raise_on_error=False
+            )
+            assert result.is_error or result.structured_content["success"] is False
+        assert reads == [uri for uri in visible for _ in range(2)]
 
 
 def test_local_catalog_does_not_invent_published_skill_resources():
@@ -113,4 +122,8 @@ async def test_selected_editor_is_retained_through_skill_discovery_and_read(comm
         assert params == {"uri": "skill://fixture/SKILL.md", "_meta": target}
         saved = await client.read_resource(params["uri"], meta=params["_meta"])
         assert saved[0].text == "Second@other"
+        call = files["skills"][0]["read_tool"]
+        assert call["arguments"]["unity_instance"] == target["unity_instance"]
+        content = await client.call_tool(call["tool"], call["arguments"])
+        assert content.structured_content["contents"][0]["text"] == "Second@other"
     assert command_hub.sent == []

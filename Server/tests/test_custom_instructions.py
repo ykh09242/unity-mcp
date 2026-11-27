@@ -194,7 +194,7 @@ def test_server_appends_guidance_to_actual_fastmcp_instructions(
     assert "Resolve Assets/... in the selected Editor project" in default.instructions
     assert "Client file access and links need a verified shared root" in default.instructions
     assert "Honor client policy and Editor permissions" in default.instructions
-    assert f"If listed, read {entry.SKILL_URI}." in default.instructions
+    assert 'manage_tools(action="read_skill")' in default.instructions
     assert 'manage_tools(action="catalog",group="skills")' in default.instructions
     assert 'manage_tools(action="describe",tool=name,operation=action)' in default.instructions
     assert "meaning" in default.instructions

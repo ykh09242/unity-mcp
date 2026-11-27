@@ -270,7 +270,7 @@ _ACTIONS: Final = {
     "read_console": {Permission.READ: _names("get"), Permission.EDIT: _names("clear")},
     "manage_tools": {
         Permission.READ: _names(
-            "list_groups list_instances search describe prepare catalog inspect_inventory"
+            "list_groups list_instances search describe prepare catalog inspect_inventory read_skill"
         ),
         Permission.EDIT: _names("activate deactivate sync reset"),
     },

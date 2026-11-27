@@ -20,6 +20,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 from transport.protocol import internal_catalog, internal_resource_catalog, is_sessionless
+from transport.skills_extension import SKILL_URI
 
 from models.host_tool_inventory import HostToolEvidence, HostToolNames, input_schema_digest
 from services.registry import (
@@ -411,6 +412,10 @@ async def search_unity_tools(
     group=None,
     input_conditions=(
         {
+            "if": {"required": ["skill_uri"], "properties": {"skill_uri": {"type": "string"}}},
+            "then": {"properties": {"action": {"const": "read_skill"}}},
+        },
+        {
             "if": {
                 "anyOf": [
                     {"properties": {"action": {"const": "search"}}},
@@ -474,8 +479,8 @@ async def search_unity_tools(
         },
     ),
     description=(
-        'Find Unity tools and resources. Open the MCP guide with manage_tools(action="catalog",group="skills") '
-        "and follow its read_call on this connection. "
+        'Find Unity tools and resources. Read the published MCP guide with manage_tools(action="read_skill"). '
+        'For another published skill file, follow read_tool from manage_tools(action="catalog",group="skills"). '
         "Actions: list_instances (list connected Editors on this connection, even without a resource browser), "
         "list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
@@ -512,6 +517,7 @@ async def manage_tools(
             "catalog",
             "inspect_inventory",
             "prepare",
+            "read_skill",
         ],
         "Action to perform.",
     ],
@@ -580,11 +586,18 @@ async def manage_tools(
             examples=[_prepare_exact_text_example()["exact_text"]],
         ),
     ] = None,
+    skill_uri: Annotated[
+        str | None,
+        Field(min_length=1, max_length=2048),
+        "For read_skill, supply a listed skill:// URI. Omit to read the packaged guide.",
+    ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
     discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
     modern = is_sessionless(ctx)
+    if skill_uri is not None and action != "read_skill":
+        return {"success": False, "error": "skill_uri requires read_skill."}
     if action == "catalog" and query is not None and group is None and tool is None:
         action = "search"
     if type(limit) is int and limit > _MAX_DISCOVERY_PAGE:
@@ -700,6 +713,22 @@ async def manage_tools(
             "success": False,
             "error": "include_schema requires one tool for describe, activate or inspect_inventory.",
         }
+    if action == "read_skill":
+        from services.operation_permissions import authorize_remote_resource
+        from services.resource_inventory import read_listed_resource
+
+        if group is not None or tool is not None or query is not None:
+            return {"success": False, "error": "Select the document with skill_uri."}
+        uri = SKILL_URI if skill_uri is None else skill_uri
+        if not uri.startswith("skill://"):
+            return {"success": False, "error": "Select a published skill URI from the catalog."}
+        await authorize_remote_resource(uri)
+        project = await _retry_project_binding(ctx)
+        result = await read_listed_resource(
+            ctx, uri, "skill document", project.get("unity_instance")
+        )
+        return result.to_mcp_result(uri).model_dump(mode="json", by_alias=True, exclude_none=True)
+
     entries = get_registered_tools()
     if action == "catalog":
         from services.registry.action_catalog import CatalogRequest, browse_catalog
@@ -721,10 +750,16 @@ async def manage_tools(
             if request.group == "skills":
                 resources = await _catalog_resources(ctx, concrete_scheme="skill")
                 page = browse_catalog(request, [], visible_names=set(), resources=resources)
-                page["hint"] += " Use the skill row's read_call. Open host-local files in the host."
+                page["hint"] += (
+                    " Use read_tool on this connection or read_call with a resource client."
+                )
                 project = await _retry_project_binding(ctx)
                 for item in page["skills"]:
                     item["read_call"] = _resource_read_call(item["uri"], project)
+                    item["read_tool"] = {
+                        "tool": "manage_tools",
+                        "arguments": {"action": "read_skill", "skill_uri": item["uri"], **project},
+                    }
                 return page
             entries, visible = await _catalog_inventory(ctx, entries, discovery)
             resources = await _catalog_resources(ctx) if request.includes_resources else []

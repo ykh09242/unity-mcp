@@ -23211,6 +23211,25 @@
               },
               {
                 "if": {
+                  "properties": {
+                    "skill_uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "skill_uri"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "const": "read_skill"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
                   "anyOf": [
                     {
                       "properties": {
@@ -23502,7 +23521,8 @@
                   "search",
                   "catalog",
                   "inspect_inventory",
-                  "prepare"
+                  "prepare",
+                  "read_skill"
                 ],
                 "type": "string"
               },
@@ -23822,6 +23842,19 @@
                   "agent"
                 ],
                 "type": "string"
+              },
+              "skill_uri": {
+                "anyOf": [
+                  {
+                    "maxLength": 2048,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "tool": {
                 "anyOf": [
@@ -53321,6 +53354,25 @@
               },
               {
                 "if": {
+                  "properties": {
+                    "skill_uri": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "skill_uri"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "const": "read_skill"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
                   "anyOf": [
                     {
                       "properties": {
@@ -53612,7 +53664,8 @@
                   "search",
                   "catalog",
                   "inspect_inventory",
-                  "prepare"
+                  "prepare",
+                  "read_skill"
                 ],
                 "type": "string"
               },
@@ -53932,6 +53985,19 @@
                   "agent"
                 ],
                 "type": "string"
+              },
+              "skill_uri": {
+                "anyOf": [
+                  {
+                    "maxLength": 2048,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "tool": {
                 "anyOf": [

@@ -153,6 +153,30 @@ async def test_catalog_skill_read_matches_packaged_document(skills_server):
         assert contents[0]["text"].encode("utf-8") == base64.b64decode(
             expected["data"], validate=True
         )
+        response = _message(
+            await skill_request(
+                client,
+                "tools/call",
+                {"name": "manage_tools", "arguments": {"action": "read_skill"}},
+            )
+        )["result"]
+        assert response["structuredContent"]["contents"] == contents
+
+
+@pytest.mark.asyncio
+async def test_guide_can_be_read_from_the_first_tool_list_without_a_resource_client(skills_server):
+    async with skills_http(skills_server) as client:
+        listed = _message(await skill_request(client, "tools/list", {}))["result"]["tools"]
+        tool = next(item for item in listed if item["name"] == "manage_tools")
+        assert 'manage_tools(action="read_skill")' in tool["description"]
+        call = {"name": tool["name"], "arguments": {"action": "read_skill"}}
+        reply = _message(await skill_request(client, "tools/call", call))["result"]
+        (document,) = reply["structuredContent"]["contents"]
+        expected = next(
+            item for item in packaged_record()["payload"]["files"] if item["path"] == "SKILL.md"
+        )
+        assert document["uri"] == SKILL_URI
+        assert document["text"].encode() == base64.b64decode(expected["data"], validate=True)
 
 
 @pytest.mark.asyncio
@@ -468,8 +492,17 @@ async def test_hosted_skill_discovery_uses_the_callers_resource_permissions(
                 fetched = _message(
                     await skill_request(client, "skills/get", {"uri": SKILL_URI}, headers=headers)
                 )
+                via_tool = _message(
+                    await skill_request(
+                        client,
+                        "tools/call",
+                        {"name": "manage_tools", "arguments": {"action": "read_skill"}},
+                        headers=headers,
+                    )
+                )
                 if key == "scoped-read":
                     assert "error" in read
+                    assert "error" in via_tool or via_tool["result"]["isError"]
                     admitted_uri = "mcpforunity://doctor/runtime"
                     admitted = complete_result(
                         await skill_request(
@@ -487,6 +520,10 @@ async def test_hosted_skill_discovery_uses_the_callers_resource_permissions(
                     assert fetched["error"]["code"] == -32602
                 else:
                     assert read["result"]["contents"][0]["uri"] == SKILL_URI
+                    assert (
+                        via_tool["result"]["structuredContent"]["contents"]
+                        == read["result"]["contents"]
+                    )
                     assert listed["skills"] == [fetched["result"]["skill"]]
 
 

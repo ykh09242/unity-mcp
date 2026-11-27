@@ -612,6 +612,10 @@ class UnityInstanceMiddleware(Middleware):
                     logger.debug("Per-call unity_instance resolved to: %s", active_instance)
 
         metadata = _request_target_metadata(ctx) if msg_args is None else {}
+        if getattr(context, "method", None) == "resources/read":
+            nested_target = internal_resource_read_target(ctx, str(getattr(message, "uri", "")))
+            if nested_target is not None:
+                metadata = {**metadata, "unity_instance": nested_target}
         if "unity_instance" in metadata:
             raw = metadata["unity_instance"]
             if not isinstance(raw, str) or not raw.strip():

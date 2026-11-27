@@ -4,6 +4,7 @@ import json
 
 from fastmcp import Context
 from fastmcp.exceptions import AuthorizationError, ToolError
+from fastmcp.resources import ResourceResult
 
 from services.tools import get_unity_instance_from_context
 from transport.protocol import internal_resource_catalog, internal_resource_read
@@ -29,6 +30,16 @@ async def unavailable_inventories(ctx: Context, bindings: dict[str, str]) -> set
     return unavailable
 
 
+async def read_listed_resource(
+    ctx: Context, uri: str, label: str, instance: str | None
+) -> ResourceResult:
+    """Apply the connection's listing and read policies inside the enclosing tool call."""
+    if await unavailable_inventories(ctx, {label: uri}):
+        raise AuthorizationError(f"{label.capitalize()} is unavailable")
+    with internal_resource_read(ctx.fastmcp, uri, instance):
+        return await ctx.fastmcp.read_resource(uri)
+
+
 async def read_inventory(
     ctx: Context, uri: str, label: str, *, project_scoped: bool = True
 ) -> dict:
@@ -37,10 +48,7 @@ async def read_inventory(
         instance = await get_unity_instance_from_context(ctx)
         if not isinstance(instance, str) or not instance:
             raise ToolError(f"Select a Unity instance to read the {label}")
-    if await unavailable_inventories(ctx, {label: uri}):
-        raise AuthorizationError(f"{label.capitalize()} is unavailable")
-    with internal_resource_read(ctx.fastmcp, uri, instance):
-        result = await ctx.fastmcp.read_resource(uri)
+    result = await read_listed_resource(ctx, uri, label, instance)
     message = f"{label.capitalize()} did not return a single JSON object"
     if len(result.contents) != 1 or not isinstance(result.contents[0].content, str):
         raise ToolError(message)
