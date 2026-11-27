@@ -21,6 +21,44 @@ def server(monkeypatch, request):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_discovery_caps_requested_pages_and_routes_unscoped_catalog_text(server, mode):
+    async with Client(server, mode=mode) as client:
+        before = {tool.name for tool in await client.list_tools()}
+        for selection in ("agent", "ranked"):
+            arguments = {"query": "inspect a saved file", "selection": selection}
+            expected = (
+                await client.call_tool("search_unity_tools", {**arguments, "limit": 20})
+            ).structured_content
+            assert expected.get("success") is not False
+            oversized = (
+                await client.call_tool("search_unity_tools", {**arguments, "limit": 100})
+            ).structured_content
+            assert oversized == expected
+            catalog = (
+                await client.call_tool(
+                    "manage_tools", {"action": "catalog", **arguments, "limit": 100}
+                )
+            ).structured_content
+            search = (
+                await client.call_tool(
+                    "manage_tools", {"action": "search", **arguments, "limit": 20}
+                )
+            ).structured_content
+            assert catalog == search
+        args = {"action": "catalog", "tool": "manage_shader"}
+        bounded = (await client.call_tool("manage_tools", {**args, "limit": 20})).structured_content
+        assert (
+            await client.call_tool("manage_tools", {**args, "limit": 100})
+        ).structured_content == bounded
+        refused = await client.call_tool(
+            "manage_tools", {"action": "activate", "group": "ui", "limit": 100}
+        )
+        assert refused.structured_content["success"] is False
+        assert {tool.name for tool in await client.list_tools()} == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 async def test_catalog_and_describe_preserve_inventory_and_schema(server, mode):
     async with Client(server, mode=mode) as client:
         before = {tool.name for tool in await client.list_tools()}
@@ -77,7 +115,7 @@ async def test_catalog_and_describe_preserve_inventory_and_schema(server, mode):
     "arguments",
     [
         {"action": "catalog", "group": "core", "tool": "manage_shader"},
-        {"action": "catalog", "query": "shader"},
+        {"action": "catalog", "query": "shader", "group": "core"},
         {"action": "catalog", "operation": "read"},
         {"action": "catalog", "tool": "unknown"},
         {"action": "catalog", "offset": 1},

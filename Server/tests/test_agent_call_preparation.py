@@ -60,6 +60,13 @@ async def test_preparation_keeps_validation_failures_and_host_filter_explicit(se
             ("manage_tools", {"action": "search", "query": "camera", "arguments": {}}, {}),
             ("manage_tools", {"action": "search", "query": "camera", "include_schema": True}, {}),
             ("manage_tools", {"action": "search", "query": "camera", "operation": "edit"}, {}),
+            ("manage_tools", {"action": "activate", "group": "ui", "limit": 100}, {}),
+            ("manage_tools", {"action": "catalog", "query": "camera", "group": "core"}, {}),
+            (
+                "manage_tools",
+                {"action": "catalog", "query": "camera", "selection": "agent", "intent": "edit"},
+                {},
+            ),
             ("search_unity_tools", {"query": "scene", "offset": 1}, {}),
             ("inspect_serialized_object", {"instance_id": 0}, {}),
             ("inspect_serialized_object", {"instance_id": 1, "mode": "value", "page_size": 80}, {}),

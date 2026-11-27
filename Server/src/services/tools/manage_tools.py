@@ -43,6 +43,21 @@ from services.registry.task_search import RANKED_SEARCH_FIELDS, RequiredValues, 
 
 logger = logging.getLogger("mcp-for-unity-server")
 
+_MAX_DISCOVERY_PAGE = 20
+_RequestedPageSize = Annotated[
+    int,
+    Field(strict=True, ge=1, json_schema_extra={PAGE_SIZE: {"maximum": _MAX_DISCOVERY_PAGE}}),
+    "Requested entries per page. Search and catalog return at most 20. Follow next_offset where available.",
+]
+_ManagePageSize = Annotated[
+    _RequestedPageSize,
+    Field(
+        json_schema_extra={
+            PAGE_SIZE: {"maximum": _MAX_DISCOVERY_PAGE, "actions": ["search", "catalog"]}
+        }
+    ),
+]
+
 _SearchQuery = Annotated[
     str | None,
     Field(
@@ -57,7 +72,7 @@ _SearchQuery = Annotated[
 _ManageQuery = Annotated[
     _SearchQuery,
     Field(
-        description="For search or prepare, the original request verbatim, including names, paths and text.",
+        description="Original request for search, unscoped catalog search or prepare. Keep names, paths and text verbatim.",
         json_schema_extra={ORIGINAL_REQUEST: {"action": "search"}},
     ),
 ]
@@ -192,11 +207,7 @@ def _resource_read_call(uri: str, project: dict[str, str]) -> dict:
 async def search_unity_tools(
     ctx: Context,
     query: _SearchQuery = None,
-    limit: Annotated[
-        int,
-        Field(strict=True, ge=1, le=20, json_schema_extra={PAGE_SIZE: True}),
-        "Maximum results per page.",
-    ] = 5,
+    limit: _RequestedPageSize = 5,
     catalog_query: _CatalogQuery = None,
     intent: Annotated[
         ActionIntent | None, Field(description="Ranked search only. " + _INTENT_DESCRIPTION)
@@ -235,7 +246,7 @@ async def search_unity_tools(
         "family": family,
         "query": query,
         "catalog_query": catalog_query,
-        "limit": limit,
+        "limit": min(limit, _MAX_DISCOVERY_PAGE) if type(limit) is int else limit,
         "intent": intent,
         "observation_source": observation_source,
         "required_values": required_values,
@@ -400,7 +411,15 @@ async def search_unity_tools(
     group=None,
     input_conditions=(
         {
-            "if": {"properties": {"action": {"const": "search"}}},
+            "if": {
+                "anyOf": [
+                    {"properties": {"action": {"const": "search"}}},
+                    {
+                        "required": ["query"],
+                        "properties": {"action": {"const": "catalog"}, "query": {"type": "string"}},
+                    },
+                ]
+            },
             "then": {
                 "allOf": [_SEARCH_INPUT],
                 "properties": {
@@ -411,6 +430,10 @@ async def search_unity_tools(
                     "include_schema": {"const": False},
                 },
             },
+        },
+        {
+            "if": {"properties": {"action": {"not": {"enum": ["search", "catalog"]}}}},
+            "then": {"properties": {"limit": {"maximum": _MAX_DISCOVERY_PAGE}}},
         },
         {
             "if": {"properties": {"action": {"const": "prepare"}}},
@@ -445,7 +468,7 @@ async def search_unity_tools(
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (supply tool alone to list its actions, then select one for its inputs), "
         "prepare (check a draft against a visible tool's input schema and return call arguments without execution), "
-        "catalog (browse by group or tool), "
+        "catalog (browse by group or tool, or search by query alone), "
         "search (discover routes for a task in any language), "
         "inspect_inventory (compare server advertisement with this host's exact-name evidence). "
         + _SEARCH_DESCRIPTION
@@ -489,11 +512,7 @@ async def manage_tools(
         "Single exact tool name for activate/deactivate/describe/prepare/catalog/inspect_inventory.",
     ] = None,
     query: _ManageQuery = None,
-    limit: Annotated[
-        int,
-        Field(strict=True, ge=1, le=20, json_schema_extra={PAGE_SIZE: True}),
-        "Maximum search or catalog page entries (1..20).",
-    ] = 5,
+    limit: _ManagePageSize = 5,
     include_schema: Annotated[
         bool,
         Field(strict=True),
@@ -552,6 +571,16 @@ async def manage_tools(
 
     discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
     modern = is_sessionless(ctx)
+    if action == "catalog" and query is not None and group is None and tool is None:
+        action = "search"
+    if type(limit) is int and limit > _MAX_DISCOVERY_PAGE:
+        if action == "catalog":
+            limit = _MAX_DISCOVERY_PAGE
+        elif action != "search":
+            return {
+                "success": False,
+                "error": "A larger page request applies only to search or catalog.",
+            }
     if action == "prepare":
         if not tool or arguments is None:
             return not_prepared("Supply one exact tool name and its draft arguments.")
@@ -664,7 +693,7 @@ async def manage_tools(
         if query is not None:
             return {
                 "success": False,
-                "error": "catalog uses group or tool selectors without a query.",
+                "error": "Supply a catalog group or tool selector, or search by query without a selector.",
             }
         try:
             request = CatalogRequest(

@@ -23211,11 +23211,28 @@
               },
               {
                 "if": {
-                  "properties": {
-                    "action": {
-                      "const": "search"
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "action": {
+                          "const": "search"
+                        }
+                      }
+                    },
+                    {
+                      "properties": {
+                        "action": {
+                          "const": "catalog"
+                        },
+                        "query": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "query"
+                      ]
                     }
-                  }
+                  ]
                 },
                 "then": {
                   "allOf": [
@@ -23363,6 +23380,27 @@
                     },
                     "tool": {
                       "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "not": {
+                        "enum": [
+                          "search",
+                          "catalog"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "limit": {
+                      "maximum": 20
                     }
                   }
                 }
@@ -23610,10 +23648,15 @@
               },
               "limit": {
                 "default": 5,
-                "maximum": 20,
                 "minimum": 1,
                 "type": "integer",
-                "x-unity-mcp-page-size": true
+                "x-unity-mcp-page-size": {
+                  "actions": [
+                    "search",
+                    "catalog"
+                  ],
+                  "maximum": 20
+                }
               },
               "observation_source": {
                 "anyOf": [
@@ -28383,10 +28426,11 @@
               },
               "limit": {
                 "default": 5,
-                "maximum": 20,
                 "minimum": 1,
                 "type": "integer",
-                "x-unity-mcp-page-size": true
+                "x-unity-mcp-page-size": {
+                  "maximum": 20
+                }
               },
               "observation_source": {
                 "anyOf": [
@@ -53242,11 +53286,28 @@
               },
               {
                 "if": {
-                  "properties": {
-                    "action": {
-                      "const": "search"
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "action": {
+                          "const": "search"
+                        }
+                      }
+                    },
+                    {
+                      "properties": {
+                        "action": {
+                          "const": "catalog"
+                        },
+                        "query": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "query"
+                      ]
                     }
-                  }
+                  ]
                 },
                 "then": {
                   "allOf": [
@@ -53394,6 +53455,27 @@
                     },
                     "tool": {
                       "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "not": {
+                        "enum": [
+                          "search",
+                          "catalog"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "limit": {
+                      "maximum": 20
                     }
                   }
                 }
@@ -53641,10 +53723,15 @@
               },
               "limit": {
                 "default": 5,
-                "maximum": 20,
                 "minimum": 1,
                 "type": "integer",
-                "x-unity-mcp-page-size": true
+                "x-unity-mcp-page-size": {
+                  "actions": [
+                    "search",
+                    "catalog"
+                  ],
+                  "maximum": 20
+                }
               },
               "observation_source": {
                 "anyOf": [
@@ -58414,10 +58501,11 @@
               },
               "limit": {
                 "default": 5,
-                "maximum": 20,
                 "minimum": 1,
                 "type": "integer",
-                "x-unity-mcp-page-size": true
+                "x-unity-mcp-page-size": {
+                  "maximum": 20
+                }
               },
               "observation_source": {
                 "anyOf": [

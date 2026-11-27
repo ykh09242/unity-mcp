@@ -47,10 +47,15 @@ def not_prepared(reason: str, **details) -> dict:
     return {"success": False, "ready": False, "scope": "input_schema", "error": reason, **details}
 
 
-def _page_maximum(name, definition):
+def _page_maximum(name, definition, arguments):
     # Registered tools use page_size for response pagination. Other field names
     # must explicitly declare that meaning. Never infer a cap from prose.
-    if name != "page_size" and definition.get(PAGE_SIZE) is not True:
+    declared = definition.get(PAGE_SIZE)
+    if isinstance(declared, dict):
+        actions = declared.get("actions")
+        if actions is not None and arguments.get("action") not in actions:
+            return None
+    elif name != "page_size" and declared is not True:
         return None
     alternatives = definition.get("anyOf", [definition])
     if not all(isinstance(branch, dict) for branch in alternatives):
@@ -58,6 +63,8 @@ def _page_maximum(name, definition):
     numeric = [branch for branch in alternatives if branch.get("type") != "null"]
     if len(numeric) == 1 and numeric[0].get("type") == "integer":
         cap = numeric[0].get("maximum")
+        if cap is None and isinstance(declared, dict):
+            cap = declared.get("maximum")
         if type(cap) is int and cap >= 1:
             return cap
     return None
@@ -119,7 +126,7 @@ def prepare_tool_call(
                 args[field] = original
                 adjustments.append({"field": field, "source": "original_request"})
         value = args.get(field)
-        maximum = _page_maximum(field, definition)
+        maximum = _page_maximum(field, definition, args)
         if type(value) is int and maximum is not None and value > maximum:
             args[field] = maximum
             adjustments.append({"field": field, "source": "page_maximum", "value": maximum})
