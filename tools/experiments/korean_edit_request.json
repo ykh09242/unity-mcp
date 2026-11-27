@@ -1,0 +1,17 @@
+{
+  "id": "k01",
+  "language": "ko",
+  "query": "Assets/TrialData/QueuePanel.uxml에서 queue-caption에 마우스를 올리면 나오는 문구를 ‘인계 기록을 열까요?’로 바꿔서 원본 파일에 저장해 줘. 화면에 보이는 글자와 다른 요소는 그대로 둬.",
+  "fixture": "r03",
+  "target": "Assets/TrialData/QueuePanel.uxml",
+  "before": {
+    "element": "queue-caption",
+    "text": "Handover queue",
+    "tooltip": "See the log"
+  },
+  "after": {
+    "element": "queue-caption",
+    "text": "Handover queue",
+    "tooltip": "인계 기록을 열까요?"
+  }
+}
