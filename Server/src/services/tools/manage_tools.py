@@ -479,7 +479,8 @@ async def search_unity_tools(
         },
     ),
     description=(
-        'Find Unity tools and resources. Read the published MCP guide with manage_tools(action="read_skill"). '
+        'Find Unity tools and resources. If the guide is listed, read it with manage_tools(action="read_skill"). '
+        "When unavailable, use the host's installed skill loader. "
         'For another published skill file, follow read_tool from manage_tools(action="catalog",group="skills"). '
         "Actions: list_instances (list connected Editors on this connection, even without a resource browser), "
         "list_groups (show all groups and their status), "
