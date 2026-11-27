@@ -1,10 +1,12 @@
 using System;
 using System.ComponentModel;
 using MCPForUnity.Editor.Services.Transport.Transports;
+#if UNITY_EDITOR_WIN || ENABLE_CORECLR
+using System.Runtime.InteropServices;
+#endif
 #if UNITY_EDITOR_WIN
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
@@ -16,6 +18,15 @@ internal static class Publisher
     {
         try
         {
+#if ENABLE_CORECLR
+            if (typeof(object).Assembly.GetName().Name != "System.Private.CoreLib" || Type.GetType("Mono.Runtime") != null)
+                throw new InvalidOperationException("The fixture requires CoreCLR.");
+            if (RuntimeInformation.ProcessArchitecture != RuntimeInformation.OSArchitecture)
+                throw new InvalidOperationException("The fixture requires a native CoreCLR process architecture.");
+            Console.WriteLine($"CoreCLR {RuntimeInformation.FrameworkDescription}, {RuntimeInformation.ProcessArchitecture}");
+#elif UNITY_EDITOR_WIN
+            Console.WriteLine($".NET Framework CLR {Environment.Version}, {IntPtr.Size * 8}-bit");
+#endif
 #if UNITY_EDITOR_WIN
             return CheckWindows(args);
 #else
@@ -55,7 +66,7 @@ internal static class Publisher
 
     private static byte[] ProtectedDacl(string path)
     {
-        var policy = File.GetAccessControl(path);
+        var policy = new FileInfo(path).GetAccessControl();
         using (var current = WindowsIdentity.GetCurrent())
             Console.WriteLine(
                 $"DACL {Path.GetFileName(path)} {policy.GetSecurityDescriptorSddlForm(AccessControlSections.Access).Replace(current.User.Value, "CURRENT_USER")}"
@@ -71,7 +82,6 @@ internal static class Publisher
 
     private static int CheckWindows(string[] args)
     {
-        Console.WriteLine($".NET Framework CLR {Environment.Version}, {IntPtr.Size * 8}-bit");
         Check((GetErrorMode() & 3) == 3, "child inherited noninteractive error mode");
         string path = args[0];
         HeartbeatFilePublication.Publish(path, args[1]);
@@ -83,7 +93,7 @@ internal static class Publisher
         );
         using (var current = WindowsIdentity.GetCurrent())
             access.AddAccessRule(new FileSystemAccessRule(current.User, FileSystemRights.FullControl, AccessControlType.Allow));
-        File.SetAccessControl(path, access);
+        new FileInfo(path).SetAccessControl(access);
         byte[] expected = ProtectedDacl(path);
 
         string empty = path + ".empty";

@@ -1,7 +1,9 @@
 """Compile the production heartbeat publisher and check its native filesystem contract."""
 
-import hashlib
+import argparse
 import ctypes
+import hashlib
+import json
 import os
 import platform
 import stat
@@ -26,48 +28,95 @@ def check(label, actual, expected):
     print(f"PASS {label}: {actual!r}", flush=True)
 
 
-def compile_publisher(executable):
+def compile_publisher(build_directory: Path, *, coreclr: bool) -> list[str | Path]:
     sdk = subprocess.check_output(["dotnet", "--list-sdks"], text=True).splitlines()[-1]
-    version, directory = sdk.rstrip("]").split(" [")
-    compiler = Path(directory) / version / "Roslyn/bincore/csc.dll"
-    if sys.platform == "win32":
-        api = (
-            Path(os.environ["ProgramFiles(x86)"])
-            / "Reference Assemblies/Microsoft/Framework/.NETFramework/v4.8"
-        )
-        define = "UNITY_EDITOR_WIN"
+    version, sdk_directory = sdk.rstrip("]").split(" [")
+    sdk_root = Path(sdk_directory)
+    compiler = sdk_root / version / "Roslyn/bincore/csc.dll"
+    define = {
+        "darwin": "UNITY_EDITOR_OSX",
+        "linux": "UNITY_EDITOR_LINUX",
+        "win32": "UNITY_EDITOR_WIN",
+    }[sys.platform]
+    if coreclr:
+        executable = build_directory / "Publisher.dll"
+        defines = f"{define};ENABLE_CORECLR"
+        references = coreclr_references(sdk_root, executable)
+        invocation = ["dotnet", "exec", executable]
     else:
-        lib = subprocess.check_output(
-            ["pkg-config", "--variable=libdir", "mono-2"], text=True
-        ).strip()
-        api = Path(lib) / "mono/4.7.2-api"
-        define = {"darwin": "UNITY_EDITOR_OSX", "linux": "UNITY_EDITOR_LINUX"}[sys.platform]
+        executable = build_directory / "Publisher.exe"
+        defines = define
+        references = legacy_references()
+        invocation = [executable] if sys.platform == "win32" else ["mono", executable]
+
     subprocess.run(
         [
             "dotnet",
             compiler,
             "-nologo",
+            "-noconfig",
             "-nostdlib+",
             "-target:exe",
-            f"-define:{define}",
+            f"-define:{defines}",
             f"-out:{executable}",
-            *[f"-r:{api / assembly}.dll" for assembly in ("mscorlib", "System", "System.Core")],
+            *[f"-r:{assembly}" for assembly in references],
             SOURCE,
             FIXTURE / "Publisher.cs",
         ],
         check=True,
     )
     print(
-        f"{define} Roslyn {version}, source SHA-256 {hashlib.sha256(SOURCE.read_bytes()).hexdigest()}"
+        f"{defines} Roslyn {version}, source SHA-256 {hashlib.sha256(SOURCE.read_bytes()).hexdigest()}",
+        flush=True,
     )
+    return invocation
 
 
-def publish(executable, path, payload, expected=0):
-    result = subprocess.run(["mono", executable, path, payload], timeout=20, umask=0o027)
+def coreclr_references(sdk_root: Path, executable: Path) -> list[Path]:
+    # Use the installed .NET 10 targeting pack without invoking project restore.
+    packs = sdk_root.parent / "packs/Microsoft.NETCore.App.Ref"
+    candidates = [
+        path for path in packs.glob("10.0.*/ref/net10.0") if "-" not in path.parents[1].name
+    ]
+    if not candidates:
+        raise SystemExit("The CoreCLR fixture requires a Microsoft.NETCore.App.Ref 10.0 pack.")
+    reference_dir = max(candidates, key=lambda path: int(path.parents[1].name.rsplit(".", 1)[-1]))
+    runtime_config = {
+        "runtimeOptions": {
+            "tfm": "net10.0",
+            "rollForward": "LatestPatch",
+            "framework": {
+                "name": "Microsoft.NETCore.App",
+                "version": reference_dir.parents[1].name,
+            },
+        }
+    }
+    executable.with_suffix(".runtimeconfig.json").write_text(
+        json.dumps(runtime_config), encoding="utf-8"
+    )
+    return sorted(reference_dir.glob("*.dll"))
+
+
+def legacy_references() -> list[Path]:
+    if sys.platform == "win32":
+        api = (
+            Path(os.environ["ProgramFiles(x86)"])
+            / "Reference Assemblies/Microsoft/Framework/.NETFramework/v4.8"
+        )
+    else:
+        lib = subprocess.check_output(
+            ["pkg-config", "--variable=libdir", "mono-2"], text=True
+        ).strip()
+        api = Path(lib) / "mono/4.7.2-api"
+    return [api / f"{assembly}.dll" for assembly in ("mscorlib", "System", "System.Core")]
+
+
+def publish(invocation, path, payload, expected=0):
+    result = subprocess.run([*invocation, path, payload], check=False, timeout=20, umask=0o027)
     check(f"{path.name} publication exit", result.returncode, expected)
 
 
-def run_windows_fixture(executable, path, expected):
+def run_windows_fixture(invocation, path, expected):
     # Children inherit this process's error mode. Restore it as soon as the fixture exits.
     kernel = ctypes.WinDLL("kernel32")
     kernel.GetErrorMode.argtypes = []
@@ -78,7 +127,8 @@ def run_windows_fixture(executable, path, expected):
     kernel.SetErrorMode(prior | 0x0001 | 0x0002)  # SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
     try:
         result = subprocess.run(
-            [executable, path, FIRST, SECOND, RECOVERED],
+            [*invocation, path, FIRST, SECOND, RECOVERED],
+            check=False,
             creationflags=subprocess.CREATE_NO_WINDOW,
             stderr=subprocess.PIPE,
             timeout=20,
@@ -113,9 +163,9 @@ def metadata(path):
     return (stat.S_IMODE(info.st_mode), info.st_uid, info.st_gid, acl(path))
 
 
-def test_publication(executable, directory):
+def test_publication(invocation, directory):
     path = directory / "heartbeat.json"
-    publish(executable, path, FIRST)
+    publish(invocation, path, FIRST)
     check("initial umask 0027", stat.S_IMODE(path.stat().st_mode), 0o640)
     check("initial complete UTF-8", path.read_bytes(), FIRST.encode())
     initial_acl = acl(path)
@@ -123,7 +173,7 @@ def test_publication(executable, directory):
     access = metadata(path)
     check("fixture installed an explicit ACL", access[3] != initial_acl, True)
     with path.open("rb") as old:
-        publish(executable, path, SECOND)
+        publish(invocation, path, SECOND)
         check("reader opened before replacement", old.read(), FIRST.encode())
         check("new file identity", os.fstat(old.fileno()).st_ino != path.stat().st_ino, True)
     check("replacement complete UTF-8", path.read_bytes(), SECOND.encode())
@@ -132,19 +182,19 @@ def test_publication(executable, directory):
     path.chmod(0o400)
     before = path.stat()
     readonly = metadata(path)
-    publish(executable, path, RECOVERED, expected=13)
+    publish(invocation, path, RECOVERED, expected=13)
     check("read-only inode identity", path.stat().st_ino, before.st_ino)
     check("read-only content", path.read_bytes(), SECOND.encode())
     check("read-only mode, uid, gid and ACL", metadata(path), readonly)
     check("no uncommitted stage", sorted(p.name for p in directory.iterdir()), [path.name])
     path.chmod(access[0])
-    publish(executable, path, RECOVERED)
+    publish(invocation, path, RECOVERED)
     check("recovery content", path.read_bytes(), RECOVERED.encode())
     check("recovery mode, uid, gid and ACL", metadata(path), access)
     check("no leftover stage", sorted(p.name for p in directory.iterdir()), [path.name])
 
 
-def test_inherited_acl(executable, directory):
+def test_inherited_acl(invocation, directory):
     set_acl(directory, inherit=True)
     # Ask the kernel how an ordinary 0666 create inherits this directory's ACL.
     reference = directory / "reference"
@@ -161,9 +211,9 @@ def test_inherited_acl(executable, directory):
         True,
     )
     path = directory / "heartbeat.json"
-    publish(executable, path, FIRST)
+    publish(invocation, path, FIRST)
     check("first publication inherited mode, uid, gid and ACL", metadata(path), expected)
-    publish(executable, path, SECOND)
+    publish(invocation, path, SECOND)
     check("replacement inherited mode, uid, gid and ACL", metadata(path), expected)
     check("replacement under inherited ACL", path.read_bytes(), SECOND.encode())
     check(
@@ -174,34 +224,39 @@ def test_inherited_acl(executable, directory):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--coreclr", action="store_true", help="Use the installed .NET 10 CoreCLR.")
+    args = parser.parse_args()
     if sys.platform not in ("darwin", "linux", "win32"):
         raise SystemExit("Run on native Windows, macOS or Linux.")
     print(f"{platform.platform()}, architecture {platform.machine()}", flush=True)
     if sys.platform != "win32":
         if subprocess.check_output(["id", "-u"], text=True).strip() == "0":
             raise SystemExit("Run as an unprivileged user to verify write refusal.")
-        subprocess.run(["mono", "--version"], check=True)
+        if not args.coreclr:
+            subprocess.run(["mono", "--version"], check=True)
     with tempfile.TemporaryDirectory(prefix="heartbeat-publication-") as temporary:
         root = Path(temporary)
-        executable = root / "Publisher.exe"
-        compile_publisher(executable)
+        build_directory = root / "publisher"
+        build_directory.mkdir()
+        invocation = compile_publisher(build_directory, coreclr=args.coreclr)
         ordinary = root / "ordinary"
         ordinary.mkdir()
         neighbor = root / "neighbor"
         neighbor.write_bytes(b"unchanged")
-        expected = ["Publisher.exe", "neighbor", "ordinary"]
+        expected = [build_directory.name, neighbor.name, ordinary.name]
         if sys.platform == "win32":
             path = ordinary / "heartbeat.json"
-            run_windows_fixture(executable, neighbor / "invalid.json", expected=1)
-            run_windows_fixture(executable, path, expected=0)
+            run_windows_fixture(invocation, neighbor / "invalid.json", expected=1)
+            run_windows_fixture(invocation, path, expected=0)
             check("recovery complete UTF-8", path.read_bytes(), RECOVERED.encode())
             check("no leftover stage or backup", list(ordinary.iterdir()), [path])
         else:
-            test_publication(executable, ordinary)
+            test_publication(invocation, ordinary)
             inherited = root / "inherited"
             inherited.mkdir()
             expected.append(inherited.name)
-            test_inherited_acl(executable, inherited)
+            test_inherited_acl(invocation, inherited)
         check("neighbor content", neighbor.read_bytes(), b"unchanged")
         check(
             "scratch contents",

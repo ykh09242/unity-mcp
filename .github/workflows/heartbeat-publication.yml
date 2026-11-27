@@ -30,13 +30,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install the Ubuntu tools for the native filesystem check
+      - name: Install the Ubuntu ACL tools
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y mono-devel acl
+          sudo apt-get install --no-install-recommends -y acl
+      # Exercise CoreCLR before installing Mono so its native shim cannot mask a dependency.
+      - name: Verify native ACLs and recovery with CoreCLR
+        if: runner.os != 'Windows'
+        run: python3 tools/tests/fixtures/heartbeat_publication/run.py --coreclr
+      - name: Verify native DACLs, file sharing and recovery with CoreCLR
+        if: runner.os == 'Windows'
+        run: python tools/tests/fixtures/heartbeat_publication/run.py --coreclr
+      - name: Install Mono on Ubuntu
+        if: runner.os == 'Linux' && !cancelled()
+        run: sudo apt-get install --no-install-recommends -y mono-devel
       - name: Verify and install Mono 6.14.1 for Apple Silicon
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && !cancelled()
         shell: bash
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -53,8 +63,8 @@ jobs:
           "$(brew --prefix mono)/bin/mono" --version | grep -F 'Mono JIT compiler version 6.14.1'
           echo "$(brew --prefix mono)/bin" >> "$GITHUB_PATH"
       - name: Verify native ACLs and recovery with Mono
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && !cancelled()
         run: python3 tools/tests/fixtures/heartbeat_publication/run.py
       - name: Verify native DACLs, file sharing and recovery with .NET Framework
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && !cancelled()
         run: python tools/tests/fixtures/heartbeat_publication/run.py
