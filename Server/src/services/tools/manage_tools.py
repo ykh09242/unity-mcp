@@ -170,18 +170,28 @@ def _resource_read_call(uri: str, project: dict[str, str]) -> dict:
     return {"method": "resources/read", "params": params}
 
 
-def _bind_resource_read(row: dict, project: dict[str, str], *, tool_available: bool) -> None:
+def _bind_resource_read(
+    row: dict, project: dict[str, str], *, tool_available: bool, observations: set[str]
+) -> None:
     if "uri_template" in row:
-        if tool_available:
+        row["native_read_after_expansion"] = {
+            "method": "resources/read",
+            "params": {"_meta": project} if project else {},
+            "set_param": "uri",
+        }
+        if tool_available and row["uri_template"] in observations:
             row["read_after_expansion"] = {
                 "tool": "manage_tools",
                 "arguments": {"action": "read_resource", **project},
                 "set_argument": "uri",
             }
+            row["read_guidance"] = (
+                "Use the tool when the expanded URI resolves to this observation with declared options. Use native resources/read for getter execution."
+            )
         return
     uri = row["uri"]
     row["read_call"] = _resource_read_call(uri, project)
-    if tool_available:
+    if tool_available and uri in observations:
         row["read_tool"] = {
             "tool": "manage_tools",
             "arguments": {"action": "read_resource", "uri": uri, **project},
@@ -319,12 +329,14 @@ async def search_unity_tools(
         ctx, get_registered_tools(), getattr(ctx.fastmcp, "_tool_discovery", None)
     )
     # Resolve the caller's inventory on its MCP context before browsing declarations.
+    resources = await _catalog_resources(ctx)
+    observations = {r["uri"] for r in resources if r.get("catalog_observation")}
     outcome = await asyncio.to_thread(
         search_catalog,
         request,
         list(entries.values()),
         visible_names=set(visible),
-        resources=await _catalog_resources(ctx),
+        resources=resources,
     )
     if outcome.get("view") in {"families", "operations"}:
         page = request.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
@@ -373,7 +385,9 @@ async def search_unity_tools(
                 ):
                     binding["invoke"]["arguments"].update(project)
             if binding["kind"] in {"resource", "resource_template"}:
-                _bind_resource_read(binding, project, tool_available=can_manage)
+                _bind_resource_read(
+                    binding, project, tool_available=can_manage, observations=observations
+                )
                 if binding["kind"] == "resource_template":
                     binding["input_contract"] = RESOURCE_TEMPLATE_EXPANSION
         return outcome
@@ -515,8 +529,8 @@ async def search_unity_tools(
         'Find Unity tools and resources. If the guide is listed, call manage_tools(action="read_skill") without a document selector. '
         "When unavailable, use the host's installed skill loader. "
         'For another published skill file, follow read_tool from manage_tools(action="catalog",group="skills").'
-        "\n- read_resource: Read a published URI on this connection after expanding any template. "
-        "Component reads with evaluate_getters=true run project code and can change state.\n"
+        "\n- read_resource: Read a published observation using its catalog tool binding. "
+        "Use native resources/read for other providers and evaluate_getters=true.\n"
         "Actions: list_instances (list connected Editors on this connection, even without a resource browser), "
         "list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
@@ -533,9 +547,9 @@ async def search_unity_tools(
     annotations=ToolAnnotations(
         title="Manage Tools",
         readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=False,
-        openWorldHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
     ),
 )
 async def manage_tools(
@@ -633,7 +647,7 @@ async def manage_tools(
         Field(min_length=1, max_length=4096, pattern=r"^(mcpforunity|skill)://[^{}]+$"),
         input_actions("read_resource"),
         required_for_actions("read_resource"),
-        "For read_resource, copy a published concrete URI or expand a published template.",
+        "For read_resource, follow a catalog observation binding. Use native resources/read for getter execution.",
     ] = None,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
@@ -807,8 +821,11 @@ async def manage_tools(
                     " Use read_tool on this connection or read_call with a resource client."
                 )
                 project = await _retry_project_binding(ctx)
+                observations = {r["uri"] for r in resources if r.get("catalog_observation")}
                 for item in page["skills"]:
                     item["read_call"] = _resource_read_call(item["uri"], project)
+                    if item["uri"] not in observations:
+                        continue
                     item["read_tool"] = {
                         "tool": "manage_tools",
                         "arguments": {"action": "read_skill", "skill_uri": item["uri"], **project},
@@ -826,8 +843,14 @@ async def manage_tools(
                     if isinstance(branch, dict):
                         branch["browse"].update(project)
                 if request.group in {"resources", "resource_templates"}:
+                    observations = {r["uri"] for r in resources if r.get("catalog_observation")}
                     for item in page[request.group]:
-                        _bind_resource_read(item, project, tool_available="manage_tools" in visible)
+                        _bind_resource_read(
+                            item,
+                            project,
+                            tool_available="manage_tools" in visible,
+                            observations=observations,
+                        )
             return page
         except ValueError as error:
             return {"success": False, "error": str(error)}
@@ -925,7 +948,11 @@ async def manage_tools(
         if group is not None or tool is not None or query is not None or limit != 5:
             return {"success": False, "error": "list_instances takes only its action."}
         return await read_inventory(
-            ctx, "mcpforunity://instances", "Editor inventory", project_scoped=False
+            ctx,
+            "mcpforunity://instances",
+            "Editor inventory",
+            reader="manage_tools.list_instances",
+            project_scoped=False,
         )
     if action == "list_groups":
         return await _list_groups(ctx)
@@ -1220,7 +1247,11 @@ async def _catalog_resources(
     from fastmcp.exceptions import AuthorizationError
     from fastmcp.utilities.versions import dedupe_with_versions
     from services.operation_permissions import authorize_remote_resource
-    from services.resource_inventory import same_resource_binding
+    from services.resource_inventory import (
+        catalog_observation,
+        observation_uri_allowed,
+        same_resource_binding,
+    )
 
     await authorize_remote_resource()
     with internal_resource_catalog(ctx.fastmcp):
@@ -1252,8 +1283,13 @@ async def _catalog_resources(
                 "name": item.name,
                 "description": item.description or "",
                 "kwargs": {"meta": item.meta},
+                "catalog_observation": catalog_observation(ctx.fastmcp, selected)
+                and observation_uri_allowed(uri),
             }
         )
+    native_only_templates = {
+        item.uri_template for item in templates if not catalog_observation(ctx.fastmcp, item)
+    }
     resources.extend(
         {
             "uri": item.uri_template,
@@ -1261,6 +1297,7 @@ async def _catalog_resources(
             "description": item.description or "",
             "kwargs": {"meta": item.meta},
             "schema_required": tuple(item.parameters.get("required", ())),
+            "catalog_observation": item.uri_template not in native_only_templates,
         }
         for item in dedupe_with_versions(templates, lambda item: item.uri_template)
     )

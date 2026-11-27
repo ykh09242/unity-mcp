@@ -12,6 +12,7 @@ from fastmcp.server.middleware import Middleware
 
 from core.config import config
 from services.credential_lease import bind_credential_lease, CredentialLeaseError
+from services.resources import register_all_resources
 from services.resources.unity_instances import unity_instances
 from services.tools.manage_tools import manage_tools
 from services.tools.set_active_instance import set_active_instance
@@ -29,7 +30,7 @@ async def test_tools_only_editor_inventory_uses_the_connections_resource(command
     app = FastMCP("tools-only discovery")
     app.add_middleware(ResponseLimitMiddleware())
     app.add_middleware(UnityInstanceMiddleware())
-    app.resource("mcpforunity://instances")(unity_instances)
+    register_all_resources(app)
     app.tool(name="manage_tools")(manage_tools)
     await command_hub.registry.register("second", "Second", "other", "6000.3")
     async with Client(app, mode=mode, cache=False) as client:
@@ -65,7 +66,7 @@ async def test_versioned_inventory_uses_the_callback_selected_by_the_sdk(command
     app = FastMCP("versioned discovery")
     middleware = UnityInstanceMiddleware()
     app.add_middleware(middleware)
-    app.resource("mcpforunity://instances")(unity_instances)
+    register_all_resources(app)
     app.tool(name="manage_tools", version="1.0")(manage_tools)
 
     @app.tool(name="manage_tools", version="2.0")
@@ -111,7 +112,7 @@ async def test_editor_inventory_tool_preserves_resource_policy(command_hub, poli
     app = FastMCP("restricted discovery")
     app.add_middleware(UnityInstanceMiddleware())
     app.add_middleware(ResourcePolicy())
-    app.resource("mcpforunity://instances")(unity_instances)
+    register_all_resources(app)
     app.tool(name="manage_tools")(manage_tools)
     async with Client(app, mode="legacy", cache=False) as client:
         reply = await client.call_tool(
@@ -171,7 +172,7 @@ async def test_read_instances_on_a_stateful_client_with_an_offline_selection(
         "transport.unity_instance_middleware._unity_instance_middleware", middleware
     )
     app.add_middleware(middleware)
-    app.resource("mcpforunity://instances")(unity_instances)
+    register_all_resources(app)
     app.tool(name="set_active_instance")(set_active_instance)
     app.tool(name="manage_tools")(manage_tools)
 

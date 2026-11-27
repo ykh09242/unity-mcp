@@ -15,7 +15,7 @@ description: "Find Unity tools and resources."
 ## Description
 
 Find Unity tools and resources. If the guide is listed, call manage_tools(action="read_skill") without a document selector. When unavailable, use the host's installed skill loader. For another published skill file, follow read_tool from manage_tools(action="catalog",group="skills").
-- read_resource: Read a published URI on this connection after expanding any template. Component reads with evaluate_getters=true run project code and can change state.
+- read_resource: Read a published observation using its catalog tool binding. Use native resources/read for other providers and evaluate_getters=true.
 Actions: list_instances (list connected Editors on this connection, even without a resource browser), list_groups (show all groups and their status), activate/deactivate (select exactly one group or tool), sync (refresh availability from Unity Editor's toggle states), reset (restore configured profile), describe (supply tool alone to list its actions, then select one for its inputs), prepare (check a draft against a visible tool's input schema and return call arguments without execution), catalog (browse by group or tool, or search by query alone), search (discover routes for a task in any language), inspect_inventory (compare server advertisement with this host's exact-name evidence). For exhaustive browsing, pass "selection": "agent" and "query": the original text. Supply all search fields together at the top level or in one query object. To open a family, set "family" to its returned ID in open_family.arguments. Follow next_offset. For lexical or required evidence searches, use selection=ranked. catalog_query, intent, observation_source and required_values are ranked only. Selection changes server tools/list; it does not confirm the client's callable inventory. Use sync after toggling tools in the Unity Editor GUI.
 
 ## Parameters
@@ -42,7 +42,7 @@ Actions: list_instances (list connected Editors on this connection, even without
 | `arguments` | `dict[str, Any] \| None` | — | Prepare only: proposed input object for the exact tool. Pass the original user text in query when needed. |
 | `exact_text` | `list[ExactTextAssertion] \| None` | — | For user-specified exact text, add exact_text and the unchanged original query alongside arguments on prepare. Use an array of {path, expected} objects. Each path is an array of exact keys or zero-based array indices within arguments. Copy expected verbatim from query. |
 | `skill_uri` | `str \| None` | — | For read_skill, supply a listed skill:// URI. Omit to read the packaged guide. |
-| `uri` | `str \| None` | — | For read_resource, copy a published concrete URI or expand a published template. |
+| `uri` | `str \| None` | — | For read_resource, follow a catalog observation binding. Use native resources/read for getter execution. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

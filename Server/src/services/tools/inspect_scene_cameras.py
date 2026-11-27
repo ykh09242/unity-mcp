@@ -30,4 +30,6 @@ from services.resource_inventory import read_inventory
     ),
 )
 async def inspect_scene_cameras(ctx: Context) -> dict:
-    return await read_inventory(ctx, CAMERA_INVENTORY_URI, "scene camera inventory")
+    return await read_inventory(
+        ctx, CAMERA_INVENTORY_URI, "scene camera inventory", reader=CAMERA_INVENTORY_TOOL
+    )

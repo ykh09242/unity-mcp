@@ -5,7 +5,7 @@ from models import MCPResponse
 from models.unity_response import parse_resource_response
 from services.registry import mcp_for_unity_resource
 from services.registry.action_catalog import OBSERVATION_META, SEARCH_TERMS_META
-from services.registry.capability_catalog import MENU_DECLARATIONS_URI
+from services.registry.capability_catalog import MENU_DECLARATIONS_TOOL, MENU_DECLARATIONS_URI
 from services.registry.integration_action_guidance import MENU_INVENTORY_OBSERVATION
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
@@ -20,6 +20,7 @@ class GetMenuItemsResponse(MCPResponse):
 @mcp_for_unity_resource(
     uri=MENU_DECLARATIONS_URI,
     name="menu_items",
+    inventory_reader=MENU_DECLARATIONS_TOOL,
     meta={
         OBSERVATION_META: MENU_INVENTORY_OBSERVATION,
         SEARCH_TERMS_META: {

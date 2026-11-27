@@ -45,6 +45,7 @@ def _validate_instance_id(instance_id: str) -> tuple[int | None, MCPResponse | N
 @mcp_for_unity_resource(
     uri="mcpforunity://scene/gameobject-api",
     name="gameobject_api",
+    catalog_observation=True,
     description="Documentation for GameObject resources. Use find_gameobjects tool to get instance IDs, then access resources below.\n\nURI: mcpforunity://scene/gameobject-api",
 )
 async def get_gameobject_api_docs(_ctx: Context) -> MCPResponse:
@@ -167,6 +168,7 @@ class GameObjectResponse(MCPResponse):
 @mcp_for_unity_resource(
     uri="mcpforunity://scene/gameobject/{instance_id}",
     name="gameobject",
+    catalog_observation=True,
     description="Get bounded GameObject metadata by instance ID: scalar transforms, parent, first 50 child IDs and up to 64 component type names. Follow childrenNextCursor via /children?page_size=50&cursor=... . Children use live sibling indices; restart after any hierarchy edit.\n\nURI: mcpforunity://scene/gameobject/{instance_id}",
 )
 async def get_gameobject(ctx: Context, instance_id: str) -> MCPResponse:
@@ -187,6 +189,7 @@ async def get_gameobject(ctx: Context, instance_id: str) -> MCPResponse:
 @mcp_for_unity_resource(
     uri="mcpforunity://scene/gameobject/{instance_id}/children{?page_size,cursor}",
     name="gameobject_children",
+    catalog_observation=True,
     description="Read bounded direct child IDs in sibling order plus object metadata. page_size defaults to 50 (1-500). Reuse childrenNextCursor with identical target/page_size within 30 seconds. Stable sources page exactly; live-index cursors perform bounded observed-change checks, so restart after any hierarchy edit. Cursors expire on reload or eviction.",
 )
 async def get_gameobject_children(
@@ -259,6 +262,7 @@ def _inspection_evaluation(value: str | bool) -> tuple[bool, MCPResponse | None]
 @mcp_for_unity_resource(
     uri="mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties,evaluate_getters}",
     name="gameobject_components",
+    catalog_observation=True,
     description="Get components on a GameObject. Optional URI query parameters: page_size (default 25), cursor (default 0), include_properties (default true), and evaluate_getters (default false). Default reads use fields and safe native properties. Explicit getter evaluation can run user code and block the Editor.\n\nURI: mcpforunity://scene/gameobject/{instance_id}/components{?page_size,cursor,include_properties,evaluate_getters}",
 )
 async def get_gameobject_components(
@@ -345,6 +349,7 @@ def _component_selector_integer(
 @mcp_for_unity_resource(
     uri="mcpforunity://scene/gameobject/{instance_id}/component/{component_name}{?component_index,component_instance_id,strict_selection,evaluate_getters}",
     name="gameobject_component",
+    catalog_observation=True,
     description="Get a component on a GameObject. The bare URI preserves legacy case-insensitive first-match reads. Optional component_index or component_instance_id selects one live component; strict_selection=true requires uniqueness. Selected reads use the same canonical, case-sensitive component type as manage_components. Indices are zero-based within GetComponents(requested type), not the mixed component list. Prefer the component instanceID from /components; IDs and indices are ephemeral. Unsupported Editors fail without falling back. Default inspection reads fields and safe native properties. evaluate_getters=true explicitly runs user getters and serialization hooks, which can block the Editor.",
 )
 async def get_gameobject_component(
@@ -426,6 +431,7 @@ async def get_gameobject_component(
 @mcp_for_unity_resource(
     uri="mcpforunity://scene/gameobject-by-handle/{handle}",
     name="gameobject_by_handle",
+    catalog_observation=True,
     description="Read the original loaded GameObject and bounded metadata from a v2 session handle. Handles expire on scene reopen, domain reload, Play transitions, Undo/Redo, fixed 600-second lifetime or earlier eviction. Never loads scenes/assets; respects the original GameObject resource policy. Requires v2 Editor support.",
 )
 async def get_gameobject_by_handle(handle: str, ctx: Context) -> dict[str, Any]:

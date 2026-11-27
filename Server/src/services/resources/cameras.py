@@ -5,7 +5,7 @@ from models import MCPResponse
 from models.unity_response import parse_resource_response
 from services.registry import mcp_for_unity_resource
 from services.registry.action_catalog import OBSERVATION_META
-from services.registry.capability_catalog import CAMERA_INVENTORY_URI
+from services.registry.capability_catalog import CAMERA_INVENTORY_TOOL, CAMERA_INVENTORY_URI
 from services.registry.editor_action_guidance import CAMERA_INVENTORY_OBSERVATION
 from services.tools import get_unity_instance_from_context
 from transport.protocol import internal_resource_read_target
@@ -16,6 +16,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 @mcp_for_unity_resource(
     uri=CAMERA_INVENTORY_URI,
     name="cameras",
+    inventory_reader=CAMERA_INVENTORY_TOOL,
     meta={
         OBSERVATION_META: CAMERA_INVENTORY_OBSERVATION,
     },

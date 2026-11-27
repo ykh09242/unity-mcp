@@ -23181,9 +23181,9 @@
         },
         "manage_tools": {
           "annotations": {
-            "destructiveHint": true,
-            "idempotentHint": false,
-            "openWorldHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
             "readOnlyHint": false
           },
           "inputSchema": {
@@ -54235,9 +54235,9 @@
         },
         "manage_tools": {
           "annotations": {
-            "destructiveHint": true,
-            "idempotentHint": false,
-            "openWorldHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
             "readOnlyHint": false
           },
           "inputSchema": {

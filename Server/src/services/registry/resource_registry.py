@@ -9,7 +9,13 @@ _resource_registry: list[dict[str, Any]] = []
 
 
 def mcp_for_unity_resource(
-    uri: str, name: str | None = None, description: str | None = None, **kwargs
+    uri: str,
+    name: str | None = None,
+    description: str | None = None,
+    *,
+    catalog_observation: bool = False,
+    inventory_reader: str | None = None,
+    **kwargs,
 ) -> Callable:
     """
     Decorator for registering MCP resources in the server's resources directory.
@@ -19,6 +25,8 @@ def mcp_for_unity_resource(
     Args:
         name: Resource name (defaults to function name)
         description: Resource description
+        catalog_observation: Permit reads through manage_tools under its observation-only policy.
+        inventory_reader: Fixed inventory operation allowed to read this registered callback.
         **kwargs: Additional arguments passed to @mcp.resource()
 
     Example:
@@ -35,6 +43,8 @@ def mcp_for_unity_resource(
                 "uri": uri,
                 "name": resource_name,
                 "description": description,
+                "catalog_observation": catalog_observation,
+                "inventory_reader": inventory_reader,
                 "kwargs": kwargs,
             }
         )

@@ -1,11 +1,14 @@
 """Follow only concrete skill resources advertised to this MCP connection."""
 
+from functools import partial
 from unittest.mock import AsyncMock
 
 from fastmcp import Client, Context, FastMCP
 from fastmcp.exceptions import AuthorizationError
 from fastmcp.server.middleware import Middleware
 import pytest
+
+from services.resource_inventory import register_catalog_observation
 
 from .test_action_catalog_entrypoints import server as server
 from .test_http_command_outcome import command_hub  # pylint: disable=unused-import
@@ -28,9 +31,9 @@ async def test_skill_directory_returns_readable_advertised_uris(server, mode, mo
         return read
 
     for uri in [*visible, hidden, denied, local]:
-        server.resource(uri)(document(uri))
+        register_catalog_observation(server, uri, document(uri))
 
-    @server.resource("skill://first/templates/{page}")
+    @partial(register_catalog_observation, server, "skill://first/templates/{page}")
     def template(page: str) -> str:
         return page
 
@@ -106,7 +109,7 @@ async def test_selected_editor_is_retained_through_skill_discovery_and_read(comm
     app.tool(name="manage_tools")(manage_tools)
     await command_hub.registry.register("second", "Second", "other", "6000.3")
 
-    @app.resource("skill://fixture/SKILL.md")
+    @partial(register_catalog_observation, app, "skill://fixture/SKILL.md")
     async def selected(ctx: Context) -> str:
         return await ctx.get_state("unity_instance")
 

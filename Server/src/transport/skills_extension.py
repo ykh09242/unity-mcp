@@ -148,8 +148,7 @@ def install_skills(
         from fastmcp.skills.models import GetSkillParams, ListSkillsParams
         from mcp.shared.exceptions import MCPError
         from mcp_types import INVALID_PARAMS
-        from pydantic import Field
-        from services.resource_inventory import PublishedSnapshotResource
+        from services.resource_inventory import PublishedSnapshotResource, same_resource_binding
 
         if not all(
             callable(value)
@@ -180,22 +179,16 @@ def install_skills(
         list_result = ListSkillsResult.model_validate(listed)
         get_result = GetSkillResult.model_validate(fetched)
 
-        class SkillResource(PublishedSnapshotResource):
-            content: str | bytes = Field(exclude=True, repr=False)
-
-            async def read(self) -> str | bytes:
-                return self.content
-
         async def can_discover() -> bool:
             # Mirror FastMCP's manifest visibility without reading the files. The
             # packaged skill owns concrete resources, never a template fallback.
             async with Context(fastmcp=server):
-                for uri, (mime_type, content) in contents.items():
+                for original in files:
+                    uri = str(original.uri)
                     served = await server.get_resource(uri)
                     if not (
-                        isinstance(served, SkillResource)
-                        and served.mime_type == mime_type
-                        and served.content == content
+                        same_resource_binding(served, original)
+                        and served.mime_type == original.mime_type
                         and await _may_read(server, uri)
                     ):
                         return False
@@ -228,7 +221,7 @@ def install_skills(
         for uri, (mime_type, content) in sorted(contents.items()):
             root = get_result.skill if uri == get_result.skill.uri else None
             files.append(
-                SkillResource(
+                PublishedSnapshotResource(
                     uri=uri,
                     name=root.frontmatter.name if root else uri.removeprefix(PREFIX),
                     description=root.frontmatter.description if root else None,

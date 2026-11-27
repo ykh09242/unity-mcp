@@ -222,6 +222,7 @@ class CatalogResource(TypedDict):
     uri: str
     description: str | None
     func: NotRequired[Callable]
+    catalog_observation: NotRequired[bool]
     schema_required: NotRequired[Collection[str]]
     kwargs: NotRequired[dict]
 
@@ -316,6 +317,19 @@ _PREFAB_CONTENTS: Final = ToolGuidance(
     }
 )
 TOOL_GUIDANCE: Final = {
+    "manage_tools": ToolGuidance(
+        actions={
+            "read_resource": ActionGuidance(
+                "Read a published observation. Use native resources/read for other providers and evaluate_getters=true.",
+                ("uri",),
+                replace(READ_ONLY_EFFECTS, idempotent=True),
+            ),
+            "read_skill": ActionGuidance(
+                "Read the packaged guide or a published skill with an observation binding.",
+                effects=replace(READ_ONLY_EFFECTS, idempotent=True),
+            ),
+        }
+    ),
     **{item.name: _PHYSICS for item in CAPABILITIES if item.group == "physics"},
     **{item.name: _UITK for item in CAPABILITIES if item.group == "ui"},
     "manage_physics": _PHYSICS,

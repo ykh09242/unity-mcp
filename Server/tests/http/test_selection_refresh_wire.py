@@ -23,12 +23,12 @@ from transport.unity_instance_middleware import UnityInstanceMiddleware
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 async def test_connection_operation_keeps_its_scope_on_a_project_bound_discovery(command_hub, mode):
     from jsonschema import Draft202012Validator
-    from services.resources.unity_instances import unity_instances
+    from services.resources import register_all_resources
     from services.tools import register_all_tools
 
     app = FastMCP("connection operation")
     app.add_middleware(UnityInstanceMiddleware())
-    app.resource("mcpforunity://instances")(unity_instances)
+    register_all_resources(app)
     register_all_tools(app)
     await command_hub.registry.register("second", "Second", "other", "6000.3")
     selector = {"unity_instance": "Fixture@hash"}

@@ -29,4 +29,6 @@ from services.resource_inventory import read_inventory
     meta={OBSERVATION_META: MENU_INVENTORY_OBSERVATION},
 )
 async def list_menu_declarations(ctx: Context) -> dict:
-    return await read_inventory(ctx, MENU_DECLARATIONS_URI, "menu declaration inventory")
+    return await read_inventory(
+        ctx, MENU_DECLARATIONS_URI, "menu declaration inventory", reader=MENU_DECLARATIONS_TOOL
+    )

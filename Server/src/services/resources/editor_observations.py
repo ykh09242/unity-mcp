@@ -18,6 +18,7 @@ from services.tools.pagination import MAX_POSITION, page_integer
 @mcp_for_unity_resource(
     uri="mcpforunity://editor/game-view-size",
     name="game_view_size",
+    catalog_observation=True,
     meta={OBSERVATION_META: GAME_VIEW_OBSERVATION},
     description=(
         "Read render_size in pixels, the selected preset and available presets from an open "
@@ -31,6 +32,7 @@ async def get_game_view_size(ctx: Context) -> dict:
 @mcp_for_unity_resource(
     uri="mcpforunity://shader/graph/{encoded_path}{?page_size,page_number}",
     name="shader_graph_structure",
+    catalog_observation=True,
     meta={OBSERVATION_META: GRAPH_FILE_OBSERVATION},
     description=(
         "Read node and edge counts and paged structure from the saved Shader Graph file through "

@@ -11,6 +11,7 @@ from transport.legacy.unity_connection import async_send_command_with_retry
 @mcp_for_unity_resource(
     uri="mcpforunity://rendering/stats",
     name="rendering_stats",
+    catalog_observation=True,
     description="Snapshot of rendering counters (draw calls, batches, triangles, texture counts and bytes, etc.).",
 )
 async def get_rendering_stats(ctx: Context) -> MCPResponse:
