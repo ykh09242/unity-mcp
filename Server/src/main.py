@@ -552,8 +552,8 @@ Observe and execute
 
 Edit and verify
 - For unfamiliar C# calls check source or unity_reflect for qualified types, member signatures, static/instance access and parameter types. Recheck after symbol errors.
-- Report checks, scope and gaps. Use runner results for native test counts. Identify isolated probes, substitutions and user actions. Verify cleanup after async effects settle.
-- Preserve punctuation, forward-slash paths and line endings. Use query and exact_text on prepare. For an authorized save, apply in the selected Editor and verify the saved value against the preview and original. Save only the target. For client-side C# preview writes follow the provenance, hash and exact-byte checks in references/scripts.md before writing or refreshing.
+- Report checks, scope, gaps, isolated probes, substitutions and user actions. Use runner results for native test counts. Verify cleanup after async effects settle.
+- Resolve unquoted text from context and current values. Clarify ambiguous boundaries. Preserve literal punctuation, forward-slash paths and line endings. Prepare with query and exact_text. Save only the authorized Editor target and verify against preview and original. For client-side C# previews, check provenance, hash and exact bytes per references/scripts.md before writing or refreshing.
 """
 
 

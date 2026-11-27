@@ -314,6 +314,27 @@ async def test_prepare_preserves_intentional_punctuation_whitespace_and_emoji(se
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("selected", ["Entry closed", "Entry closed."])
+async def test_prepare_keeps_the_callers_choice_when_literal_boundaries_are_ambiguous(
+    server, selected
+):
+    draft = _script_edit(selected)
+    async with Client(server) as client:
+        response = await client.call_tool(
+            "manage_tools",
+            {
+                "action": "prepare",
+                "tool": "apply_text_edits",
+                "arguments": draft,
+                "query": "Replace the line with Entry closed. Keep the other lines.",
+                "exact_text": [{"path": ["edits", 0, "newText"], "expected": selected}],
+            },
+        )
+
+    assert response.structured_content["prepared_call"]["arguments"] == draft
+
+
+@pytest.mark.asyncio
 async def test_prepare_reports_which_array_paths_or_unicode_values_failed(server):
     literal = " e\u0301 🚋 \r\n"
     canonically_equivalent = " é 🚋 \r\n"
