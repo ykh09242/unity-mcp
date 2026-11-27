@@ -98,7 +98,7 @@ def archived_launch(tmp_path):
     }
     journal = recorded / "receipts-ko" / row["id"] / "attempt-1"
     argv = live_agent_trial.actor_command(
-        r"C:\Codex\codex.exe",
+        r"C:\Codex\codex.EXE",
         project,
         journal,
         recorded / "product/server.cmd",

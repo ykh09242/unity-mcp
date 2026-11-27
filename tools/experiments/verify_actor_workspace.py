@@ -78,7 +78,7 @@ class ScopedLaunch:
         require(
             executable.is_absolute()
             and ".." not in executable.parts
-            and executable.name == ("codex.exe" if windows else "codex")
+            and path_type(executable.name) == path_type("codex.exe" if windows else "codex")
             and argv[1:7]
             == [
                 "exec",
