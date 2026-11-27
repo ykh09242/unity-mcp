@@ -1,4 +1,7 @@
 import base64
+import json
+import subprocess
+import sys
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -131,6 +134,42 @@ def test_recovered_rejection_fails_perfection_gate():
     assert perfect(totals)
     totals["new"]["core"]["unsuccessful_public_replies"] = 1
     assert not perfect(totals)
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "per_catalog", "expected_exit", "full_host_errors"),
+    [((), 1, 0, 0), (("--include-primary",), 13, 1, 1)],
+    ids=["supplement", "combined"],
+)
+def test_strict_replay_distinguishes_host_and_public_failures(
+    extra_args, per_catalog, expected_exit, full_host_errors
+):
+    experiments = Path(__file__).resolve().parents[1] / "experiments"
+    replay = subprocess.run(
+        [
+            sys.executable,
+            str(experiments / "verify_edit_language_supplement.py"),
+            str(experiments / "korean_project_scope_confirmation_results.json"),
+            "--require-perfect",
+            *extra_args,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert replay.returncode == expected_exit, replay.stderr or replay.stdout
+    totals = json.loads(replay.stdout)
+    assert set(totals) == {"core", "full"}
+    for counts in totals.values():
+        assert counts["scheduled"] == counts["completed"] == per_catalog
+        assert counts["native_edit_targets_reached"] == per_catalog
+        assert counts["unsuccessful_public_replies"] == counts["missing_public_replies"] == 0
+        assert counts["skill_document_reads"] > 0
+        assert counts["failed_skill_document_reads"] == 0
+    assert totals["core"]["host_errors"] == 0
+    assert totals["full"]["host_errors"] == full_host_errors
+    assert totals["full"]["host_router_errors_without_public_request"] == full_host_errors
 
 
 @pytest.mark.parametrize("omitted_stream", ["events", "stderr"])
