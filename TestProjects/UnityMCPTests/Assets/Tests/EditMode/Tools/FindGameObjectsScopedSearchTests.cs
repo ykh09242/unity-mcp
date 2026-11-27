@@ -76,6 +76,42 @@ namespace MCPForUnityTests.Editor.Tools
             CollectionAssert.AreEquivalent(new[] { first.GetInstanceIDCompat(), second.GetInstanceIDCompat() }, actual);
         }
 
+        [Test]
+        public void UnfilteredPagesRespectSceneVisibilityAndProjectTheSameIds()
+        {
+            GameObject first = Create("Visible", _firstScene);
+            GameObject hidden = Create("Hidden", _firstScene);
+            hidden.SetActive(false);
+            GameObject other = Create("Other", _secondScene);
+            var query = new JObject { ["scene_scope"] = "active", ["page_size"] = 1 };
+            int[] visible = ReadAll(query);
+            CollectionAssert.Contains(visible, first.GetInstanceIDCompat());
+            CollectionAssert.DoesNotContain(visible, hidden.GetInstanceIDCompat());
+            CollectionAssert.DoesNotContain(visible, other.GetInstanceIDCompat());
+
+            query["include_inactive"] = true;
+            query["projection"] = new JArray("name", "active", "transform", "components");
+            query["conditions"] = new JArray();
+            CollectionAssert.Contains(ReadAll(query), hidden.GetInstanceIDCompat());
+            query["scene_scope"] = "exact";
+            query["scene_path"] = _secondScene.path;
+            JObject page = Search(query);
+            CollectionAssert.AreEqual(new[] { other.GetInstanceIDCompat() }, ((JArray)page["instanceIDs"]).Values<int>());
+            Assert.AreEqual(other.GetInstanceIDCompat(), page["projection"][0]["instanceID"].Value<int>());
+            Assert.AreEqual(other.name, page["projection"][0]["name"].Value<string>());
+        }
+
+        [TestCase("search_term", "")]
+        [TestCase("target", "")]
+        [TestCase("search_method", "by_id")]
+        public void IncompleteFiltersDoNotEnumerate(string field, string value)
+        {
+            var request = new JObject { ["scene_scope"] = "active", [field] = value };
+            JObject response = JObject.FromObject(FindGameObjects.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.AreEqual("invalid_parameters", response.Value<string>("code"), response.ToString());
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void DiscoveredId_ModifiesOnlyItsAdditiveSceneObject(bool inactive)

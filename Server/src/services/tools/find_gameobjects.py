@@ -56,9 +56,11 @@ def _scoped_options(search_term, search_method, conditions, page_size, cursor, m
     if search_term:
         predicates.append({"search_method": search_method, "search_term": search_term})
     predicates.extend(conditions or [])
-    if not 1 <= len(predicates) <= 8:
+    if not predicates and (search_term is not None or search_method != "by_name"):
+        raise ValueError("Supply a nonempty search_term for the selected search_method.")
+    if len(predicates) > 8:
         raise ValueError(
-            "Scoped searches require one to eight predicates including the top-level search."
+            "Scoped searches allow at most eight predicates including the top-level search."
         )
     for predicate in predicates:
         if type(predicate) is not dict or set(predicate) != {"search_method", "search_term"}:
@@ -79,11 +81,11 @@ def _scoped_options(search_term, search_method, conditions, page_size, cursor, m
     description=(
         "Search GameObjects by name, tag, layer, component, path or ID; defaults to IDs only. "
         "Optional projection fields name/active/transform/components/handle describe the same returned IDs, "
-        "capped at64 rows,16KiB and16 component names per row; projection_verification reports incomplete coverage. "
+        "capped at 64 rows, 16 KiB and 16 component names per row; projection_verification reports incomplete coverage. "
         "scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. "
         "active uses SceneManager's reported active scene; all_loaded covers loaded ordinary scenes. "
         "exact requires scene_path and reports resultScene. Scoped modes exclude preview/prefab stages. "
-        "Scoped conditions are ANDed (at most eight predicates total). "
+        "Omit filters to list objects in an explicit scene scope. Supplied filters are ANDed (at most eight predicates total). "
         "Scoped pages use opaque cursors and require identical options and unchanged scenes. "
         "Empty continuation pages are valid: hasMore means remaining scan work, not more matches. "
         "totalCount is unknown until complete and then exact only through max_depth (default64, max128). "
@@ -104,7 +106,10 @@ def _scoped_options(search_term, search_method, conditions, page_size, cursor, m
 async def find_gameobjects(
     ctx: Context,
     search_term: Annotated[
-        str | None, Field(description="Search value; optional for scoped conditions-only queries")
+        str | None,
+        Field(
+            description="Search value. Required in legacy mode. Omit filters to list an explicit scene scope."
+        ),
     ] = None,
     search_method: Annotated[
         Literal["by_name", "by_tag", "by_layer", "by_component", "by_path", "by_id"],

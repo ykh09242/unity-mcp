@@ -581,8 +581,13 @@ namespace MCPForUnity.Editor.Helpers
             var toolParams = new ToolParams(parameters);
             query.Inactive = toolParams.GetBool("includeInactive", false) || toolParams.GetBool("searchInactive", false);
             JToken term = Alias(parameters, "search_term", "searchTerm");
-            if (term == null || term.Type == JTokenType.Null || term.Type == JTokenType.String && string.IsNullOrEmpty(term.Value<string>()))
-                term = parameters["target"];
+            JToken target = parameters["target"];
+            if (
+                target != null
+                && target.Type != JTokenType.Null
+                && (term == null || term.Type == JTokenType.Null || term.Type == JTokenType.String && term.Value<string>() == "")
+            )
+                term = target;
             JToken method = Alias(parameters, "search_method", "searchMethod");
             if (term != null && term.Type != JTokenType.Null && !(term.Type == JTokenType.String && string.IsNullOrEmpty(term.Value<string>())))
                 Add(query, method ?? new JValue("by_name"), term);
@@ -602,8 +607,10 @@ namespace MCPForUnity.Editor.Helpers
                     Add(query, item["search_method"], item["search_term"]);
                 }
             }
-            if (query.Predicates.Count == 0 || query.Predicates.Count > 8)
-                throw Invalid("Scoped searches require between one and eight predicates including the top-level search.");
+            if (query.Predicates.Count == 0 && (term?.Type == JTokenType.String || method != null && !JToken.DeepEquals(method, new JValue("by_name"))))
+                throw Invalid("Supply a nonempty search_term for the selected search_method.");
+            if (query.Predicates.Count > 8)
+                throw Invalid("Scoped searches allow at most eight predicates including the top-level search.");
             var types = new Dictionary<string, Type>(StringComparer.Ordinal);
             foreach (Predicate predicate in query.Predicates)
             {

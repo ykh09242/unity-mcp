@@ -248,6 +248,29 @@ async def test_scoped_search_forwards_opaque_cursor_and_keeps_native_details(mon
 
 
 @pytest.mark.asyncio
+async def test_scoped_projection_without_a_filter_uses_the_bounded_search(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    send = AsyncMock(return_value={"success": True, "data": {"instanceIDs": [7]}})
+    monkeypatch.setattr(find_go_mod, "send_with_unity_instance", send)
+    monkeypatch.setattr(find_go_mod, "preflight", AsyncMock(return_value=None))
+    fields = ["name", "active", "transform", "components"]
+    response = await find_go_mod.find_gameobjects(
+        DummyContext(),
+        scene_scope="active",
+        include_inactive=True,
+        projection=fields,
+        refresh_if_dirty=False,
+    )
+    assert response["data"]["instanceIDs"] == [7]
+    _, _, command, params = send.await_args.args
+    assert command == "find_gameobjects" and params["scene_scope"] == "active"
+    assert params["includeInactive"] is True and params["projection"] == fields
+    assert params["pageSize"] == 50 and params["max_depth"] == 64
+    assert "searchTerm" not in params and "conditions" not in params
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "options",
     [
@@ -261,6 +284,10 @@ async def test_scoped_search_forwards_opaque_cursor_and_keeps_native_details(mon
         {"max_depth": 129},
         {"cursor": 0},
         {"cursor": "g" * 32},
+        {"search_term": ""},
+        {"search_term": None, "search_method": "by_id"},
+        {"search_term": None, "conditions": [{"search_method": "by_name", "search_term": ""}]},
+        {"scene_scope": "legacy", "search_term": None},
         {"search_term": "x" * 513},
         {"search_term": "\U0001f600" * 257},
         {"conditions": [{"search_method": "by_name", "search_term": "x", "extra": True}]},
