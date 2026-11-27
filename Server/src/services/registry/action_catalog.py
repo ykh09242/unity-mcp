@@ -1527,6 +1527,11 @@ def browse_catalog(
         response["total_tools"] = len(ordered)
         response["next_offset"] = None
         return response
+    if visible_names is not None and key in {"resources", "resource_templates", "skills"}:
+        response["hint"] = (
+            "Read the advertised URI on this connection. If the host reader asks for a server, "
+            "use its configured connection name. Follow next_offset for more results."
+        )
     end = request.offset + request.limit
     response.update(total=total, offset=request.offset, next_offset=end if end < total else None)
     response[key] = rows

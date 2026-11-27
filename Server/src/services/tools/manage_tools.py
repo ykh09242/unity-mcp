@@ -721,10 +721,7 @@ async def manage_tools(
             if request.group == "skills":
                 resources = await _catalog_resources(ctx, concrete_scheme="skill")
                 page = browse_catalog(request, [], visible_names=set(), resources=resources)
-                page["hint"] = (
-                    "Read a published skill with the row's read_call. Host-local files open in the host. "
-                    "Follow next_offset for more published files."
-                )
+                page["hint"] += " Use the skill row's read_call. Open host-local files in the host."
                 project = await _retry_project_binding(ctx)
                 for item in page["skills"]:
                     item["read_call"] = _resource_read_call(item["uri"], project)
