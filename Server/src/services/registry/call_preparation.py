@@ -7,8 +7,17 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictStr
 from referencing import Registry
 from referencing.exceptions import Unresolvable
 
+from core.config import config
 from models.custom_tool_schema import SchemaContractError, bounded_json, validation_details
+from services.credential_lease import CredentialLeaseError
+from services.operation_permissions import (
+    OperationPermissionError,
+    authorize_remote_operation,
+    required_permissions,
+)
 from services.registry.action_contracts import conflicting_action_fields
+from services.registry.operation_scheduler import OperationScopeChanged
+from services.registry.operation_target import capture_http_target
 
 
 PAGE_SIZE = "x-unity-mcp-page-size"
@@ -46,6 +55,92 @@ class ExactTextAssertion(BaseModel):
 
 def not_prepared(reason: str, **details) -> dict:
     return {"success": False, "ready": False, "scope": "input_schema", "error": reason, **details}
+
+
+async def prepared_execution(ctx, name, arguments, schema):
+    """Observe public grants for this request without issuing a tool or native command."""
+    # Match the public middleware's defaults, including defaults that change the grant floor.
+    params = {
+        key: field["default"]
+        for key, field in schema.get("properties", {}).items()
+        if "default" in field
+    }
+    params.update(arguments)
+    instance = arguments.get("unity_instance") or await ctx.get_state("unity_instance")
+    hosted = config.http_remote_hosted
+    check = {
+        "scope": "public_operation_grants",
+        "mode": "remote_hosted" if hosted else "local",
+        "requester": "not_checked" if hosted else "not_enforced",
+        "selected_target": "not_checked" if hosted else "not_enforced",
+        "host_approval": "not_checked",
+        "editor_approval": "not_checked",
+    }
+    execution = {
+        "via": "tools/call",
+        "handler": "mcp_server",
+        "request_unity_instance": instance,
+        "authorization": "checked_on_invocation",
+        "permission_check": check,
+    }
+    try:
+        grants = required_permissions(name, params)
+    except (OperationPermissionError, ValueError):
+        pass  # Unknown and legacy-unscoped operations have distinct hosted semantics.
+    else:
+        execution["required_server_permissions"] = sorted(grant.value for grant in grants)
+    if not hosted or name in {"read_response", "get_execution_receipt"}:
+        # Retained data checks its stored policy inside the handler.
+        return execution
+    try:
+        await authorize_remote_operation(name, params)
+    except OperationPermissionError:
+        check["requester"] = "denied"
+    except (CredentialLeaseError, ValueError):
+        pass
+    else:
+        check["requester"] = "allowed"
+        check["selected_target"] = await _selected_target_grant(ctx, name, params, instance)
+    return execution
+
+
+async def _selected_target_grant(ctx, name, params, instance) -> str:
+    from transport.plugin_hub import PluginHub
+
+    if name == "manage_tools" and params.get("action") == "list_instances":
+        return "not_applicable"
+    # Selecting an Editor checks the destination, which can differ from the prepare route.
+    if not isinstance(instance, str) or not instance:
+        return "not_checked"
+    if name == "set_active_instance" and params.get("instance") != instance:
+        return "not_checked"
+    session_id = await ctx.get_state("unity_session_id")
+    if not isinstance(session_id, str):
+        return "not_checked"
+    target = await capture_http_target(session_id)
+    if (
+        target is None
+        or target.authorize_public is None
+        or target.scope.instance != instance.rsplit("@", 1)[-1]
+        or not target.is_current()
+    ):
+        return "not_checked"
+    try:
+        check_current = await target.authorize_public(name, params)
+    except OperationPermissionError:
+        check_current = None
+    except (CredentialLeaseError, OperationScopeChanged, ValueError):
+        return "not_checked"
+    # A disconnected socket can remain in the registry while teardown is pending.
+    if not await PluginHub.capture_tool_identity(session_id) or not target.is_current():
+        return "not_checked"
+    if check_current is None:
+        return "denied"
+    try:
+        check_current()
+    except (CredentialLeaseError, OperationScopeChanged):
+        return "not_checked"
+    return "allowed"
 
 
 def _page_maximum(name, definition, arguments):

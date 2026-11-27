@@ -124,6 +124,23 @@ def server(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_debug_detail_requires_an_explicit_advertised_choice(server, mode):
+    marker = "caller-routing-fixture"
+    meta = {"client-setting": marker}
+    async with Client(server, mode=mode) as client:
+        tool = next(t for t in await client.list_tools() if t.name == "debug_request_context")
+        option = tool.input_schema["properties"]["detail"]
+        assert option["default"] == "routing"
+        assert set(option["enum"]) == {"routing", "client", "server"}
+        for args in ({}, {"detail": "client"}, {"detail": "server"}):
+            data = (await client.call_tool(tool.name, args, meta=meta)).structured_content["data"]
+            assert (marker in str(data)) is (args.get("detail") == "client")
+            assert ("cwd" in data["server"]) is (args.get("detail") == "server")
+            assert data["editor_route"]["edit_authorization"] == "not_tested"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 async def test_prepare_reports_the_concrete_editor_operation_without_granting_it(server, mode):
     async with Client(server, mode=mode) as client:
         for name, draft, grant in (
@@ -175,6 +192,14 @@ async def test_prepare_reports_the_concrete_editor_operation_without_granting_it
                 "request_unity_instance": None,
                 "authorization": "checked_on_invocation",
                 "required_server_permissions": [grant],
+                "permission_check": {
+                    "scope": "public_operation_grants",
+                    "mode": "local",
+                    "requester": "not_enforced",
+                    "selected_target": "not_enforced",
+                    "host_approval": "not_checked",
+                    "editor_approval": "not_checked",
+                },
             }
 
 
@@ -218,7 +243,11 @@ async def test_preparation_keeps_validation_failures_and_host_filter_explicit(se
             ("manage_tools", {"action": "search", "query": "camera", "include_schema": True}, {}),
             ("manage_tools", {"action": "search", "query": "camera", "operation": "edit"}, {}),
             ("manage_tools", {"action": "activate", "group": "ui", "limit": 100}, {}),
-            ("manage_tools", {"action": "catalog", "query": "camera", "group": "core"}, {}),
+            (
+                "manage_tools",
+                {"action": "catalog", "query": "camera", "group": "core", "tool": "manage_scene"},
+                {},
+            ),
             ("manage_tools", {"action": "catalog", "tool": " ", "operation": "read"}, {}),
             ("manage_tools", {"action": "catalog", "tool": "x" * 129, "operation": "read"}, {}),
             ("manage_tools", {"action": "catalog", "tool": "read_console", "operation": " "}, {}),

@@ -1,7 +1,9 @@
-from typing import Any
+from itertools import islice
+from typing import Annotated, Any, Literal
 import os
 import sys
 
+from core.config import config
 from core.config_provenance import safe_config_value
 from core.server_build import RUNNING_SERVER
 
@@ -17,12 +19,7 @@ _SECRET_FLAG_MARKERS = ("token", "secret", "password", "api-key", "api_key", "ap
 
 
 def _redact_argv(argv: list[str]) -> list[str]:
-    """Keep flag names for diagnosis, hide the values of secret-bearing ones.
-
-    A remote-hosted server is started with --api-key-service-token on its command line and
-    this tool is callable by every authenticated tenant, so the raw argv handed out the
-    service credential. The flag shape is what helps debug a deployment; the value never is.
-    """
+    """Keep deployment flags while hiding credential values in local process diagnostics."""
     # Every secret-bearing flag the server accepts takes a value, so the token after a bare
     # flag is always that value, even when it happens to start with "-".
     out: list[str] = []
@@ -34,6 +31,8 @@ def _redact_argv(argv: list[str]) -> list[str]:
             continue
         name, sep, value = arg.partition("=")
         secret = name.startswith("-") and any(m in name.lower() for m in _SECRET_FLAG_MARKERS)
+        if name.startswith("--u") and "--unity-instance-token".startswith(name):
+            secret = True
         # argparse also accepts an unambiguous prefix such as --http-u.
         url = name.startswith("--h") and "--http-url".startswith(name)
         if not (url or secret):
@@ -47,10 +46,42 @@ def _redact_argv(argv: list[str]) -> list[str]:
     return out
 
 
+def _client_metadata(meta) -> Any:
+    """Bound the client-provided extensions, applying diagnostic redaction before traversal."""
+    if not isinstance(meta, dict):
+        meta = getattr(meta, "model_extra", None)
+    remaining = 128
+
+    def safe(key, value, depth):
+        nonlocal remaining
+        remaining -= 1
+        normalized = key.lower().replace("-", "_")
+        if (
+            any(marker in normalized for marker in ("cookie", "key", "passphrase", "passwd"))
+            or safe_config_value(normalized, "present") == "<redacted>"
+        ):
+            return "<redacted>"
+        if isinstance(value, (dict, list)):
+            if depth >= 5:
+                return "<truncated>"
+            if isinstance(value, list):
+                return [safe(key, v, depth + 1) for v in islice(value, 32) if remaining > 0]
+            return {
+                k[:128]: safe(k, v, depth + 1)
+                for k, v in islice(value.items(), 32)
+                if isinstance(k, str) and remaining > 0
+            }
+        if value is None or isinstance(value, (str, bool, float, int)):
+            return safe_config_value(normalized, value)
+        return "<unavailable>"
+
+    return safe("meta", meta, 0)
+
+
 @mcp_for_unity_tool(
     unity_target=None,
     group=None,
-    description="Inspect the client request metadata, server process and routed Unity Editor. The diagnostic does not test write access.",
+    description="Inspect this connection's server build and routed Unity Editor. Use manage_tools prepare for a particular call's server permission evidence.",
     annotations=ToolAnnotations(
         title="Debug Request Context",
         readOnlyHint=True,
@@ -59,77 +90,55 @@ def _redact_argv(argv: list[str]) -> list[str]:
         openWorldHint=False,
     ),
 )
-async def debug_request_context(ctx: Context) -> dict[str, Any]:
-    # Check request_context properties
-    rc = getattr(ctx, "request_context", None)
-    rc_client_id = getattr(rc, "client_id", None)
-    rc_session_id = getattr(rc, "session_id", None)
-    meta = getattr(rc, "meta", None)
-
-    # Check direct ctx properties (per latest FastMCP docs)
-    ctx_session_id = getattr(ctx, "session_id", None)
-    ctx_client_id = getattr(ctx, "client_id", None)
-
-    meta_dump = None
-    if meta is not None:
-        try:
-            dump_fn = getattr(meta, "model_dump", None)
-            if callable(dump_fn):
-                meta_dump = dump_fn(exclude_none=False)
-            elif isinstance(meta, dict):
-                meta_dump = dict(meta)
-        except Exception as e:
-            meta_dump = {"_error": str(e)}
-
-    # List all ctx attributes for debugging
-    ctx_attrs = [attr for attr in dir(ctx) if not attr.startswith("_")]
-
-    # Get session state info via middleware. Active-instance storage now lives
-    # in FastMCP's session-scoped state store, keyed by ctx.session_id, so
-    # there is no global dict to enumerate — that snapshot was a footgun
-    # anyway (it exposed every connected client's selection).
+async def debug_request_context(
+    ctx: Context,
+    detail: Annotated[
+        Literal["routing", "client", "server"],
+        "Routing is the default. Request client for bounded, redacted metadata supplied by this caller, "
+        "or server for local process paths and arguments.",
+    ] = "routing",
+) -> dict[str, Any]:
     middleware = get_unity_instance_middleware()
     active_instance = await middleware.get_active_instance(ctx)
     routed_instance = await get_unity_instance_from_context(ctx)
-
-    # Debugging PluginHub state
-    plugin_hub_configured = PluginHub.is_configured()
-
-    return {
-        "success": True,
-        "data": {
-            "server": {
-                **RUNNING_SERVER.command_metadata(),
-                "version_guidance": (
-                    "Compare source_commit with the Unity package's selected pinned server source. "
-                    "Unity package and Python server versions are independent. After updating, "
-                    "restart this client's MCP server connection. Reconfigure only when you intend "
-                    "to change its source; preserve intentional manual version pins."
-                ),
-                "cwd": os.getcwd(),
-                "cwd_scope": "MCP server process working directory",
-                "argv": _redact_argv(sys.argv),
-            },
-            "request_context": {
-                "client_id": rc_client_id,
-                "session_id": rc_session_id,
-                "meta": meta_dump,
-                "meta_source": "Incoming MCP request. Client settings describe the client environment.",
-            },
-            "editor_route": {
-                "unity_instance": routed_instance,
-                "edit_authorization": "not_tested",
-                "scope": "This diagnostic observes routing. Each Editor operation checks its own permissions.",
-            },
-            "direct_properties": {
-                "session_id": ctx_session_id,
-                "client_id": ctx_client_id,
-            },
-            "session_state": {
-                "active_instance": active_instance,
-                "plugin_hub_configured": plugin_hub_configured,
-                "middleware_id": id(middleware),
-            },
-            "available_attributes": ctx_attrs,
+    server = {
+        **RUNNING_SERVER.command_metadata(),
+        "version_guidance": (
+            "Compare source_commit with the Unity package's selected pinned server source. "
+            "Unity package and Python server versions are independent. After updating, "
+            "restart this client's MCP server connection. Reconfigure only when you intend "
+            "to change its source; preserve intentional manual version pins."
+        ),
+    }
+    data = {
+        "server": server,
+        "connection": {
+            "transport": config.transport_mode or "stdio",
+            "mode": "remote_hosted" if config.http_remote_hosted else "local",
+        },
+        "editor_route": {
+            "unity_instance": routed_instance,
+            "edit_authorization": "not_tested",
+            "scope": "The route identifies this request's Editor. Each operation checks its own permissions.",
+        },
+        "session_state": {
+            "active_instance": active_instance,
+            "plugin_hub_configured": PluginHub.is_configured(),
         },
     }
+    if detail == "client":
+        rc = getattr(ctx, "request_context", None)
+        data["request_context"] = {
+            "meta": _client_metadata(getattr(rc, "meta", None)),
+            "meta_source": "Caller-provided request metadata. Editor permissions are evaluated separately.",
+        }
+    elif detail == "server":
+        if config.http_remote_hosted:
+            server["process_details"] = "local_only"
+        else:
+            server.update(
+                cwd=os.getcwd(),
+                cwd_scope="MCP server process working directory",
+                argv=_redact_argv(sys.argv),
+            )
+    return {"success": True, "data": data}

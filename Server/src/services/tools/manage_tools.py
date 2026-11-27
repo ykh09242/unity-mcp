@@ -47,6 +47,7 @@ from services.registry.call_preparation import (
     PAGE_SIZE,
     ExactTextAssertion,
     not_prepared,
+    prepared_execution,
     prepare_tool_call,
 )
 from services.registry.task_search import RANKED_SEARCH_FIELDS, RequiredValues, RouteSurfaces
@@ -536,7 +537,7 @@ async def search_unity_tools(
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (supply tool alone to list its actions, then select one for its inputs), "
-        "prepare (check a draft against a visible tool's input schema and return call arguments without execution), "
+        "prepare (return schema-checked arguments and current public permission evidence without executing the call), "
         "catalog (browse by group or tool, or search by query alone), "
         "search (discover routes for a task in any language), "
         "inspect_inventory (compare server advertisement with this host's exact-name evidence). "
@@ -1188,23 +1189,8 @@ async def _prepare_binding(ctx, name, draft, original, operation, *, exact_text=
     handler = getattr(registered, "fn", None)
     if handler is None or getattr(definition, "fn", None) is not handler:
         return result
-    from services.operation_permissions import OperationPermissionError, required_permissions
-
     arguments = result["prepared_call"]["arguments"]
-    execution = {
-        "via": "tools/call",
-        "handler": "mcp_server",
-        "request_unity_instance": arguments.get("unity_instance")
-        or await ctx.get_state("unity_instance"),
-        "authorization": "checked_on_invocation",
-    }
-    try:
-        grants = required_permissions(name, arguments)
-    except (OperationPermissionError, ValueError):
-        pass  # A schema-valid draft may still need runtime classification.
-    else:
-        execution["required_server_permissions"] = sorted(grant.value for grant in grants)
-    result["execution"] = execution
+    result["execution"] = await prepared_execution(ctx, name, arguments, definition.parameters)
     return result
 
 
