@@ -13,8 +13,10 @@ from zipfile import ZipFile
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import run_dotnet
 from player_e2e_process import stop_owned_tree
+from Server.tests.timing import watchdog_timeout
 
 
 @pytest.mark.parametrize("bad", ["missing", "file"])
@@ -83,7 +85,11 @@ def test_msbuild_uses_the_same_nuget_lock_directory_as_other_restores(
     else:
         monkeypatch.delenv("NUGET_SCRATCH", raising=False)
     command = ["dotnet", "nuget", "locals", "temp", "--list"]
-    expected = subprocess.check_output(command, text=True, timeout=30).strip().splitlines()[-1]
+    expected = (
+        subprocess.check_output(command, text=True, timeout=watchdog_timeout())
+        .strip()
+        .splitlines()[-1]
+    )
     project = tmp_path / "cache.proj"
     project.write_text(
         '<Project><Target Name="Observe"><Exec Command="dotnet nuget locals temp --list" ConsoleToMSBuild="true">'
