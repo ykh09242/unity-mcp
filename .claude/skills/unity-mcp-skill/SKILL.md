@@ -1,6 +1,6 @@
 ---
 name: unity-mcp-orchestrator
-description: Inspect and edit a connected Unity Editor, including scene objects, assets, scripts and test jobs. The connection's read_unity_resource tool opens its packaged operator guide with no arguments.
+description: Inspect or edit a connected Unity Editor. Use its listed read_unity_resource({}) for the release's guide. Open a host-installed copy with the host file reader. Covers scenes, assets, scripts and test jobs.
 ---
 
 # Unity MCP Operator
@@ -17,7 +17,7 @@ Operate the user's selected Unity project through the capabilities actually expo
 - Tests that must preserve an already-running game: [current Play state](references/workflows.md#tests-in-the-current-play-state).
 - Editable mesh topology with installed ProBuilder: [probuilder-guide.md](references/probuilder-guide.md).
 
-Load the reference needed for the request. On a connected Editor, call `read_unity_resource` with `{}` for its packaged guide. Older catalogs offer `manage_tools(action="read_skill")`. For another document, follow its `preferred_read_tool`, `read_tool` or `read_call` from `manage_tools(action="catalog", group="skills")`. Use the URI published by that connection. Open paths from the host's installed skill list with the host's file reader. Examples use logical tool names. Check the live schema for the selected binding.
+Load the reference needed for the request. Read the connected release's guide with `read_unity_resource({})` when listed. Older catalogs offer `manage_tools(action="read_skill")`. A path in the host's installed skill list belongs to its file reader. For another published document, follow its `preferred_read_tool`, `read_tool` or `read_call` from `manage_tools(action="catalog", group="skills")`. When using a shared MCP reader, take the server and URI from the same listing. Examples use logical tool names. Check the live schema for the selected binding.
 
 ## Keep Context Bounded
 
