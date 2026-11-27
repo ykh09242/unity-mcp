@@ -54,7 +54,7 @@ namespace MCPForUnity.Editor.Resources.Project
                     },
                 };
 
-                return new SuccessResponse("Retrieved project info.", info);
+                return new SuccessResponse("Assets paths resolve from projectRoot on this Unity Editor.", info);
             }
             catch (Exception e)
             {

@@ -32,7 +32,7 @@ class ProjectInfoResponse(MCPResponse):
     uri="mcpforunity://project/info",
     name="project_info",
     description=(
-        "Static project information including root path, Unity version, and platform. "
+        "Selected Editor projectRoot for Unity-relative Assets paths, Unity version and platform. "
         "The complete installed package inventory is available at mcpforunity://project/packages."
     ),
 )

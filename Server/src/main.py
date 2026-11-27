@@ -538,13 +538,13 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 Target and discover
 - Find Editors via mcpforunity://instances or manage_tools(action="list_instances"). Sessionless tools use unity_instance=Name@hash, resources use _meta.unity_instance.
 - For the MCP guide use manage_tools(action="catalog",group="skills"). Follow its read_call here. Open local skills through the host.
-- Keep names and asset paths verbatim. Link files only from a verified shared project root. Read listed URIs or expand observed templates.
+- Resolve Assets/... in the selected Editor project. Confirm the target. Its root may differ from the client workspace. Keep names/paths verbatim. Client file access and links need a verified shared root. Use published URIs/templates.
 - Search by meaning. Call search_unity_tools with arguments {{"query":"<original text>","selection":"agent"}}. Follow next_call (next_offset), set open_family.arguments.family and compare operations. Inspect manage_tools(action="describe",tool=name,operation=action).
 - Use manage_tools(action="catalog") for reads. Fill operation.prepare_call from input_fields. Invoke prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
 - Check manage_tools(action="list_groups").discovery, client/project scope, Editor toggles and consent. Activate and refresh tools/list. Fixed hosts may need a user reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
 
 Observe and execute
-- Verify indirect measurements' target, units and coverage. Label inferences. Respect disabled edits.
+- Verify measurement target, units and coverage. Label inferences. Honor client policy and Editor permissions.
 - Read mcpforunity://editor/state or inspect_editor_state. Check ready_for_tools, compile outcome and source separately. Keep compile_id, follow get_compile_job's next_call and inspect evidence_diagnostics on invalid responses.
 - Retain job IDs across reconnects. Check targets and receipts before retrying edits. Follow recovery_required, order dependent calls and inspect each batch result.
 - Preserve Play sessions, scenes and runtime objects. Exercise input/UI through interaction tools. For authorized runtime work use exposed, enabled and consented execute_code with safety_checks=true when needed. Verify target and Play state, return bounded before/after values and observe async effects without blocking. Limit persistent/external writes to the request.
@@ -552,8 +552,8 @@ Observe and execute
 
 Edit and verify
 - For unfamiliar C# calls check source or unity_reflect for qualified types, member signatures, static/instance access and parameter types. Recheck after symbol errors.
-- Report checks, setup, scope and gaps. Use runner results for native test counts. Name isolated probes, substituted dependencies and user interactions. Verify cleanup after async effects settle.
-- For verbatim edits distinguish the value's punctuation from the surrounding sentence. Use query and exact_text on prepare. Compare preview and saved text to the original span. Save only the target. Preserve forward-slash paths and line endings. Applying script_apply_edits(options.preview=true) requires same-host/workspace provenance, complete candidate, fresh original hash and exact UTF-8 bytes. Verify raw bytes/get_sha, diffs and file events before refresh.
+- Report checks, scope and gaps. Use runner results for native test counts. Identify isolated probes, substitutions and user actions. Verify cleanup after async effects settle.
+- Preserve punctuation, forward-slash paths and line endings. Use query and exact_text on prepare. For an authorized save, apply in the selected Editor and verify the saved value against the preview and original. Save only the target. For client-side C# preview writes follow the provenance, hash and exact-byte checks in references/scripts.md before writing or refreshing.
 """
 
 

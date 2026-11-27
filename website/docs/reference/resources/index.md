@@ -266,7 +266,7 @@ Current selected project's supported features, bounded limits, connection genera
 
 **URI:** `mcpforunity://project/info`
 
-Static project information including root path, Unity version, and platform. The complete installed package inventory is available at mcpforunity://project/packages.
+Selected Editor projectRoot for Unity-relative Assets paths, Unity version and platform. The complete installed package inventory is available at mcpforunity://project/packages.
 
 
 ## `project_layers`
