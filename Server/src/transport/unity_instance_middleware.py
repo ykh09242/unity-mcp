@@ -23,7 +23,7 @@ from pydantic import TypeAdapter
 from core.config import config
 from core.logging_decorator import log_execution
 from core.telemetry_decorator import telemetry_tool
-from transport.legacy.unity_connection import run_discovery
+from transport.legacy.unity_connection import current_stdio_catalog_pool, run_discovery
 from services.command_progress import foreground_progress
 from transport.execution_receipts import (
     PreparedExecution,
@@ -242,6 +242,7 @@ class UnityInstanceMiddleware(Middleware):
         super().__init__()
         self._metadata_lock = RLock()
         self._selection_lock = asyncio.Lock()
+        self._stdio_catalog_reads: dict[tuple[str, str], tuple[float, asyncio.Event]] = {}
         self._unity_managed_tool_names: set[str] = set()
         self._tool_alias_to_unity_target: dict[str, str] = {}
         self._server_only_tool_names: set[str] = set()
@@ -1164,8 +1165,13 @@ class UnityInstanceMiddleware(Middleware):
                 enabled_names = await self._resolve_enabled_tool_names_for_context(context)
                 allowed = self._is_tool_visible(tool_name, enabled_names or set())
         elif tool_name not in self._server_only_tool_names:
-            enabled_names = await self._resolve_enabled_tool_names_for_context(context)
-            allowed = enabled_names is None or self._is_tool_visible(tool_name, enabled_names)
+            observed_stdio = await self._prepare_stdio_catalog(context.fastmcp_context)
+            enabled_names = await self._resolve_enabled_tool_names_for_context(
+                context, checked_stdio=observed_stdio
+            )
+            allowed = (enabled_names is None and observed_stdio is None) or self._is_tool_visible(
+                tool_name, enabled_names or set()
+            )
         else:
             return
         if not allowed:
@@ -1284,12 +1290,63 @@ class UnityInstanceMiddleware(Middleware):
                 exc,
             )
 
-        tools = await call_next(context)
-        tools = await self.filter_tools_for_context(context.fastmcp_context, tools)
-        return project_test_results_tools(context.fastmcp_context, tools)
+        return await self.list_tools_for_context(
+            context.fastmcp_context, lambda: call_next(context)
+        )
 
-    async def filter_tools_for_context(self, ctx, tools):
+    async def _prepare_stdio_catalog(self, ctx) -> tuple[str, str | None] | None:
+        """Read a newly observed v2 Editor's policy before listing or calling its tools."""
+        pool = current_stdio_catalog_pool()
+        if pool is None:
+            return None
+        from services.custom_tool_service import CustomToolService
+        from services.tools import sync_tool_visibility_from_unity
+        from transport.legacy.unity_connection import get_stdio_catalog_generation
+
+        instance = await ctx.get_state("unity_instance")
+        target = pool._known_instances.get(instance)
+        service = CustomToolService._instance
+        if not getattr(target, "listener_generation", None):
+            return None
+        if target.status != "running" or service is None or service._mcp is not ctx.fastmcp:
+            return instance, None
+        generation = await get_stdio_catalog_generation(instance)
+        if service.get_stdio_availability(target.hash, generation) is not None:
+            return instance, generation
+
+        # Share a bounded read across overlapping lists. Retry a failed launch
+        # on the pool's ordinary discovery cadence, or immediately on replacement.
+        launch = (instance, target.listener_generation)
+        budget = config.framed_receive_timeout
+        now = time.monotonic()
+        self._stdio_catalog_reads = {
+            key: attempt
+            for key, attempt in self._stdio_catalog_reads.items()
+            if attempt[0] > now or not attempt[1].is_set()
+        }
+        previous = self._stdio_catalog_reads.get(launch)
+        if previous is not None:
+            with anyio.move_on_after(budget):
+                await previous[1].wait()
+        elif len(self._stdio_catalog_reads) < pool.MAX_CONNECTIONS:
+            completed = asyncio.Event()
+            self._stdio_catalog_reads[launch] = (now + pool._scan_interval, completed)
+            try:
+                with anyio.move_on_after(budget):
+                    await sync_tool_visibility_from_unity(
+                        instance, notify=False, deadline=now + budget
+                    )
+            finally:
+                completed.set()
+        generation = await get_stdio_catalog_generation(instance)
+        if service.get_stdio_availability(target.hash, generation) is not None:
+            self._stdio_catalog_reads.pop(launch, None)
+        return instance, generation
+
+    async def list_tools_for_context(self, ctx, collect):
         """Filter an inventory using this request's already-resolved routing state."""
+        observed_stdio = await self._prepare_stdio_catalog(ctx)
+        tools = await collect()
         if config.http_remote_hosted:
             builtin_names = {tool["name"] for tool in get_registered_tools()} | {
                 "get_execution_receipt"
@@ -1323,19 +1380,19 @@ class UnityInstanceMiddleware(Middleware):
 
         if not self._should_filter_tool_listing() and not config.http_remote_hosted:
             _diag.debug("on_list_tools: skipping middleware filter (HTTP PluginHub not configured)")
-            return tools
+            return project_test_results_tools(ctx, tools)
 
         self._refresh_tool_visibility_metadata_from_registry()
         enabled_tool_names = await self._resolve_enabled_tool_names_for_context(
-            SimpleNamespace(fastmcp_context=ctx)
+            SimpleNamespace(fastmcp_context=ctx), checked_stdio=observed_stdio
         )
         if enabled_tool_names is None:
-            if not config.http_remote_hosted:
+            if not config.http_remote_hosted and not observed_stdio:
                 _diag.debug(
                     "on_list_tools: no Unity session data, returning %d tools from FastMCP as-is",
                     len(tools),
                 )
-                return tools
+                return project_test_results_tools(ctx, tools)
             enabled_tool_names = set()
 
         filtered = []
@@ -1350,7 +1407,7 @@ class UnityInstanceMiddleware(Middleware):
             len(tools),
             sorted(enabled_tool_names),
         )
-        return filtered
+        return project_test_results_tools(ctx, filtered)
 
     def _should_filter_tool_listing(self) -> bool:
         transport = (config.transport_mode or "stdio").lower()
@@ -1359,6 +1416,8 @@ class UnityInstanceMiddleware(Middleware):
     async def _resolve_enabled_tool_names_for_context(
         self,
         context: MiddlewareContext,
+        *,
+        checked_stdio: tuple[str, str | None] | None = None,
     ) -> set[str] | None:
         ctx = context.fastmcp_context
         user_id = (await ctx.get_state("user_id")) if config.http_remote_hosted else None
@@ -1369,10 +1428,27 @@ class UnityInstanceMiddleware(Middleware):
 
             service = CustomToolService._instance
             if service is None or service._mcp is not ctx.fastmcp or not active_instance:
-                return None
+                return set() if checked_stdio is not None else None
             project = active_instance.rsplit("@", 1)[-1]
-            generation = await get_stdio_catalog_generation(active_instance)
-            return service.get_stdio_availability(project, generation)
+            pool = current_stdio_catalog_pool()
+            if checked_stdio is None:
+                generation = await get_stdio_catalog_generation(active_instance)
+            else:
+                selected, generation = checked_stdio
+                session = pool.catalog_session_for(active_instance) if pool is not None else None
+                if (
+                    selected != active_instance
+                    or session is None
+                    or session.session_generation != generation
+                ):
+                    return set()
+            available = service.get_stdio_availability(project, generation)
+            if available is not None:
+                return available
+            target = pool._known_instances.get(active_instance) if pool is not None else None
+            # Offline/legacy discovery remains available. A resolved v2 peer's
+            # unknown catalog admits only the server's locally available controls.
+            return set() if getattr(target, "listener_generation", None) else None
         project_hashes = self._resolve_candidate_project_hashes(active_instance)
         try:
             sessions_data = await PluginHub.get_sessions(user_id=user_id)

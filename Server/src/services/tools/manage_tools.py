@@ -1116,14 +1116,14 @@ async def _visible_tools(ctx: Context):
     # Server/session transforms and authenticated Unity catalogs both affect visibility.
     # Reuse this request's resolved routing instead of reinjecting it via tools/list.
     from transport.unity_instance_middleware import UnityInstanceMiddleware
-    from services.test_results_app import project_test_results_tools
 
-    visible_tools = await ctx.fastmcp.list_tools(run_middleware=False)
+    async def collect():
+        return await ctx.fastmcp.list_tools(run_middleware=False)
+
     for middleware in ctx.fastmcp.middleware:
         if isinstance(middleware, UnityInstanceMiddleware):
-            visible_tools = await middleware.filter_tools_for_context(ctx, visible_tools)
-            visible_tools = project_test_results_tools(ctx, visible_tools)
-    return visible_tools
+            return await middleware.list_tools_for_context(ctx, collect)
+    return await collect()
 
 
 async def _list_groups(ctx: Context) -> dict[str, Any]:

@@ -124,6 +124,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
 async def sync_tool_visibility_from_unity(
     instance_id: str | None = None,
     notify: bool = True,
+    *,
+    deadline: float | None = None,
 ) -> dict:
     """Refresh source-owned availability without changing client selection.
 
@@ -133,6 +135,7 @@ async def sync_tool_visibility_from_unity(
     Args:
         instance_id: Optional Unity instance identifier.
         notify: If True, send ``tools/list_changed`` to connected MCP sessions.
+        deadline: Optional monotonic deadline for a stdio metadata read.
 
     Returns:
         dict with sync results (enabled/disabled groups, tool count).
@@ -227,6 +230,7 @@ async def sync_tool_visibility_from_unity(
             "get_tool_states",
             {},
             retry_on_reload=False,
+            **({"_deadline": deadline} if deadline is not None else {}),
             **({"_catalog_capture": capture} if config.transport_mode.lower() != "http" else {}),
         )
 

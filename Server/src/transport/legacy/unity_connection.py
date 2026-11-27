@@ -1454,6 +1454,26 @@ class UnityConnectionPool:
         """The configured stdio selector, which may be a name, hash, port or path."""
         return self._default_instance_id
 
+    def catalog_session_for(self, instance_id: str) -> StdioAuthenticatedSession | None:
+        """Read retained v2 identity without contacting a busy Editor."""
+        target = self._known_instances.get(instance_id)
+        connection = self._connections.get(instance_id)
+        if self._retired or target is None or connection is None or connection._retired:
+            return None
+        selected, session = connection.selected_target, connection.authenticated_session
+        if (
+            selected is None
+            or session is None
+            or connection.sock is None
+            or target.path != selected.path
+            or target.port != selected.port
+            or target.listener_generation != selected.listener_generation
+            or target.listener_generation != session.server_generation
+            or connection.session_generation != session.session_generation
+        ):
+            return None
+        return session
+
     def _retire_missing_locked(self, now: float) -> None:
         """Reclaim proven-missing, unused generations while holding the pool lock."""
         for instance_id, missing_at in list(self._missing_since.items()):
@@ -1839,9 +1859,12 @@ class UnityConnectionPool:
 
         published = False
         try:
-            changing_endpoint = conn.port != target.port or (
-                getattr(conn.selected_target, "listener_generation", None)
+            changing_endpoint = (
+                conn.port != target.port
+                or getattr(conn.selected_target, "listener_generation", None)
                 != getattr(target, "listener_generation", None)
+                or conn.selected_target is not None
+                and conn.selected_target.path != target.path
             )
             # Stable busy connections retain their existing wire generation. A
             # changed port or launch must wait for that generation's command to settle.
@@ -2101,6 +2124,19 @@ def _commit_stdio_catalog(connection, generation, publish):
         pool._pool_lock.release()
 
 
+def current_stdio_catalog_pool() -> UnityConnectionPool | None:
+    """Inspect only an existing local transport owner, without discovery or connection."""
+    pool = _unity_connection_pool
+    if (
+        config.http_remote_hosted
+        or config.transport_mode != "stdio"
+        or pool is None
+        or pool._retired
+    ):
+        return None
+    return pool
+
+
 def get_stdio_capability_snapshot(instance_id: str | None) -> CapabilityConnection:
     """Read one retained authenticated session without discovery, I/O or lock waiting.
 
@@ -2244,6 +2280,17 @@ async def get_stdio_catalog_generation(instance_id: str | None) -> str | None:
     session = connection.authenticated_session if connection is not None else None
     sock = connection.sock if connection is not None else None
     generation = await get_authenticated_stdio_generation(instance_id)
+    selected = connection.selected_target if connection is not None else None
+    target = pool._known_instances.get(instance_id) if pool is not None else None
+    if (target is not None and getattr(target, "listener_generation", None)) or (
+        selected is not None and selected.listener_generation
+    ):
+        if (
+            session is None
+            or pool is not _unity_connection_pool
+            or pool.catalog_session_for(instance_id) is not session
+        ):
+            return None
     if generation is not None:
         return generation
     if (

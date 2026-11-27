@@ -11,7 +11,7 @@ from mcp.shared.exceptions import MCPError
 import pytest
 
 from core.config import config
-from models.models import ToolDefinitionModel
+from models.models import ToolDefinitionModel, UnityInstanceInfo
 from services.custom_tool_service import CustomToolService
 from services.tools import sync_tool_visibility_from_unity
 from services.tools.manage_tools import manage_tools, search_unity_tools
@@ -69,6 +69,199 @@ async def publish(registry, session_id, names):
 
 async def names(client):
     return {tool.name for tool in await client.list_tools()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "catalog,first_request",
+    [
+        ("disabled", "list"),
+        ("unavailable", "list"),
+        ("offline", "list"),
+        ("other_project", "list"),
+        ("legacy", "list"),
+        ("enabled", "call"),
+        ("disabled", "call"),
+        ("unavailable", "call"),
+        ("enabled", "list_groups"),
+        ("disabled", "inspect_inventory"),
+        ("enabled", "skipped_startup"),
+    ],
+)
+async def test_first_request_after_empty_stdio_startup(
+    catalog_server, monkeypatch, catalog, first_request
+):
+    import main
+
+    server, _, service, selected = catalog_server
+    instance = selected["project"]
+    pool = connections.UnityConnectionPool()
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    monkeypatch.setenv(
+        "UNITY_MCP_SKIP_STARTUP_CONNECT", "1" if first_request == "skipped_startup" else "0"
+    )
+    monkeypatch.setattr(main, "get_unity_connection_pool", lambda: pool)
+    monkeypatch.setattr(main, "_unity_connection_pool", None)
+    monkeypatch.setattr(connections, "_unity_connection_pool", pool)
+    monkeypatch.setattr(pool, "discover_all_instances", lambda: [])
+    monkeypatch.setattr(
+        connections, "get_authenticated_stdio_generation", AsyncMock(return_value="socket-one")
+    )
+    monkeypatch.setattr(
+        connections, "get_stdio_catalog_generation", AsyncMock(return_value="socket-one")
+    )
+    monkeypatch.setattr(
+        pool, "catalog_session_for", lambda _: SimpleNamespace(session_generation="socket-one")
+    )
+    reads = []
+
+    async def read_states(_send, target, command, _params, **kwargs):
+        reads.append((target, command))
+        if catalog == "unavailable":
+            return {"error": "Editor catalog temporarily unavailable"}
+        assert catalog in {"disabled", "enabled"}
+        kwargs["_catalog_capture"].append((SimpleNamespace(instance_id=target), "socket-one"))
+        return {
+            "data": {
+                "tools": [
+                    {"name": "scene_probe", "is_built_in": True, "enabled": catalog == "enabled"}
+                ]
+            }
+        }
+
+    monkeypatch.setattr("transport.unity_transport.send_with_unity_instance", read_states)
+    monkeypatch.setattr(connections, "_commit_stdio_catalog", lambda _conn, _gen, commit: commit())
+    async with main.server_lifespan(server):
+        if catalog != "offline":
+            observed = "Other@other" if catalog == "other_project" else instance
+            pool._known_instances[observed] = SimpleNamespace(
+                id=observed,
+                hash=observed.rpartition("@")[2],
+                status="running",
+                listener_generation=None if catalog == "legacy" else "a" * 32,
+            )
+        async with Client(server, mode="legacy") as client:
+            if first_request == "call":
+                if catalog == "enabled":
+                    assert not (await client.call_tool("scene_probe", {})).is_error
+                else:
+                    with pytest.raises(MCPError, match="disabled or unavailable"):
+                        await client.call_tool("scene_probe", {}, raise_on_error=False)
+            if first_request in {"list_groups", "inspect_inventory"}:
+                arguments = {"action": first_request}
+                if first_request == "inspect_inventory":
+                    arguments.update(include_schema=True, tool="scene_probe")
+                response = await client.call_tool("manage_tools", arguments)
+                assert not response.is_error and reads == [(instance, "get_tool_states")]
+            first = await client.list_tools_mcp()
+            assert first.next_cursor is None
+            expected = (
+                {"manage_tools", "scene_probe"}
+                if catalog in {"enabled", "offline", "other_project", "legacy"}
+                else {"manage_tools"}
+            )
+            assert {tool.name for tool in first.tools} == expected
+            assert await names(client) == expected
+    assert reads == (
+        [(instance, "get_tool_states")] if catalog in {"enabled", "disabled", "unavailable"} else []
+    )
+    if catalog == "disabled":
+        assert service.get_stdio_availability("first", "socket-one") == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "replacement", [{"port": 101}, {"path": "/neighbor"}, {"listener_generation": "b" * 32}]
+)
+async def test_previous_open_socket_cannot_supply_replacement_catalog(monkeypatch, replacement):
+    target = UnityInstanceInfo(
+        id="First@deadbeef",
+        name="First",
+        hash="deadbeef",
+        path="/first",
+        port=100,
+        status="running",
+        listener_generation="a" * 32,
+    )
+    pool = connections.UnityConnectionPool()
+    monkeypatch.setattr(connections, "_unity_connection_pool", pool)
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    pool._known_instances[target.id] = target
+    left, right = socket.socketpair()
+    try:
+        connection = connections.UnityConnection(
+            port=target.port, instance_id=target.id, selected_target=target
+        )
+        connection.sock = left
+        connection.session_generation = "retained-socket"
+        connection.authenticated_session = SimpleNamespace(
+            session_generation="retained-socket", server_generation=target.listener_generation
+        )
+        pool._connections[target.id] = connection
+        assert await connections.get_stdio_catalog_generation(target.id) == "retained-socket"
+        pool._known_instances[target.id] = target.model_copy(update=replacement)
+        assert await connections.get_authenticated_stdio_generation(target.id) == "retained-socket"
+        assert await connections.get_stdio_catalog_generation(target.id) is None
+        attempts = []
+
+        def handshake(**_kwargs):
+            attempts.append(connection.selected_target)
+            assert connection.sock is None and connection.authenticated_session is None
+            return False
+
+        replaced = pool._known_instances[target.id]
+        monkeypatch.setattr(pool, "resolve_instance", lambda _: replaced)
+        monkeypatch.setattr(connection, "connect", handshake)
+        with pytest.raises(ConnectionError, match="Failed to connect"):
+            await asyncio.to_thread(pool.get_connection, target.id)
+        assert attempts == [replaced]
+        assert await connections.get_stdio_catalog_generation(target.id) is None
+    finally:
+        left.close()
+        right.close()
+
+
+@pytest.mark.asyncio
+async def test_same_launch_joins_read_while_other_editors_recover_independently(
+    catalog_server, monkeypatch
+):
+    server, _, _, _ = catalog_server
+    middleware = next(
+        item for item in server.middleware if isinstance(item, UnityInstanceMiddleware)
+    )
+    pool = connections.UnityConnectionPool()
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    monkeypatch.setattr(connections, "_unity_connection_pool", pool)
+    monkeypatch.setattr(connections, "get_stdio_catalog_generation", AsyncMock(return_value=None))
+    reads = []
+    first_entered, release = asyncio.Event(), asyncio.Event()
+
+    async def read(target, **_kwargs):
+        reads.append(target)
+        if target == "First@first":
+            first_entered.set()
+            await release.wait()
+
+    monkeypatch.setattr("services.tools.sync_tool_visibility_from_unity", read)
+
+    def context(name):
+        instance = name + "@" + name.lower()
+        pool._known_instances[instance] = SimpleNamespace(
+            hash=name.lower(), status="running", listener_generation="a" * 32
+        )
+        return SimpleNamespace(fastmcp=server, get_state=AsyncMock(return_value=instance))
+
+    first, second = context("First"), context("Second")
+    async with asyncio.TaskGroup() as workers:
+        workers.create_task(middleware._prepare_stdio_catalog(first))
+        await await_signal(first_entered, "first metadata read")
+        workers.create_task(middleware._prepare_stdio_catalog(first))
+        try:
+            await middleware._prepare_stdio_catalog(second)
+            assert reads == ["First@first", "Second@second"]
+        finally:
+            release.set()
+    assert reads == ["First@first", "Second@second"]
 
 
 @pytest.mark.asyncio
