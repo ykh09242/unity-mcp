@@ -2,8 +2,8 @@
 
 import argparse
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -14,6 +14,7 @@ from tools.experiments.verify_agent_outcome_holdout_confirmation import STRICT_Z
 from tools.experiments.verify_compact_edit_confirmation import host_tool_calls
 from tools.experiments.verify_compact_edit_followup import disk_valid, read_pair
 from tools.experiments.verify_heartbeat_edit_confirmation import (
+    ACTION_CONTRACT,
     CONNECTION_GUIDE,
     EDITOR_TARGET,
     STRUCTURED_SEARCH,
@@ -31,6 +32,10 @@ STUDIES = {
     "f1f548131afba4031d714ffb034321d429f6ad10e7f84398b527882b3158df99": (
         "structured_search_confirmation_results.json",
         STRUCTURED_SEARCH,
+    ),
+    "08f16d22899f9088883d558a5f833cc56bde05f674b67979dd15ebc96c0852ff": (
+        "action_contract_confirmation_results.json",
+        ACTION_CONTRACT,
     ),
 }
 
