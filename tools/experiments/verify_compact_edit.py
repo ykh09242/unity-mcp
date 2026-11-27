@@ -1,12 +1,13 @@
 """Verify paired, single-attempt native edit evidence without an Editor or model client."""
 
 import argparse
+import base64
 import json
 import re
 import sys
 from collections import Counter
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -509,6 +510,49 @@ def verify_host_receipts(row, folder, work):
     )
 
 
+SKILL_ROOT = "skill://unity-mcp-orchestrator/"
+
+
+def skill_read_uri(call):
+    name = call["name"]
+    arguments = call.get("arguments") or {}
+    if name == "manage_tools" and arguments.get("action") == "read_skill":
+        return arguments.get("skill_uri") or SKILL_ROOT + "SKILL.md"
+    uri = urlsplit(name)
+    if uri.scheme == "skill" or (
+        uri.scheme == "file" and unquote(uri.path).rsplit("/", 1)[-1].casefold() == "skill.md"
+    ):
+        return name
+    return None
+
+
+def verified_skill_read(call, entries):
+    """Check the returned document bytes on either public surface."""
+    uri = skill_read_uri(call)
+    if uri is None or call["success"] is not True:
+        return False
+    result = call["result"]
+    if call["name"] == "manage_tools":
+        contents = result["contents"]
+        require(
+            len(contents) == 1 and contents[0]["uri"] == uri, "Skill tool returned another file"
+        )
+        part = contents[0]
+        raw = (
+            part["text"].encode()
+            if "text" in part
+            else base64.b64decode(part["blob"], validate=True)
+        )
+    else:
+        raw = result.encode()
+    require(
+        uri.startswith(SKILL_ROOT)
+        and entries.get(uri[len(SKILL_ROOT) :]) == "sha256:" + digest(raw),
+        "Actor-visible document differs from the pinned packaged skill",
+    )
+    return True
+
+
 def verify_private_row(work, panel, row, review, entries, sealed, spec, disk_verdicts=None):
     folder = work / ("receipts-" + panel) / row["id"]
     raw_path = folder / "row.json"
@@ -516,7 +560,6 @@ def verify_private_row(work, panel, row, review, entries, sealed, spec, disk_ver
         require(row["verdict"] == "missing_receipt", "Unreported missing receipt")
         return 0
     require(digest(raw_path.read_bytes()) == row["receipt_sha256"], "Raw receipt hash")
-    skill_reads = 0
     raw = read(raw_path)
     first = next(
         (entry for entry in raw.get("inventory", []) if entry.get("surface") == "tools/list"),
@@ -528,15 +571,13 @@ def verify_private_row(work, panel, row, review, entries, sealed, spec, disk_ver
             and (first["more"] is False) == row["actor_first_tools_list_complete"],
             "Actor first list differs from the original receipt",
         )
-    for call in raw["calls"]:
-        prefix = "skill://unity-mcp-orchestrator/"
-        if call["success"] and call["name"].startswith(prefix):
-            require(
-                "sha256:" + digest(call["result"].encode())
-                == entries[call["name"].removeprefix(prefix)],
-                "Actor-visible resource differs from the pinned packaged skill",
-            )
-            skill_reads += 1
+    skill_reads = sum(verified_skill_read(call, entries) for call in raw["calls"])
+    if "skill_document_reads" in row:
+        require(
+            row["skill_document_reads"]
+            == [i for i, call in enumerate(raw["calls"]) if skill_read_uri(call) is not None],
+            "Skill read attempts differ from the public request ledger",
+        )
     require(
         row["host_item_types"] == raw.get("host_items", {})
         and row["other_integrations"] == raw.get("other_integrations", [])
