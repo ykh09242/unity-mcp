@@ -44,6 +44,12 @@ above the maximum can be reduced. Original text can be filled only from a
 verbatim request supplied by the caller. A successful preparation checks input
 shape. The actual public tool and a Unity readback establish the outcome.
 
+When a tool has several actions, its input descriptions show where each scoped
+field applies. Describing one operation narrows those fields to the values it
+accepts. A rejected preparation can return `action_field_conflicts` with the
+submitted field name and the actions that accept it. Keep the operation the user
+requested and check the selected action's `input_fields` before changing a draft.
+
 For a value the user supplied verbatim, select its boundaries in the original
 request before drafting. Keep punctuation and spaces inside the value. Use the
 surrounding sentence and any delimiters to decide whether adjacent punctuation
@@ -58,10 +64,11 @@ indexed reason. Compare the preview and independently read stored value with
 that original span. The server checks the caller's selection against the input.
 Use this option for copied values. Translated or newly written text has a different contract.
 
-Use `manage_tools(action="catalog", group="skills")` for skill documents published
-on the current MCP connection. Each row provides a `resources/read` call with the
-exact URI. Follow `next_offset` for later pages. Open host-installed skills through
-the host's skill loader.
+Open a path from the host's installed skill list with its own file reader.
+`manage_tools(action="read_skill")` reads the guide shipped on the current MCP
+connection. Browse its other documents with `manage_tools(action="catalog",
+group="skills")`. Each row supplies a callable `read_tool` and the corresponding
+`resources/read` request. Follow `next_offset` for later pages.
 
 Use `selection="ranked"` for lexical or required evidence search. Only this mode
 accepts `catalog_query`, `intent`, `observation_source` and `required_values`.
@@ -76,7 +83,10 @@ for parameterized reads. Both branches have their own pagination. Template rows
 preserve the original `uri_template` and list required and optional parameters.
 For example, after observing a GameObject instance ID in the selected scene,
 expand `mcpforunity://scene/gameobject/{instance_id}/children{?page_size,cursor}`
-with that ID. Read the expanded URI. A continuation uses the returned cursor
+with that ID. Use native `resources/read` or put the expanded URI into the
+returned `read_after_expansion` tool call. For a fixed resource, invoke its
+`read_tool` directly. Both use the connection's published resource and its read
+permissions. A continuation uses the returned cursor
 and the same page size. Component or hierarchy changes can invalidate live IDs.
 The calling agent interprets the user's request in its original language, selects
 relevant groups/tools, compares action purposes and effects, and obtains the full
