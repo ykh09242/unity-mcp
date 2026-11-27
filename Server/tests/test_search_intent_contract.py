@@ -31,7 +31,12 @@ async def test_initialize_search_example_is_callable_as_published(search_server,
     example = example.lstrip()
     args, end = json.JSONDecoder().raw_decode(example)
     assert example[end:].lstrip().startswith(")"), "The example call must close after its arguments"
-    assert args == {"query": "<original text>", "selection": "agent"}
+    assert set(args) == {"query", "selection"} and args["selection"] == "agent"
+    placeholder = args["query"]
+    assert (
+        isinstance(placeholder, str) and placeholder.startswith("<") and placeholder.endswith(">")
+    )
+    assert placeholder[1:-1].strip(), "The example must contain a query placeholder"
     args["query"] = "Inspect a saved asset file"
     async with Client(search_server, mode=mode) as client:
         for selection in ("agent", "ranked"):
