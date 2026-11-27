@@ -11,7 +11,7 @@ import pytest
 
 from core.config import config
 from models.models import UnityInstanceInfo
-from tests.timing import watchdog_timeout
+from tests.timing import await_completion, await_signal, watchdog_timeout
 import transport.legacy.unity_connection as uc
 from services.registry import operation_invocation
 
@@ -523,6 +523,12 @@ def test_discovery_ttl_ignores_backward_wall_clock(monkeypatch, targeted):
     assert discover.call_count == 2
 
 
+async def _select_other_after_main_starts(pool, entered, main_request):
+    """Start Other only after Main's worker reaches the gate held until teardown."""
+    await await_signal(entered, "Main connection to start", producers=(main_request,))
+    return await uc._select_connection("Other@cafebabe", None, pool)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("selector", ["Main@deadbeef", "Main", "deadbeef"])
 async def test_duplicate_async_selection_keeps_executor_available_for_other_target(
@@ -543,7 +549,7 @@ async def test_duplicate_async_selection_keeps_executor_available_for_other_targ
     def connect(connection, **kwargs):
         if connection.instance_id == "Main@deadbeef":
             loop.call_soon_threadsafe(entered.set)
-            assert release.wait(watchdog_timeout(5))
+            release.wait()
         connection.sock = Mock()
         return True
 
@@ -561,10 +567,11 @@ async def test_duplicate_async_selection_keeps_executor_available_for_other_targ
             )
             for index in range(64)
         ]
-        await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
-        other = asyncio.create_task(uc._select_connection("Other@cafebabe", None, pool))
+        other = asyncio.create_task(_select_other_after_main_starts(pool, entered, requests[0]))
         try:
-            selected = await asyncio.wait_for(asyncio.shield(other), watchdog_timeout(0.5))
+            selected = await await_completion(
+                other, "independent Editor selection", producers=(requests[0],)
+            )
             assert selected.instance_id == "Other@cafebabe"
             for request in requests[1:]:
                 request.cancel()
@@ -599,7 +606,7 @@ async def test_whitespace_equivalent_exact_selectors_leave_worker_for_other_targ
     def connect(connection, **kwargs):
         if connection.instance_id == "Main@deadbeef":
             loop.call_soon_threadsafe(entered.set)
-            assert release.wait(watchdog_timeout(5))
+            release.wait()
         connection.sock = Mock()
         return True
 
@@ -615,11 +622,13 @@ async def test_whitespace_equivalent_exact_selectors_leave_worker_for_other_targ
             asyncio.create_task(uc._select_connection(selector, None, pool))
             for selector in selectors
         ]
-        await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
-        other = asyncio.create_task(uc._select_connection("Other@cafebabe", None, pool))
+        other = asyncio.create_task(_select_other_after_main_starts(pool, entered, requests[0]))
         try:
-            selected = await asyncio.wait_for(asyncio.shield(other), watchdog_timeout(0.5))
+            selected = await await_completion(
+                other, "independent Editor selection", producers=(requests[0],)
+            )
             assert selected.instance_id == "Other@cafebabe"
+            assert not requests[0].done()
             assert submitted == [selectors[0], "Other@cafebabe"]
         finally:
             release.set()
