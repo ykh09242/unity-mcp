@@ -38,7 +38,7 @@ Stable fork versions begin at **1.0.0**, independently of the upstream `10.3.0` 
 
 The Editor normally manages launch and configuration. For a manual launch, set
 `UNITY_MCP_SERVER_SOURCE` to the exact `mcpServerSource` value in your installed
-Unity package's `package.json`. The checkout also records its [source snapshot](https://github.com/ykh09242/unity-mcp/archive/a394fcb081b37a855c97e2d0d630f2ee8468c51b.zip#subdirectory=Server).
+Unity package's `package.json`. The checkout also records its [source snapshot](https://github.com/ykh09242/unity-mcp/archive/30a54c4311ffdfa37eabe41f978e4ae307dd587b.zip#subdirectory=Server).
 
 ```bash
 uvx --python ">=3.11" --from "${UNITY_MCP_SERVER_SOURCE:?Set the installed package source first}" mcp-for-unity --transport http --http-host 127.0.0.1 --http-port 8080
