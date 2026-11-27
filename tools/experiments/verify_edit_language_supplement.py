@@ -24,6 +24,7 @@ from tools.experiments.verify_heartbeat_edit_confirmation import (
     OPERATION_DISCOVERY,
     PREVIEW_CONTINUATION,
     PROJECT_SCOPE,
+    READER_OWNERSHIP,
     RESOURCE_BINDINGS,
     STRUCTURED_SEARCH,
     verified_archives,
@@ -72,6 +73,10 @@ STUDIES = {
     "83c379c8becb2ff5ace1753335bdfa4c93d34d3dc5fa6161c9a6c39373ce033f": (
         "initial_discovery_confirmation_results.json",
         INITIAL_DISCOVERY,
+    ),
+    "8a103570ebe4e7db9522af49aaaf1b9c1e35b5cea9c77834d676792571a30a02": (
+        "reader_ownership_confirmation_results.json",
+        READER_OWNERSHIP,
     ),
 }
 
