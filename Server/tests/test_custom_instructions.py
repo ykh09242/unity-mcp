@@ -200,6 +200,8 @@ def test_server_appends_guidance_to_actual_fastmcp_instructions(
     assert 'manage_tools(action="read_skill")' in default.instructions
     assert "host skill path with the host file reader" in default.instructions
     assert "expand the published resource template" in default.instructions
+    assert "host reader's required server selector" in default.instructions
+    assert "in the user's language by default" in default.instructions
     assert 'manage_tools(action="catalog",group="skills")' in default.instructions
     assert 'manage_tools(action="describe",tool=name,operation=action)' in default.instructions
     assert "meaning" in default.instructions

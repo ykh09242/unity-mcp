@@ -104,6 +104,9 @@ returned `read_after_expansion` tool call when offered. Fixed observations can
 supply a `read_tool` directly. The catalog exposes these tools for read-only
 observations. For operations such as evaluating component getters, follow
 `native_read_after_expansion` and the native resource's permission checks.
+When a host presents one resource reader for multiple connections, inspect
+its arguments and supply the server selector from the listing alongside the
+URI. A connection-bound SDK client already identifies the server.
 A continuation uses the returned cursor
 and the same page size. Component or hierarchy changes can invalidate live IDs.
 The calling agent interprets the user's request in its original language, selects

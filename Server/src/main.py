@@ -536,25 +536,25 @@ def _build_instructions(project_scoped_tools: bool) -> str:
     return f"""Unity Editor tools. Use live schemas. Editor reads can return saved files.
 
 Target and discover
-- Find Editors via mcpforunity://instances or manage_tools(action="list_instances"). Sessionless tools use unity_instance=Name@hash, resources use _meta.unity_instance.
+- Find Editors via manage_tools(action="list_instances") or mcpforunity://instances. Sessionless tools use unity_instance=Name@hash, resources use _meta.unity_instance.
 - Open a host skill path with the host file reader. For the MCP guide use manage_tools(action="read_skill"). Other guides: read_tool via manage_tools(action="catalog",group="skills").
 - Resolve Assets/... in the selected Editor project. Keep names verbatim. Show paths as code. Client file access and links need a verified shared root.
 - Search by meaning: search_unity_tools({{"query":"<original text>","selection":"agent"}}). Follow next_call (next_offset), set open_family.arguments.family and compare operations. Inspect manage_tools(action="describe",tool=name,operation=action).
-- In manage_tools(action="catalog"), follow read_tool or expand the published resource template. Fill operation.prepare_call from input_fields. Use prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
-- Check manage_tools(action="list_groups").discovery, client/project scope, Editor toggles and consent. Activate and refresh tools/list. Fixed hosts may need a user reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
+- In manage_tools(action="catalog"), follow read_tool or expand the published resource template. Pass the host reader's required server selector. Fill operation.prepare_call from input_fields. Use prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
+- Check manage_tools(action="list_groups").discovery, client/project scope, Editor toggles and consent. Activate and refresh tools/list. Fixed hosts can reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
 
 Observe and execute
 - Check target, units and coverage. Distinguish saved changes from live behavior. Label inferences. Honor client policy and Editor permissions.
-- Read mcpforunity://editor/state or inspect_editor_state. Check ready_for_tools, compile outcome and source separately. Keep compile_id, follow get_compile_job's next_call and inspect evidence_diagnostics on invalid responses.
-- Keep job IDs across reconnects. Check targets and receipts before retrying. Follow recovery_required, order dependent calls and inspect batch results.
-- Preserve Play sessions, scenes and runtime objects. Use interaction tools for live input/UI. Authorized runtime work uses enabled, consented execute_code with safety_checks=true. Verify target and Play state, return bounded observations and await effects without blocking. Limit writes to the request.
-- Track temporary owners, ensure cleanup and preserve unrelated state. Read data.verification status, complete, scope and findings.
+- Use inspect_editor_state or mcpforunity://editor/state. Check ready_for_tools, compile outcome and source. Keep compile_id, follow get_compile_job's next_call and check evidence_diagnostics on invalid replies.
+- Keep job IDs on reconnect. Check targets and receipts before retry. Follow recovery_required, sequence dependent calls and inspect batch results.
+- Preserve Play sessions, scenes and runtime objects. Use interaction tools for live input/UI. Authorized runtime work uses enabled, consented execute_code with safety_checks=true. Verify target and Play state, bound observations and await effects without blocking. Limit writes to the request.
+- Track temporary owners, preserve unrelated state and verify cleanup once effects settle. Read data.verification status, complete, scope and findings.
 
 Edit and verify
 - To save, use a matching preview's follow_up.next_call when offered. Verify the save.
 - Check unfamiliar C# in source or unity_reflect for qualified types, member signatures, static/instance access and parameter types. Recheck symbol errors.
-- Report checks, gaps, scope, isolated probes, substitutions and user actions. Use runner native test counts. Verify cleanup after effects settle.
-- For unquoted text, distinguish sentence punctuation from the value using context and existing text. Clarify ambiguity. Preserve literal punctuation, forward-slash paths and line endings. Prepare with query and exact_text. Verify the authorized save against preview and original. For client-side C# previews, check provenance, hash and exact bytes per references/scripts.md before writing or refreshing.
+- Report scope, checks, gaps, isolated probes, substitutions and user actions in the user's language by default. Use runner native test counts.
+- For unquoted values, resolve punctuation from context and existing text. Clarify ambiguity. Preserve literal punctuation, forward-slash paths and line endings. Prepare with query and exact_text. Verify the save against preview and original. For client-side C# previews, check provenance, hash and exact bytes per references/scripts.md before writing or refreshing.
 """
 
 
