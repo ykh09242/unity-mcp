@@ -442,7 +442,7 @@ async def search_unity_tools(
         "list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
-        "reset (restore configured profile), describe (supply tool and optionally operation for its inputs), "
+        "reset (restore configured profile), describe (supply tool alone to list its actions, then select one for its inputs), "
         "prepare (check a draft against a visible tool's input schema and return call arguments without execution), "
         "catalog (browse by group or tool), "
         "search (discover routes for a task in any language), "
@@ -506,7 +506,7 @@ async def manage_tools(
     operation: Annotated[
         str | None,
         Field(min_length=1, max_length=128),
-        "For describe or prepare, bind an exact action from the catalog.",
+        "For describe, omit to list catalog.actions. For describe or prepare, select an exact action from that list.",
     ] = None,
     intent: Annotated[
         ActionIntent | None,
@@ -672,6 +672,10 @@ async def manage_tools(
             if request.group == "skills":
                 resources = await _catalog_resources(ctx, concrete_scheme="skill")
                 page = browse_catalog(request, [], visible_names=set(), resources=resources)
+                page["hint"] = (
+                    "Read a published skill with the row's read_call. Host-local files open in the host. "
+                    "Follow next_offset for more published files."
+                )
                 project = await _retry_project_binding(ctx)
                 for item in page["skills"]:
                     item["read_call"] = _resource_read_call(item["uri"], project)
@@ -734,8 +738,20 @@ async def manage_tools(
                 "error": "Unknown tool in this catalog and the current advertised inventory. Browse catalog or refresh the client tool list.",
             }
         result = _describe_binding(entries[name], definition, operation, visible)
+        if not visible or name not in visible or "manage_tools" not in visible:
+            return result
+        if operation is not None and result.get("success") is False:
+            result["next_call"] = {
+                "tool": "manage_tools",
+                "arguments": {
+                    "action": "describe",
+                    "tool": name,
+                    **await _retry_project_binding(ctx),
+                },
+            }
+            return result
         card = result.get("operation")
-        if card is not None and visible and name in visible and "manage_tools" in visible:
+        if card is not None:
             project = (
                 {}
                 if "unity_instance" in card["forbidden_parameters"]
@@ -758,8 +774,8 @@ async def manage_tools(
                 "example": _prepare_exact_text_example(),
             }
             card["input_contract"] += (
-                " Fill the target arguments inside prepare_call.arguments.arguments with the "
-                "required and intended optional inputs. Use the returned prepared_call after ready=true."
+                " Start with this operation's prepare_call.arguments.arguments. Add only its documented "
+                "inputs and use the returned prepared_call after ready=true."
             )
         return result
     if action == "list_instances":

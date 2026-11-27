@@ -92,6 +92,8 @@ async def test_bad_selection_fails_without_activation(server, arguments):
         before = {tool.name for tool in await client.list_tools()}
         result = (await client.call_tool("manage_tools", arguments)).structured_content
         assert result["success"] is False
+        if arguments["action"] == "describe":
+            assert arguments["tool"] not in before and "next_call" not in result
         assert {tool.name for tool in await client.list_tools()} == before
 
 
@@ -173,6 +175,21 @@ async def test_described_inputs_lead_to_a_callable_draft(server, mode):
         return {"observed": offset if enabled else None}
 
     async with Client(server, mode=mode) as client:
+        rejected = (
+            await client.call_tool(
+                "manage_tools",
+                {"action": "describe", "tool": "sample_channel", "operation": "invented"},
+            )
+        ).structured_content
+        assert rejected["success"] is False
+        retry = rejected["next_call"]
+        assert retry == {
+            "tool": "manage_tools",
+            "arguments": {"action": "describe", "tool": "sample_channel"},
+        }
+        family = (await client.call_tool(retry["tool"], retry["arguments"])).structured_content
+        assert set(family["catalog"]["actions"]) == {"sample", "status"}
+        assert family["operation"] is None
         for name, op, values, expected in (
             (
                 "sample_channel",

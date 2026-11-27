@@ -1393,7 +1393,7 @@ def browse_catalog(
         "selection": "agent",
         "catalog_language": "en",
         "readiness": "unobserved",
-        "hint": "Interpret the user's intent in its original language. Compare purposes, targets and effects, then describe the exact tool and operation before calling it. Follow next_offset when the current page does not resolve the task.",
+        "hint": "Interpret the original request and compare purposes, targets and effects. Describe a tool by name to list its actions. Select a listed action for its inputs. Follow next_offset for more results.",
         "note": "Declarations describe capabilities. Advertisement, project readiness and execution permission require their own checks. Identifier-derived purposes use the enclosing tool description as context.",
     }
     if request.intent is not None:
