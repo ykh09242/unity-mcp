@@ -98,8 +98,14 @@ async def exchange(
                 with anyio.fail_after(REQUEST_TIMEOUT):
                     listing = await session.list_tools(params=params)
                 count += len(listing.tools)
-                if TOOL in {tool.name for tool in listing.tools}:
-                    result = await session.call_tool(TOOL, {}, read_timeout_seconds=REQUEST_TIMEOUT)
+                diagnostic = next((tool for tool in listing.tools if tool.name == TOOL), None)
+                if diagnostic is not None:
+                    # Earlier archives include process details in their default response.
+                    fields = diagnostic.input_schema.get("properties", {})
+                    arguments = {"detail": "server"} if "detail" in fields else {}
+                    result = await session.call_tool(
+                        TOOL, arguments, read_timeout_seconds=REQUEST_TIMEOUT
+                    )
                     validate_tool_result(result, origin, root)
                     return ProtocolProof(initialized.protocol_version, count, str(origin))
                 if not listing.next_cursor:

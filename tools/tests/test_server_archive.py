@@ -212,6 +212,40 @@ def test_installed_mcp_result_requires_real_success_and_installed_server_identit
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("scoped", [False, True], ids=["legacy-default", "explicit-server-detail"])
+async def test_installed_probe_requests_process_identity_from_the_listed_schema(tmp_path, scoped):
+    from mcp import StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    probe = load_mcp_probe()
+    server = tmp_path / "diagnostic_server.py"
+    parameters = 'detail: str = "routing"' if scoped else ""
+    process_visible = 'detail == "server"' if scoped else "True"
+    server.write_text(
+        f"""import os
+import sys
+from fastmcp import FastMCP
+
+app = FastMCP("archive-diagnostic")
+
+@app.tool
+def debug_request_context({parameters}):
+    server = {{"version": "fixture"}}
+    if {process_visible}:
+        server.update(argv=sys.argv, cwd=os.getcwd())
+    return {{"success": True, "data": {{"server": server, "session_state": {{"plugin_hub_configured": True}}}}}}
+
+app.run(transport="stdio", show_banner=False)
+""",
+        encoding="utf-8",
+    )
+    launch = StdioServerParameters(command=sys.executable, args=["-I", str(server)], cwd=tmp_path)
+    async with stdio_client(launch) as streams:
+        proof = await probe.exchange(streams, server, tmp_path)
+    assert proof.main_origin == str(server)
+
+
+@pytest.mark.asyncio
 async def test_installed_http_probe_rejects_protocol_failure():
     import httpx2
 

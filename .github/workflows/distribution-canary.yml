@@ -18,6 +18,7 @@ on:
       - release-source-inputs.json
       - tools/check_server_archive.py
       - tools/check_server_startup.py
+      - tools/installed_mcp_probe.py
       - tools/check_source_pin_drift.py
       - tools/check_release_evidence.py
       - tools/ci_archive_attempts.py
