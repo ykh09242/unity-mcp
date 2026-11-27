@@ -3,15 +3,16 @@
 Run `discovery_selection.py` with the existing Server Python environment and
 `PYTHONPATH=Server/src`. It asserts that the imported discovery module belongs to
 the same checkout and that the reviewed SDK is installed. Capture JSON separately
-for the baseline and candidate using the same benchmark source in each checkout.
+for each revision with matching workloads and its corresponding catalog interface.
 The baseline for the figures below is commit `1891addb`.
 
-The fixture uses FastMCP 4.1.3, the production built-in registry, SessionStateStore
-serialization, Visibility transforms, PluginRegistry snapshots and the production
-Unity availability filter. Full inventories contain 122 tools, including two
-benchmark helpers; the large fixture adds 2,000 custom descriptors. No Unity or
-network connection is created. Routing identities are synthetic server-side test
-inputs; real HTTP principal authentication and isolation have separate wire tests.
+The recorded measurements used FastMCP 4.1.3, the production built-in registry,
+SessionStateStore serialization, Visibility transforms, PluginRegistry snapshots
+and the production Unity availability filter. The original full inventory
+contained 122 tools, including two benchmark helpers. The large fixture adds
+2,000 custom descriptors. Each run reports its installed SDK version and actual
+tool counts. The fixture runs in memory with synthetic server-side routing
+identities. Separate wire tests exercise real HTTP authentication and isolation.
 
 Each operation warms five batches, times 31 without tracing, then observes five
 with tracemalloc. The update batch contains 200 no-op modern selections. Concurrent

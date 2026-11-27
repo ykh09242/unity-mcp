@@ -4,16 +4,11 @@ Run with the repository's existing Server Python environment and PYTHONPATH=Serv
 This is an in-memory SDK/selection benchmark; it does not measure network or Unity latency.
 """
 
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["fastmcp==4.1.3"]
-# ///
-# How to run: python tools/experiments/discovery_selection.py > results.json
-
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 import gc
 import hashlib
+from importlib.metadata import version
 import json
 import logging
 import os
@@ -157,8 +152,9 @@ async def run_catalog(size: int) -> CatalogMeasurement:
     @server.tool
     async def benchmark_listing(ctx: Context, project: str, owner: str) -> str:
         await select_scope(ctx, project, owner)
-        tools = await server.list_tools(run_middleware=False)
-        tools = await middleware.filter_tools_for_context(ctx, tools)
+        tools = await middleware.list_tools_for_context(
+            ctx, lambda: server.list_tools(run_middleware=False)
+        )
         return hashlib.sha256("\n".join(sorted(tool.name for tool in tools)).encode()).hexdigest()
 
     async with Client(server, cache=False) as client:
@@ -251,7 +247,7 @@ async def main() -> None:
         empty_result = await measure(empty_listing)
     results = {
         "python": platform.python_version(),
-        "fastmcp": "4.1.3",
+        "fastmcp": version("fastmcp"),
         "notes": "In-memory SDK; no network/native latency. Peak is transient high-water, not cumulative allocations. No permission cache.",
         "empty_listing": empty_result,
         "catalogs": [await run_catalog(0), await run_catalog(2000)],
