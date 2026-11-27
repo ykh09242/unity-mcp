@@ -1,4 +1,4 @@
-"""Offline contracts for the distributed skills, without importing the MCP server."""
+"""Check portable skill examples against frozen SDK contracts using only the standard library."""
 
 import ast
 import json
@@ -21,6 +21,15 @@ SKILLS = (
 )
 FENCES = re.compile(r"^```([^\n]*)\n(.*?)^```\s*$", re.MULTILINE | re.DOTALL)
 LINKS = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+JSON_TYPES = {
+    dict: "object",
+    list: "array",
+    str: "string",
+    bool: "boolean",
+    int: "integer",
+    float: "number",
+    type(None): "null",
+}
 
 
 def distributed_tool_examples():
@@ -33,78 +42,56 @@ def distributed_tool_examples():
                         yield path, example
 
 
-def static_metadata(expression, tree, path, *, sequence=False, resolving=frozenset()):
-    """Resolve declared strings or action lists from source without executing imports."""
-    kind = "action" if sequence else "metadata"
-    if not sequence and isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+def static_resource_uri(expression, tree, path, resolving=frozenset()):
+    """Read published resource URI declarations without importing a provider."""
+    if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
         return expression.value
-    if sequence and isinstance(expression, (ast.List, ast.Tuple)):
-        values = [ast.literal_eval(value) for value in expression.elts]
-        if all(isinstance(value, str) for value in values):
-            return values
-    elif isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
-        return static_metadata(
-            expression.left, tree, path, sequence=sequence, resolving=resolving
-        ) + static_metadata(expression.right, tree, path, sequence=sequence, resolving=resolving)
-    elif isinstance(expression, ast.Name):
+    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
+        return static_resource_uri(expression.left, tree, path, resolving) + static_resource_uri(
+            expression.right, tree, path, resolving
+        )
+    if isinstance(expression, ast.Name):
         key = (path.resolve(), expression.id)
         if key in resolving:
-            raise ValueError(f"Cyclic {kind} declaration: {expression.id}")
+            raise ValueError(f"Cyclic resource URI declaration: {expression.id}")
         resolving = resolving | {key}
         for statement in tree.body:
-            targets = (
-                statement.targets
-                if isinstance(statement, ast.Assign)
-                else [statement.target]
-                if isinstance(statement, ast.AnnAssign)
-                else []
-            )
-            if any(
-                isinstance(target, ast.Name) and target.id == expression.id for target in targets
-            ):
-                return static_metadata(
-                    statement.value, tree, path, sequence=sequence, resolving=resolving
+            if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                targets = (
+                    statement.targets if isinstance(statement, ast.Assign) else [statement.target]
                 )
+                if any(
+                    isinstance(target, ast.Name) and target.id == expression.id
+                    for target in targets
+                ):
+                    return static_resource_uri(statement.value, tree, path, resolving)
             if not isinstance(statement, ast.ImportFrom) or statement.level or not statement.module:
                 continue
             for alias in statement.names:
                 if (alias.asname or alias.name) != expression.id:
                     continue
                 parts = statement.module.split(".")
-                folders = ("tools",) if sequence else ("tools", "registry", "resources")
-                if len(parts) != 3 or parts[0] != "services" or parts[1] not in folders:
-                    raise ValueError(f"Unsupported {kind} import: {statement.module}")
+                if (
+                    len(parts) != 3
+                    or parts[0] != "services"
+                    or parts[1] not in ("tools", "registry", "resources")
+                ):
+                    raise ValueError(f"Unsupported resource URI import: {statement.module}")
                 folder = (ROOT / "Server/src/services" / parts[1]).resolve()
                 imported = (folder / (parts[2] + ".py")).resolve()
                 if not imported.is_relative_to(folder) or not imported.is_file():
-                    raise ValueError(f"Missing contained {kind} declaration: {statement.module}")
+                    raise ValueError(
+                        f"Missing contained resource URI declaration: {statement.module}"
+                    )
                 imported_tree = ast.parse(imported.read_text(encoding="utf-8"))
-                return static_metadata(
-                    ast.Name(id=alias.name),
-                    imported_tree,
-                    imported,
-                    sequence=sequence,
-                    resolving=resolving,
+                return static_resource_uri(
+                    ast.Name(id=alias.name), imported_tree, imported, resolving
                 )
-    raise ValueError(f"Unsupported static {kind} expression: {ast.dump(expression)}")
+    raise ValueError(f"Unsupported static resource URI expression: {ast.dump(expression)}")
 
 
-def literal_values(annotation, tree, path):
-    """Read literal members and explicitly starred static action declarations."""
-    members = (
-        annotation.slice.elts if isinstance(annotation.slice, ast.Tuple) else [annotation.slice]
-    )
-    values = set()
-    for member in members:
-        if isinstance(member, ast.Starred):
-            values.update(static_metadata(member.value, tree, path, sequence=True))
-        else:
-            values.add(ast.literal_eval(member))
-    return values
-
-
-def registered_contracts():
-    tools, resources = {}, []
+def registered_resources():
+    resources = []
     for folder in ("tools", "resources"):
         for path in (ROOT / "Server/src/services" / folder).rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -112,73 +99,70 @@ def registered_contracts():
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
                 for decorator in node.decorator_list:
-                    if not isinstance(decorator, ast.Call) or not isinstance(
-                        decorator.func, ast.Name
+                    if (
+                        isinstance(decorator, ast.Call)
+                        and isinstance(decorator.func, ast.Name)
+                        and decorator.func.id == "mcp_for_unity_resource"
                     ):
-                        continue
-                    metadata = {kw.arg: kw.value for kw in decorator.keywords}
-                    if decorator.func.id == "mcp_for_unity_resource":
-                        resources.append(static_metadata(metadata["uri"], tree, path))
-                    if decorator.func.id != "mcp_for_unity_tool":
-                        continue
-                    name = (
-                        static_metadata(metadata["name"], tree, path)
-                        if "name" in metadata
-                        else node.name
-                    )
-                    args = node.args.posonlyargs + node.args.args
-                    required_count = len(args) - len(node.args.defaults)
-                    required = {arg.arg for arg in args[:required_count]} - {"ctx"}
-                    allowed = {arg.arg for arg in args + node.args.kwonlyargs} - {"ctx"}
-                    literals = {}
-                    for arg in args + node.args.kwonlyargs:
-                        if arg.annotation is None:
-                            continue
-                        for annotation in ast.walk(arg.annotation):
-                            if (
-                                isinstance(annotation, ast.Subscript)
-                                and isinstance(annotation.value, ast.Name)
-                                and annotation.value.id == "Literal"
-                            ):
-                                literals[arg.arg] = literal_values(annotation, tree, path)
-                    tools[name] = (allowed, required, literals)
-    # Focused tools are adapters declared in the catalog, not decorated functions.
-    catalog = ROOT / "Server/src/services/registry/capability_catalog.py"
-    for node in ast.walk(ast.parse(catalog.read_text(encoding="utf-8"))):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-            continue
-        if node.func.id != "_feature":
-            continue
-        name, source = map(ast.literal_eval, node.args[:2])
-        actions, parameters = map(ast.literal_eval, node.args[4:6])
-        allowed, required, literals = tools[source]
-        admitted = {"action", *parameters.split()}
-        tools[name] = (
-            allowed & admitted,
-            (required & admitted) | {"action"},
-            {**literals, "action": set(actions.split())},
-        )
-    return tools, resources
+                        metadata = {kw.arg: kw.value for kw in decorator.keywords}
+                        resources.append(static_resource_uri(metadata["uri"], tree, path))
+    return resources
+
+
+def published_tools():
+    path = ROOT / "Server/tests/fixtures/public_mcp_contracts.json"
+    protocols = json.loads(path.read_bytes())["protocols"]
+    if not {"legacy", "modern"} <= protocols.keys():
+        raise ValueError("The public contract snapshot is missing a protocol")
+    return {mode: contract["tools"] for mode, contract in protocols.items()}
+
+
+def accepts_documented_choice(field, value):
+    """Check wire types and finite choices, including nullable or list-valued parameters.
+
+    The companion SDK tests validate the complete JSON Schema against the live catalogs.
+    """
+    if isinstance(field, bool):
+        return field
+    kinds = {JSON_TYPES[type(value)]}
+    if type(value) is int or (type(value) is float and value.is_integer()):
+        kinds.update(("number", "integer"))
+    if "type" in field:
+        declared = field["type"]
+        if kinds.isdisjoint([declared] if isinstance(declared, str) else declared):
+            return False
+    for choices in ([field["const"]] if "const" in field else None, field.get("enum")):
+        if choices is not None and not any(
+            value == choice and isinstance(value, bool) == isinstance(choice, bool)
+            for choice in choices
+        ):
+            return False
+    for keyword in ("anyOf", "oneOf"):
+        if keyword in field and not any(
+            accepts_documented_choice(branch, value) for branch in field[keyword]
+        ):
+            return False
+    if isinstance(value, list) and "items" in field:
+        return all(accepts_documented_choice(field["items"], item) for item in value)
+    return True
 
 
 def validate_request(request, tools):
     name, params = request["tool"], request["params"]
-    if name not in tools:
-        raise ValueError(f"Unknown registered tool: {name}")
     if not isinstance(params, dict):
         raise ValueError("Tool parameters must be an object")
-    allowed, required, literals = tools[name]
-    # Routing is injected into advertised schemas by middleware, not the Python function.
-    unexpected = params.keys() - allowed - {"unity_instance"}
-    if unexpected or required - params.keys():
-        raise ValueError(f"{name}: unexpected={unexpected}, missing={required - params.keys()}")
-    for parameter, values in literals.items():
-        if parameter in params and params[parameter] is not None:
-            selected = (
-                params[parameter] if isinstance(params[parameter], list) else [params[parameter]]
-            )
-            if any(value not in tuple(values) for value in selected):
-                raise ValueError(f"{name}.{parameter}: invalid value {params[parameter]!r}")
+    for mode, catalog in tools.items():
+        if name not in catalog:
+            raise ValueError(f"{mode}: unknown registered tool {name}")
+        schema = catalog[name]["inputSchema"]
+        fields = schema["properties"]
+        unexpected = params.keys() - fields.keys()
+        missing = set(schema.get("required", ())) - params.keys()
+        if unexpected or missing:
+            raise ValueError(f"{mode} {name}: unexpected={unexpected}, missing={missing}")
+        for parameter, value in params.items():
+            if not accepts_documented_choice(fields[parameter], value):
+                raise ValueError(f"{mode} {name}.{parameter}: invalid value {value!r}")
     if name == "import_model_file":
         source = params["source_path"].replace("\\", "/")
         if not source.startswith("Assets/") or ".." in source.split("/"):
@@ -191,7 +175,7 @@ def validate_request(request, tools):
             validate_request(command, tools)
 
 
-class LiteralMetadataParserTests(unittest.TestCase):
+class ResourceMetadataParserTests(unittest.TestCase):
     def test_resource_uri_follows_a_registry_alias_without_executing_the_module(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -205,61 +189,20 @@ class LiteralMetadataParserTests(unittest.TestCase):
             tree = ast.parse("from services.registry.catalog import URI as INVENTORY\nINVENTORY")
             with patch(__name__ + ".ROOT", root):
                 self.assertEqual(
-                    static_metadata(tree.body[-1].value, tree, root / "resource.py"),
+                    static_resource_uri(tree.body[-1].value, tree, root / "resource.py"),
                     "mcpforunity://scene/inventory",
                 )
         for source in ("get_uri()", '["unexpected"]', "from external import URI\nURI"):
             tree = ast.parse(source)
             with self.subTest(source=source), self.assertRaises(ValueError):
-                static_metadata(tree.body[-1].value, tree, Path(__file__))
-
-    def test_starred_metadata_resolves_lists_concatenation_and_local_import_without_execution(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            tools = root / "Server/src/services/tools"
-            tools.mkdir(parents=True)
-            (tools / "shared.py").write_text(
-                'raise RuntimeError("must not execute")\nEXTRA = ["inspect"]\n', encoding="utf-8"
-            )
-            source = (
-                "from services.tools.shared import EXTRA as IMPORTED\n"
-                'BASE: list[str] = ["ping"]\nALL_ACTIONS = BASE + IMPORTED\n'
-                'action: Annotated[str, Literal["status", *ALL_ACTIONS]]\n'
-            )
-            tree = ast.parse(source)
-            annotation = tree.body[-1].annotation.slice.elts[1]
-            with patch(__name__ + ".ROOT", root):
-                values = literal_values(annotation, tree, tools / "fixture.py")
-
-        self.assertEqual(values, {"status", "ping", "inspect"})
-        contracts = {"fixture": ({"action"}, {"action"}, {"action": values})}
-        validate_request({"tool": "fixture", "params": {"action": "inspect"}}, contracts)
-        with self.assertRaises(ValueError):
-            validate_request({"tool": "fixture", "params": {"action": "invented"}}, contracts)
-
-    def test_starred_metadata_rejects_unsupported_or_cyclic_expressions(self):
-        for expression in (
-            'list(["ping"])',
-            '__import__("os").system("must not run")',
-            "UNKNOWN",
-            "ALL_ACTIONS",
-            '"ping"',
-            '[1, "ping"]',
-        ):
-            tree = ast.parse(f"ALL_ACTIONS = {expression}\naction: Literal[*ALL_ACTIONS]\n")
-            with self.subTest(expression=expression), self.assertRaises(ValueError):
-                literal_values(tree.body[-1].annotation, tree, Path(__file__))
-
-    def test_starred_metadata_rejects_nonlocal_imports(self):
-        tree = ast.parse("from external import ACTIONS\naction: Literal[*ACTIONS]\n")
-        with self.assertRaisesRegex(ValueError, "Unsupported action import"):
-            literal_values(tree.body[-1].annotation, tree, Path(__file__))
+                static_resource_uri(tree.body[-1].value, tree, Path(__file__))
 
 
 class SkillDocumentationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tools, cls.resources = registered_contracts()
+        cls.tools = published_tools()
+        cls.resources = registered_resources()
 
     def test_local_links_are_contained_and_resolve(self):
         for skill in SKILLS:
@@ -304,7 +247,8 @@ class SkillDocumentationTests(unittest.TestCase):
                     continue
                 for name in re.findall(r"`([a-z][a-z_]+)`", columns[2]):
                     with self.subTest(path=path.relative_to(ROOT), tool=name):
-                        self.assertIn(name, self.tools)
+                        for catalog in self.tools.values():
+                            self.assertIn(name, catalog)
 
     def test_resource_uris_match_registered_resources_or_script_locators(self):
         # Component templates advertise an optional RFC6570 query expansion.
@@ -472,9 +416,34 @@ class SkillDocumentationTests(unittest.TestCase):
             self.assertIs(params.get("allow_overwrite"), False)
             self.assertTrue(any(read["prefab_path"] == params["prefab_path"] for read in reads))
 
+    def test_examples_use_the_same_action_and_preflight_fields_as_clients(self):
+        for request in (
+            {
+                "tool": "scene_inspect",
+                "params": {"action": "get_active", "refresh_if_dirty": False},
+            },
+            {
+                "tool": "manage_asset",
+                "params": {
+                    "action": "get_info",
+                    "path": "Assets/Scenes/Level.unity",
+                    "refresh_if_dirty": False,
+                },
+            },
+            {"tool": "read_console", "params": {"types": ["warning", "log"]}},
+        ):
+            with self.subTest(request=request):
+                validate_request(request, self.tools)
+
     def test_validator_rejects_contract_regressions(self):
         invalid = (
             {"tool": "invented_tool", "params": {}},
+            {"tool": "manage_scene", "params": {"action": "invented"}},
+            {"tool": "asset_labels", "params": {"action": "get_labels", "refresh_if_dirty": False}},
+            {
+                "tool": "scene_inspect",
+                "params": {"action": "get_active", "refresh_if_dirty": "false"},
+            },
             {"tool": "manage_tools", "params": {"action": "enable", "group": "asset_gen"}},
             {"tool": "read_console", "params": {"types": ["invented-level"]}},
             {"tool": "blender_bridge", "params": {"action": "save_prefab"}},

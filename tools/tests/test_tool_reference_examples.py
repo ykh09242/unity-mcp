@@ -46,12 +46,17 @@ def public_contracts():
 
 def test_distributed_skill_calls_validate_on_every_protocol(public_contracts):
     for path, example in distributed_tool_examples():
-        name, params = example["tool"], example["params"]
-        for mode, catalog in public_contracts["protocols"].items():
-            schema = catalog["tools"][name]["inputSchema"]
-            error = next(Draft202012Validator(schema).iter_errors(params), None)
-            assert error is None, (path, name, mode, error.message)
-            assert params.keys() <= schema["properties"].keys(), (path, name, mode)
+        pending = [example]
+        while pending:
+            call = pending.pop()
+            name, params = call["tool"], call["params"]
+            for mode, catalog in public_contracts["protocols"].items():
+                schema = catalog["tools"][name]["inputSchema"]
+                error = next(Draft202012Validator(schema).iter_errors(params), None)
+                assert error is None, (path, name, mode, error.message)
+                assert params.keys() <= schema["properties"].keys(), (path, name, mode)
+            if name == "batch_execute":
+                pending.extend(params["commands"])
 
 
 @pytest.mark.parametrize("group,name,count", EDITING_PAGES)
