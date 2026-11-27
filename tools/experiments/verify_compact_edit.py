@@ -516,18 +516,27 @@ SKILL_ROOT = "skill://unity-mcp-orchestrator/"
 def skill_read_uri(call):
     name = call["name"]
     arguments = call.get("arguments") or {}
-    if name == "manage_tools" and arguments.get("action") == "read_skill":
-        return arguments.get("skill_uri") or SKILL_ROOT + "SKILL.md"
-    uri = urlsplit(name)
+    candidate = name
+    if name == "manage_tools" and isinstance(arguments, dict):
+        if arguments.get("action") == "read_skill":
+            return arguments.get("skill_uri") or SKILL_ROOT + "SKILL.md"
+        if arguments.get("action") == "read_resource":
+            candidate = arguments.get("uri")
+    if not isinstance(candidate, str):
+        return None
+    try:
+        uri = urlsplit(candidate)
+    except ValueError:
+        return candidate if candidate.casefold().startswith("skill:") else None
     if uri.scheme == "skill" or (
         uri.scheme == "file" and unquote(uri.path).rsplit("/", 1)[-1].casefold() == "skill.md"
     ):
-        return name
+        return candidate
     return None
 
 
 def verified_skill_read(call, entries):
-    """Check the returned document bytes on either public surface."""
+    """Check document bytes from direct resources and both catalog tool actions."""
     uri = skill_read_uri(call)
     if uri is None or call["success"] is not True:
         return False

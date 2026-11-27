@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -5,9 +6,17 @@ import pytest
 
 from tools.experiments.verify_agent_outcome_holdout import summary
 from tools.experiments.verify_agent_outcome_holdout_confirmation import STRICT_ZERO
-from tools.experiments.verify_compact_edit import host_error_records, read, verify_host_receipts
+from tools.experiments.verify_compact_edit import (
+    SKILL_ROOT,
+    digest,
+    host_error_records,
+    read,
+    skill_read_uri,
+    verified_skill_read,
+    verify_host_receipts,
+)
 from tools.experiments.verify_compact_edit_confirmation import host_tool_calls, verified_archives
-from tools.experiments.verify_compact_edit_followup import perfect
+from tools.experiments.verify_compact_edit_followup import call_outcomes, perfect
 
 
 def test_extracted_product_must_match_frozen_archive(tmp_path):
@@ -31,6 +40,65 @@ def test_extracted_product_must_match_frozen_archive(tmp_path):
 def test_host_tool_denominator_counts_recovered_failures():
     raw = {"host_calls": [{"status": "failed"}, {"status": "completed"}]}
     assert host_tool_calls(raw) == {"failed": 1, "completed": 1}
+
+
+@pytest.mark.parametrize("form", ["text", "blob"])
+def test_generic_skill_tool_verifies_published_uri_and_exact_bytes(form):
+    uri = SKILL_ROOT + "references/scene.md"
+    body = "장면\r\n".encode()
+    content = body.decode() if form == "text" else base64.b64encode(body).decode()
+    call = {
+        "name": "manage_tools",
+        "arguments": {"action": "read_resource", "uri": uri},
+        "success": True,
+        "result": {"contents": [{"uri": uri, form: content}]},
+    }
+
+    assert skill_read_uri(call) == uri
+    assert verified_skill_read(call, {"references/scene.md": "sha256:" + digest(body)})
+    with pytest.raises(ValueError, match="differs from the pinned packaged skill"):
+        verified_skill_read(call, {"references/scene.md": "sha256:" + digest(b"other")})
+    call["result"]["contents"][0]["uri"] = SKILL_ROOT + "other.md"
+    with pytest.raises(ValueError, match="another file"):
+        verified_skill_read(call, {"references/scene.md": "sha256:" + digest(body)})
+
+
+@pytest.mark.parametrize("uri", [SKILL_ROOT + "unknown.md", "file:///unlisted/SKILL.md"])
+def test_rejected_generic_skill_read_is_a_skill_attempt_and_a_failed_tool(uri):
+    call = {
+        "name": "manage_tools",
+        "arguments": {"action": "read_resource", "uri": uri},
+        "success": False,
+    }
+    cases = [
+        {
+            "profile": "core",
+            "verdict": "completed",
+            "calls": [
+                {"method": "tools/call", "reply": "failure", "rejection_reason": "unavailable"}
+            ],
+        }
+    ]
+
+    assert skill_read_uri(call) == uri
+    assert not verified_skill_read(call, {})
+    outcomes = call_outcomes(cases)["core"]
+    assert outcomes["tools/call"]["failed"] == 1
+    assert outcomes["resources/read"]["failed"] == 0
+
+
+@pytest.mark.parametrize(
+    "uri", ["mcpforunity://scene/gameobject/42/component/Canvas", "file:///notes.md", None, 42]
+)
+def test_generic_tool_read_of_a_non_skill_uri_is_not_a_skill_read(uri):
+    call = {
+        "name": "manage_tools",
+        "arguments": {"action": "read_resource", "uri": uri},
+        "success": True,
+    }
+
+    assert skill_read_uri(call) is None
+    assert not verified_skill_read(call, {})
 
 
 def test_recovered_rejection_fails_perfection_gate():
