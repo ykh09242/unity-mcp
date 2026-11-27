@@ -20,6 +20,7 @@ from tools.experiments.verify_heartbeat_edit_confirmation import (
     CONNECTION_GUIDE,
     CONNECTION_OBSERVATION,
     EDITOR_TARGET,
+    INITIAL_DISCOVERY,
     OPERATION_DISCOVERY,
     PREVIEW_CONTINUATION,
     PROJECT_SCOPE,
@@ -67,6 +68,10 @@ STUDIES = {
     "4bac4ef47574a2d8a7e35a684dc55554c58a882506895b83d49ec2a48ea5867a": (
         "project_scope_confirmation_results.json",
         PROJECT_SCOPE,
+    ),
+    "83c379c8becb2ff5ace1753335bdfa4c93d34d3dc5fa6161c9a6c39373ce033f": (
+        "initial_discovery_confirmation_results.json",
+        INITIAL_DISCOVERY,
     ),
 }
 

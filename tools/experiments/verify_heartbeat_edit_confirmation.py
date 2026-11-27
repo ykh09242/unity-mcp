@@ -144,6 +144,7 @@ RESOURCE_BINDINGS = "4ae752132916146b0f3a8c50ebc481bb76b3e1bdb74bb80815fd1570191
 OPERATION_DISCOVERY = "68b1093bef6a9920d39e2dbafbe376f6488298c8eb4f113e82cfd6055f0cf1ce"
 APPLY_ROUTE = "3fbbaf1ed3eb03a18bf539b6ef64138db9b659f2947f2a16d680ab0a5121c490"
 PROJECT_SCOPE = "cf6cab0ed521f44be658e57ac80a606e438b4ccd55f0be9e081e5c348967cc2b"
+INITIAL_DISCOVERY = "d465f1e6cb98135c15c8509c2765a24b72af5a8ac8207fae521893c3ceaa95fc"
 STUDIES = {
     PUBLISHED: ("compact_edit_confirmation_results.json", prior.PUBLISHED, FROZEN_PINS),
     EDITOR_CATALOG: (
@@ -260,6 +261,15 @@ STUDIES = {
         {
             "package": "21ef2c610cb233a2260ef668d785b88520db38b2",
             "runtime": "b721756f3fc275be670334f69ee0f2be21ac9042",
+            "skill": "3dace93bfe6cfce8f8e7aa2dcea4fac440377fba",
+        },
+    ),
+    INITIAL_DISCOVERY: (
+        "project_scope_confirmation_results.json",
+        PROJECT_SCOPE,
+        {
+            "package": "0ad7eddf740e6cc76d31dfc5fb51a3229d56222e",
+            "runtime": "238cc2c55b5520052b0f90f129c477237fd845e1",
             "skill": "3dace93bfe6cfce8f8e7aa2dcea4fac440377fba",
         },
     ),
