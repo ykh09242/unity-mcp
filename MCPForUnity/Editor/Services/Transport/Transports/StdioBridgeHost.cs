@@ -143,6 +143,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private static EditorApplication.CallbackFunction startUpdateCallback;
         private static double nextStartAt = 0.0f;
         private static double nextHeartbeatAt = 0.0f;
+        private static bool heartbeatPublicationFailed;
 
         // EditorApplication.timeSinceStartup of the first AddressAlreadyInUse on the configured
         // port; 0 when the port binds cleanly. Drives the same-port retry window (#1173).
@@ -2422,9 +2423,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     last_heartbeat = DateTime.UtcNow.ToString("O"),
                     project_scoped_tools = projectScopedTools,
                 };
-                File.WriteAllText(filePath, JsonConvert.SerializeObject(payload), new System.Text.UTF8Encoding(false));
+                HeartbeatFilePublication.Publish(filePath, JsonConvert.SerializeObject(payload));
+                if (heartbeatPublicationFailed)
+                    McpLog.Info("Stdio heartbeat publication resumed.", always: false);
+                heartbeatPublicationFailed = false;
             }
-            catch (Exception) { }
+            catch (Exception ex)
+            {
+                if (!heartbeatPublicationFailed)
+                    McpLog.Info($"Stdio heartbeat publication failed ({ex.GetType().Name}, 0x{ex.HResult:X8}).", always: false);
+                heartbeatPublicationFailed = true;
+            }
         }
 
         private static string ComputeProjectHash(string input)

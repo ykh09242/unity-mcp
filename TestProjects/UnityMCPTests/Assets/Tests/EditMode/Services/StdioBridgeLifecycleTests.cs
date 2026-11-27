@@ -2,9 +2,11 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,6 +20,10 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine.TestTools;
+#if UNITY_EDITOR_WIN
+using System.Security.AccessControl;
+using System.Security.Principal;
+#endif
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -48,6 +54,245 @@ namespace MCPForUnityTests.Editor.Services
             else
                 SessionState.EraseBool(StopSessionKey);
         }
+
+        private static void WithHeartbeatFile(Action<string> check)
+        {
+            AssertIdle();
+            var endpointMode = typeof(StdioBridgeHost).GetField("ownedEndpoint", Static);
+            object previousMode = endpointMode.GetValue(null);
+            const string variable = "UNITY_MCP_STATUS_DIR";
+            string previous = Environment.GetEnvironmentVariable(variable);
+            string directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "unity-mcp-heartbeat-" + Guid.NewGuid().ToString("N"))).FullName;
+            try
+            {
+                Environment.SetEnvironmentVariable(variable, directory);
+                // A stopped owned listener retains its mode until the next normal start.
+                endpointMode.SetValue(null, false);
+                StdioBridgeHost.WriteHeartbeat(false, "first");
+                string path = Directory.GetFiles(directory, "unity-mcp-status-*.json").Single();
+                check(path);
+                CollectionAssert.AreEqual(new[] { path }, Directory.GetFiles(directory));
+            }
+            finally
+            {
+                endpointMode.SetValue(null, previousMode);
+                Environment.SetEnvironmentVariable(variable, previous);
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [Test]
+        public void HeartbeatPublication_OpenReaderKeepsThePreviousSnapshot()
+        {
+            WithHeartbeatFile(path =>
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                StdioBridgeHost.WriteHeartbeat(true, "second");
+                JObject first = JObject.Parse(reader.ReadToEnd());
+                JObject second = JObject.Parse(File.ReadAllText(path));
+                Assert.AreEqual("first", (string)first["reason"]);
+                Assert.IsFalse((bool)first["reloading"]);
+                Assert.AreEqual("second", (string)second["reason"]);
+                Assert.IsTrue((bool)second["reloading"]);
+                Assert.AreEqual((string)first["project_path"], (string)second["project_path"]);
+            });
+        }
+
+        [Test]
+        [Platform("Win")]
+        public void HeartbeatPublication_BlockedReplacementPreservesTheLastCompleteFile()
+        {
+            WithHeartbeatFile(path =>
+            {
+                byte[] first = File.ReadAllBytes(path);
+                using (File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    StdioBridgeHost.WriteHeartbeat(true, "blocked");
+                    CollectionAssert.AreEqual(first, File.ReadAllBytes(path));
+                }
+                StdioBridgeHost.WriteHeartbeat(false, "recovered");
+                Assert.AreEqual("recovered", (string)JObject.Parse(File.ReadAllText(path))["reason"]);
+            });
+        }
+
+#if UNITY_EDITOR_WIN
+        [Test]
+        public void HeartbeatPublication_ReadOnlyWindowsFileRetainsPreviousSnapshot()
+        {
+            WithHeartbeatFile(path =>
+            {
+                byte[] original = File.ReadAllBytes(path);
+                var attributes = File.GetAttributes(path);
+                File.SetAttributes(path, attributes | FileAttributes.ReadOnly);
+                try
+                {
+                    StdioBridgeHost.WriteHeartbeat(true, "read-only");
+                    CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+                }
+                finally
+                {
+                    File.SetAttributes(path, attributes);
+                }
+            });
+        }
+
+        private static string ProtectHeartbeatFile(string path)
+        {
+            var policy = File.GetAccessControl(path);
+            policy.SetAccessRuleProtection(true, false);
+            policy.AddAccessRule(new FileSystemAccessRule(policy.GetOwner(typeof(SecurityIdentifier)), FileSystemRights.FullControl, AccessControlType.Allow));
+            File.SetAccessControl(path, policy);
+            return File.GetAccessControl(path).GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+        }
+
+        [Test]
+        public void HeartbeatPublication_ProtectedDaclAppliesToEmptyStageAndPublishedFile()
+        {
+            WithHeartbeatFile(path =>
+            {
+                string expected = ProtectHeartbeatFile(path);
+                string stage = path + ".tmp";
+                using (File.Create(stage))
+                    Assert.AreNotEqual(expected, File.GetAccessControl(stage).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                File.Delete(stage);
+                using (var handle = HeartbeatFilePublication.CreateProtectedStage(path, stage))
+                using (var stream = new FileStream(handle, FileAccess.Write))
+                {
+                    Assert.AreEqual(0, stream.Length);
+                    Assert.AreEqual(expected, File.GetAccessControl(stage).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                }
+                File.Delete(stage);
+                StdioBridgeHost.WriteHeartbeat(true, "protected");
+                Assert.AreEqual(expected, File.GetAccessControl(path).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                Assert.AreEqual("protected", (string)JObject.Parse(File.ReadAllText(path))["reason"]);
+            });
+        }
+
+        [Test]
+        public void HeartbeatPublication_ResumesAfterSuccessfulReplacementBackupIsUnlocked()
+        {
+            WithHeartbeatFile(path =>
+            {
+                string expected = ProtectHeartbeatFile(path);
+                byte[] original = File.ReadAllBytes(path);
+                string stage = path + ".fixture.pending";
+                using (var handle = HeartbeatFilePublication.CreateProtectedStage(path, stage))
+                using (var stream = new FileStream(handle, FileAccess.Write))
+                using (var writer = new StreamWriter(stream))
+                    writer.Write("installed");
+                string backup = null;
+                FileStream reader = null;
+                try
+                {
+                    HeartbeatFilePublication.ReplaceWindowsSnapshot(path, stage, (replacement, destination, previous) =>
+                    {
+                        File.Replace(replacement, destination, previous);
+                        backup = previous;
+                        reader = File.Open(previous, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    });
+                    Assert.AreEqual("installed", File.ReadAllText(path));
+                    Assert.AreEqual(expected, File.GetAccessControl(backup).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                    CollectionAssert.AreEqual(original, File.ReadAllBytes(backup));
+                    Assert.Catch<IOException>(() => HeartbeatFilePublication.Publish(path, "still locked"));
+                    CollectionAssert.AreEquivalent(new[] { path, backup }, Directory.GetFiles(Path.GetDirectoryName(path)));
+                }
+                finally
+                {
+                    reader?.Dispose();
+                }
+                HeartbeatFilePublication.Publish(path, "recovered");
+                Assert.AreEqual("recovered", File.ReadAllText(path));
+                Assert.AreEqual(expected, File.GetAccessControl(path).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                Assert.IsFalse(File.Exists(backup));
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void HeartbeatPublication_InterruptedWindowsReplacementPreservesOriginalAndAnyNewerFile(bool newerPublication)
+        {
+            WithHeartbeatFile(path =>
+            {
+                byte[] original = File.ReadAllBytes(path);
+                string stage = path + ".fixture.pending";
+                string backup = null;
+                File.WriteAllText(stage, "staged");
+                Assert.Catch<IOException>(() => HeartbeatFilePublication.ReplaceWindowsSnapshot(path, stage, (replacement, destination, previous) =>
+                    {
+                        backup = previous;
+                        File.Move(destination, previous);
+                        if (newerPublication)
+                            File.WriteAllText(destination, "newer");
+                        // State documented by ReplaceFileW for ERROR_UNABLE_TO_MOVE_REPLACEMENT_2.
+                        throw new IOException("Fixture replacement interrupted.", unchecked((int)0x80070499));
+                    }));
+                if (newerPublication)
+                {
+                    Assert.AreEqual("newer", File.ReadAllText(path));
+                    string newerPolicy = ProtectHeartbeatFile(path);
+                    HeartbeatFilePublication.Publish(path, "next heartbeat");
+                    Assert.AreEqual("next heartbeat", File.ReadAllText(path));
+                    Assert.AreEqual(newerPolicy, File.GetAccessControl(path).GetSecurityDescriptorSddlForm(AccessControlSections.Access));
+                    CollectionAssert.AreEqual(original, File.ReadAllBytes(backup));
+                    Assert.AreEqual("staged", File.ReadAllText(stage));
+                    File.Delete(path);
+                    Assert.Throws<IOException>(() => HeartbeatFilePublication.Publish(path, "unexpected"));
+                    Assert.IsFalse(File.Exists(path));
+                    File.Delete(stage);
+                    File.Move(backup, path);
+                }
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+                Assert.IsFalse(File.Exists(stage));
+                Assert.IsFalse(File.Exists(backup));
+            });
+        }
+#elif UNITY_EDITOR_LINUX || UNITY_EDITOR_OSX
+        [DllImport("libc", SetLastError = true)]
+        private static extern int chmod(string path, uint mode);
+
+        [DllImport("libc")]
+        private static extern uint geteuid();
+
+        // Unity Mono's portable stat structure, defined in support/map.h.
+        [StructLayout(LayoutKind.Explicit, Size = 160)]
+        private struct TestFileStat
+        {
+            [FieldOffset(16)]
+            public uint Mode;
+        }
+
+        [DllImport("MonoPosixHelper", EntryPoint = "Mono_Posix_Syscall_stat", SetLastError = true)]
+        private static extern int Stat(string path, out TestFileStat metadata);
+
+        [TestCase(384u)] // 0600
+        [TestCase(416u)] // 0640
+        public void HeartbeatPublication_PreservesPosixMode(uint mode)
+        {
+            WithHeartbeatFile(path =>
+            {
+                Assert.AreEqual(0, chmod(path, mode));
+                StdioBridgeHost.WriteHeartbeat(true, "protected");
+                Assert.AreEqual(0, Stat(path, out var result));
+                Assert.AreEqual(mode, result.Mode & 0x1ff);
+                Assert.AreEqual("protected", (string)JObject.Parse(File.ReadAllText(path))["reason"]);
+            });
+        }
+
+        [Test]
+        public void HeartbeatPublication_ReadOnlyPosixFileRetainsPreviousSnapshot()
+        {
+            if (geteuid() == 0)
+                Assert.Ignore("Root can write a mode-0400 file.");
+            WithHeartbeatFile(path =>
+            {
+                byte[] previous = File.ReadAllBytes(path);
+                Assert.AreEqual(0, chmod(path, 256)); // 0400
+                StdioBridgeHost.WriteHeartbeat(true, "read-only");
+                CollectionAssert.AreEqual(previous, File.ReadAllBytes(path));
+            });
+        }
+#endif
 
         [UnityTest, Explicit("Requires an isolated batch Editor; this test replaces the scripting domain.")]
         public IEnumerator ExplicitStop_SurvivesActualDomainReloadUntilExplicitStart()

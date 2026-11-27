@@ -13,6 +13,7 @@ function Get-StdioProductionSources([string]$Root) {
         'MCPForUnity/Editor/Services/Transport/StdioFrameBudget.cs',
         'MCPForUnity/Editor/Services/Transport/TransportCommandResponse.cs',
         'MCPForUnity/Editor/Services/Transport/TransportJson.cs',
+        'MCPForUnity/Editor/Services/Transport/Transports/HeartbeatFilePublication.cs',
         'MCPForUnity/Editor/Services/Transport/Transports/StdioBridgeAuthentication.cs'
     ) | ForEach-Object { Join-Path $Root $_ }
 }
