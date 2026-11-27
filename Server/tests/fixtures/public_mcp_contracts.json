@@ -2517,6 +2517,15 @@
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
+              "detail": {
+                "default": "routing",
+                "enum": [
+                  "routing",
+                  "client",
+                  "server"
+                ],
+                "type": "string"
+              },
               "unity_instance": {
                 "anyOf": [
                   {
@@ -23310,8 +23319,14 @@
                         "action": {
                           "const": "catalog"
                         },
+                        "group": {
+                          "type": "null"
+                        },
                         "query": {
                           "type": "string"
+                        },
+                        "tool": {
+                          "type": "null"
                         }
                       },
                       "required": [
@@ -23466,6 +23481,105 @@
                     },
                     "tool": {
                       "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "group": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "group"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "tool": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "tool"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "catalog"
+                    },
+                    "query": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ]
+                },
+                "then": {
+                  "not": {
+                    "properties": {
+                      "group": {
+                        "type": "string"
+                      },
+                      "tool": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "group",
+                      "tool"
+                    ]
+                  },
+                  "properties": {
+                    "arguments": {
+                      "type": "null"
+                    },
+                    "catalog_query": {
+                      "type": "null"
+                    },
+                    "exact_text": {
+                      "type": "null"
+                    },
+                    "family": {
+                      "type": "null"
+                    },
+                    "group": {
+                      "maxLength": 128,
+                      "pattern": "\\S"
+                    },
+                    "host_tool_evidence": {
+                      "type": "null"
+                    },
+                    "host_tool_names": {
+                      "type": "null"
+                    },
+                    "include_schema": {
+                      "const": false
+                    },
+                    "observation_source": {
+                      "type": "null"
+                    },
+                    "query": {
+                      "pattern": "\\S"
+                    },
+                    "required_values": {
+                      "type": "null"
+                    },
+                    "route_surfaces": {
+                      "type": "null"
+                    },
+                    "selection": {
+                      "const": "ranked"
+                    },
+                    "tool": {
+                      "maxLength": 128,
+                      "pattern": "\\S"
                     }
                   }
                 }
@@ -27396,6 +27510,51 @@
           },
           "outputSchema": {
             "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "read_unity_resource": {
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "uri": {
+                "anyOf": [
+                  {
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "pattern": "^(mcpforunity|skill)://[^{}]+$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
             "type": "object"
           }
         },
@@ -33571,6 +33730,15 @@
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
+              "detail": {
+                "default": "routing",
+                "enum": [
+                  "routing",
+                  "client",
+                  "server"
+                ],
+                "type": "string"
+              },
               "unity_instance": {
                 "anyOf": [
                   {
@@ -54364,8 +54532,14 @@
                         "action": {
                           "const": "catalog"
                         },
+                        "group": {
+                          "type": "null"
+                        },
                         "query": {
                           "type": "string"
+                        },
+                        "tool": {
+                          "type": "null"
                         }
                       },
                       "required": [
@@ -54520,6 +54694,105 @@
                     },
                     "tool": {
                       "type": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "group": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "group"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "tool": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "tool"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "catalog"
+                    },
+                    "query": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ]
+                },
+                "then": {
+                  "not": {
+                    "properties": {
+                      "group": {
+                        "type": "string"
+                      },
+                      "tool": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "group",
+                      "tool"
+                    ]
+                  },
+                  "properties": {
+                    "arguments": {
+                      "type": "null"
+                    },
+                    "catalog_query": {
+                      "type": "null"
+                    },
+                    "exact_text": {
+                      "type": "null"
+                    },
+                    "family": {
+                      "type": "null"
+                    },
+                    "group": {
+                      "maxLength": 128,
+                      "pattern": "\\S"
+                    },
+                    "host_tool_evidence": {
+                      "type": "null"
+                    },
+                    "host_tool_names": {
+                      "type": "null"
+                    },
+                    "include_schema": {
+                      "const": false
+                    },
+                    "observation_source": {
+                      "type": "null"
+                    },
+                    "query": {
+                      "pattern": "\\S"
+                    },
+                    "required_values": {
+                      "type": "null"
+                    },
+                    "route_surfaces": {
+                      "type": "null"
+                    },
+                    "selection": {
+                      "const": "ranked"
+                    },
+                    "tool": {
+                      "maxLength": 128,
+                      "pattern": "\\S"
                     }
                   }
                 }
@@ -58450,6 +58723,51 @@
           },
           "outputSchema": {
             "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "read_unity_resource": {
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "uri": {
+                "anyOf": [
+                  {
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "pattern": "^(mcpforunity|skill)://[^{}]+$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
             "type": "object"
           }
         },

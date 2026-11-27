@@ -1,7 +1,7 @@
 ---
 title: debug_request_context
 sidebar_label: debug_request_context
-description: "Inspect the client request metadata, server process and routed Unity Editor."
+description: "Inspect this connection's server build and routed Unity Editor."
 ---
 
 # `debug_request_context`
@@ -14,12 +14,13 @@ description: "Inspect the client request metadata, server process and routed Uni
 
 ## Description
 
-Inspect the client request metadata, server process and routed Unity Editor. The diagnostic does not test write access.
+Inspect this connection's server build and routed Unity Editor. Use manage_tools prepare for a particular call's server permission evidence.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
+| `detail` | `Literal['routing', 'client', 'server']` | — | Routing is the default. Request client for bounded, redacted metadata supplied by this caller, or server for local process paths and arguments. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

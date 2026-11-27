@@ -50,14 +50,23 @@ accepts. A rejected preparation can return `action_field_conflicts` with the
 submitted field name and the actions that accept it. Keep the operation the user
 requested and check the selected action's `input_fields` before changing a draft.
 
-For a registered server operation, a prepared call identifies its MCP handler,
-the Editor routed on this request and the server permissions its arguments require. A read-only
-preview and an application of the same edit can require different permissions.
-The prepared call has not executed. The client and the Editor evaluate the
-actual invocation. `debug_request_context` reports the current request's
-`editor_route` separately from the server's working directory and the incoming
-client metadata. A denial should be attributed to the operation and authority
-that returned it.
+For a tool without an action selector, its description can publish
+`input_choices` from the visible schema. Describing a value unique to one
+field returns the selector and value in `operation.input_variant`. Its
+preparation uses the tool's actual parameter. When a value occurs in more
+than one field, set the intended field in the draft.
+
+For a registered operation, `execution.permission_check` reports how the server
+currently applies its public-operation grants to the requester and the selected
+target. Previewing and applying the same change can require different grants.
+The actual call rechecks its permissions. The client controls its approvals
+and the Editor evaluates the operation it receives. A ready draft has not
+changed the target.
+
+`debug_request_context()` shows the Editor route and connection. Select
+`detail="client"` to inspect bounded, redacted metadata supplied by the caller.
+On a local server, `detail="server"` also shows process details. For a write
+denial, report the operation and the authority that returned the denial.
 
 When a guarded preview returns `data.follow_up`, compare the observed target
 and proposed changes with the user's request. For a requested write, submit
@@ -65,6 +74,10 @@ and proposed changes with the user's request. For a requested write, submit
 large fields to copy exactly from the preview request. The apply operation
 checks the source digest or Editor plan token before changing state. Read back
 the requested saved or live result. A preview on its own leaves the target intact.
+
+For sparse edits, submit only fields that the user requested changing.
+Read protected values before and after when preservation needs verification.
+Use an expected-value precondition when the operation offers one.
 
 For a value the user supplied verbatim, select its boundaries in the original
 request before drafting. Keep punctuation and spaces inside the value. Use the
@@ -81,10 +94,12 @@ that original span. The server checks the caller's selection against the input.
 Use this option for copied values. Translated or newly written text has a different contract.
 
 Open a path from the host's installed skill list with its own file reader.
-`manage_tools(action="read_skill")` reads the guide shipped on the current MCP
-connection. Browse its other documents with `manage_tools(action="catalog",
-group="skills")`. Each row supplies a callable `read_tool` and the corresponding
-`resources/read` request. Follow `next_offset` for later pages.
+`read_unity_resource` with no arguments opens the guide shipped on the current
+MCP connection. Existing clients can use `manage_tools(action="read_skill")`.
+Browse its other documents with `manage_tools(action="catalog", group="skills")`.
+To find a document by its published metadata, add `query` to the scoped
+catalog request. Follow the returned `preferred_read_tool`, `read_tool` or
+native read binding. Follow `next_offset` for later pages.
 
 Use `selection="ranked"` for lexical or required evidence search. Only this mode
 accepts `catalog_query`, `intent`, `observation_source` and `required_values`.
@@ -99,9 +114,10 @@ for parameterized reads. Both branches have their own pagination. Template rows
 preserve the original `uri_template` and list required and optional parameters.
 For example, after observing a GameObject instance ID in the selected scene,
 expand `mcpforunity://scene/gameobject/{instance_id}/children{?page_size,cursor}`
-with that ID. Use native `resources/read` or put the expanded URI into the
-returned `read_after_expansion` tool call when offered. Fixed observations can
-supply a `read_tool` directly. The catalog exposes these tools for read-only
+with that ID. Use the expanded URI in the returned
+`preferred_read_after_expansion` or `read_after_expansion` tool call when
+offered, or in native `resources/read`. Fixed observations can supply a
+`preferred_read_tool` or `read_tool` directly. The catalog exposes these tools for read-only
 observations. For operations such as evaluating component getters, follow
 `native_read_after_expansion` and the native resource's permission checks.
 When a host presents one resource reader for multiple connections, inspect
