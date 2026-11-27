@@ -17,6 +17,7 @@ from pydantic import Field
 from models.ui_layout_diagnostics import validate_ui_layout_diagnostics
 
 from services.registry.capability_adapter import capability_command
+from services.registry.preview_continuation import PreviewApply, has_field_edits, is_preview_digest
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import send_mutation
@@ -43,7 +44,72 @@ def _canonical_ui_path(path: str) -> str:
     return "Assets/" + "/".join(parts[1:])
 
 
+def _source_value_matches(path, requested, edit):
+    before, after = edit["before"], edit["after"]
+    if not isinstance(before, str) or not isinstance(after, str):
+        return False
+    if path.lower().endswith(".uss"):
+        return after == requested
+    # The native patcher preserves the attribute's existing quote delimiter. Both
+    # forms encode exactly the same requested text; arbitrary HTML entities do not.
+    escaped = (
+        requested.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\r", "&#13;")
+        .replace("\n", "&#10;")
+        .replace("\t", "&#9;")
+    )
+    return ('"' not in before and after == escaped.replace('"', "&quot;")) or (
+        "'" not in before and after == escaped.replace("'", "&apos;")
+    )
+
+
+def _source_patch_apply(params, data):
+    source_hash, result_hash = data.get("source_hash"), data.get("result_hash")
+    edits, changes = data.get("changes"), params.get("source_changes")
+    if (
+        params.get("preview", True) is not True
+        or data.get("preview") is not True
+        or data.get("persistence") != "source"
+        or data.get("reimport_requested") is not False
+        or not is_preview_digest(source_hash, 64)
+        or not is_preview_digest(result_hash, 64)
+        or result_hash == source_hash
+        or not isinstance(params.get("path"), str)
+        or _canonical_ui_path(params["path"]) != data.get("path")
+        or not isinstance(changes, dict)
+        or not has_field_edits(edits)
+        or len(edits) != len(changes)
+        or {edit["property"] for edit in edits} != changes.keys()
+        or not all(
+            _source_value_matches(data["path"], changes[edit["property"]], edit) for edit in edits
+        )
+        or (
+            params.get("expected_source_hash") is not None
+            and params["expected_source_hash"].lower() != source_hash
+        )
+    ):
+        return None
+    return PreviewApply(
+        {
+            "action": "patch_source",
+            "preview": False,
+            "path": data["path"],
+            "source_selector": params["source_selector"],
+            "source_changes": changes,
+            "expected_source_hash": source_hash,
+        },
+        {
+            "result_hash": result_hash,
+            "check": "Check the apply result_hash and reimport outcome, then read the same source path to confirm the requested values. A failed import can follow a successful save.",
+        },
+        copy_arguments=("source_changes",) if sum(map(len, changes.values())) > 4096 else (),
+    )
+
+
 @mcp_for_unity_tool(
+    preview_contracts={"patch_source": _source_patch_apply},
     group="legacy",
     description=(
         "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and supported PanelRenderer "

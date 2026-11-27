@@ -35,6 +35,10 @@ from services.operation_permissions import (
 from services.operation_policy import OperationMode, resolve_operation_policy
 from services.registry.action_contracts import conflicting_action_fields
 from services.registry.operation_context import active_operation, current_operation, scheduler
+from services.registry.preview_continuation import (
+    PreviewRegistration,
+    with_preview_continuation,
+)
 from services.registry.operation_scheduler import (
     OperationAdmission,
     OperationCapacityError,
@@ -365,7 +369,13 @@ def _explain_rejected_fields(value, definition, params):
     return {**value, "hint": hint}
 
 
-def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> Callable:
+def wrap_tool(
+    function: Callable[P, T],
+    name: str,
+    unity_target: str | None,
+    *,
+    preview_registration: PreviewRegistration | None = None,
+) -> Callable:
     """Wrap once at registration; direct native senders retain their own admission."""
     signature = inspect.signature(function)
     trusted = trusted_tool(function, name)
@@ -416,6 +426,12 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
         )
         check_public_authority = None
         target = None
+        instance = None
+        preview_contract = (
+            preview_registration.contracts.get(params.get("action"))
+            if trusted and preview_registration is not None
+            else None
+        )
 
         async def validate_enabled():
             server = getattr(ctx, "fastmcp", None)
@@ -453,9 +469,30 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                 from transport.response_limit_middleware import prepare_raw_tool_result
 
                 return await prepare_raw_tool_result(value)
+            if preview_contract is not None:
+                value = await with_preview_continuation(
+                    value,
+                    name,
+                    preview_contract,
+                    params,
+                    definition,
+                    ctx,
+                    instance,
+                    target,
+                    binding=preview_binding,
+                )
             return _explain_rejected_fields(value, definition, params) if trusted else value
 
         definition = await validate_enabled()
+        preview_binding = preview_registration.binding if preview_contract else None
+        if preview_binding is None or not preview_binding.matches(definition):
+            preview_contract = None
+        elif getattr(ctx, "request_context", None) is not None:
+            from transport.execution_receipts import component_version
+
+            selected_version = component_version(ctx)
+            if selected_version is not None and selected_version != preview_binding.version:
+                preview_contract = None
         if unity_target is None or ctx is None:
             return await call()
         from services.tools import get_unity_instance_from_context

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from functools import wraps
 from importlib import import_module
 import json
+import asyncio
 import os
 from pathlib import Path
 import subprocess
@@ -21,6 +22,147 @@ from transport.unity_instance_middleware import UnityInstanceMiddleware
 
 A = "Intended@aaaaaaaa"
 B = "Unintended@bbbbbbbb"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool_name, generation_fence", [("manage_ui", True), ("ui_source", True), ("ui_source", False)]
+)
+async def test_source_preview_proposes_only_same_project_conditional_write(
+    target_server, monkeypatch, tool_name, generation_fence
+):
+    from hashlib import sha256
+
+    from services import tools
+    from services.registry import operation_invocation, tool_registry
+    from services.registry.call_preparation import prepare_tool_call
+    from services.registry.capability_adapter import register_capability
+    from services.registry.capability_catalog import CAPABILITIES
+    from services.registry.operation_scheduler import OperationScope
+    from services.registry.operation_target import OperationTarget
+    from services.tools import manage_ui as ui
+
+    monkeypatch.setattr(tool_registry, "_tool_registry", list(tool_registry.get_registered_tools()))
+    if tool_name == "ui_source":
+        feature = next(item for item in CAPABILITIES if item.name == tool_name)
+        register_capability(feature, ui.manage_ui)
+    entry = next(item for item in tool_registry.get_registered_tools() if item["name"] == tool_name)
+    entry = {**entry, "kwargs": {**entry["kwargs"], "version": "1"}}
+    monkeypatch.setattr(tools, "discover_modules", lambda *args: iter(()))
+    monkeypatch.setattr(tools, "get_registered_tools", lambda: [entry])
+    target_server.registry.append(entry)
+    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", "full")
+    server = FastMCP("guarded-preview-follow-up")
+    server.add_middleware(target_server.middleware)
+    tools.register_all_tools(server)
+    files = {A: "original", B: "original"}
+    submitted = []
+    new_value = "인계 기록을 열까요?"
+
+    async def capture(instance, **kwargs):
+        if not generation_fence:
+            return None
+        return OperationTarget(
+            OperationScope("local", instance.split("@")[1], "current"), lambda: True
+        )
+
+    def digest(text):
+        return sha256(text.encode()).hexdigest()
+
+    async def dispatch(_, instance, command, args):
+        assert command == tool_name
+        before = files[instance]
+        if not args["preview"]:
+            submitted.append(instance)
+            if digest(before) != args["expected_source_hash"]:
+                return {"success": False, "message": "source_hash_conflict"}
+            files[instance] = args["source_changes"]["tooltip"]
+        return {
+            "success": True,
+            "data": {
+                "preview": args["preview"],
+                "reimport_requested": not args["preview"],
+                "path": args["path"],
+                "persistence": "source",
+                "source_hash": digest(before),
+                "result_hash": digest(new_value),
+                "changes": [
+                    {"property": "tooltip", "offset": 20, "before": before, "after": new_value}
+                ],
+            },
+        }
+
+    monkeypatch.setattr(operation_invocation, "capture_target", capture)
+    monkeypatch.setattr(ui, "send_with_unity_instance", dispatch)
+    monkeypatch.setattr(ui, "send_mutation", dispatch)
+    arguments = {
+        "action": "patch_source",
+        "path": "Assets/Panel.uxml",
+        "source_selector": "#caption",
+        "source_changes": {"tooltip": new_value},
+    }
+    async with Client(server, mode="legacy") as client:
+        # Observing the sole editor under explicit-target policy cannot select it for a write.
+        implicit = (await client.call_tool(tool_name, arguments)).data
+        assert implicit["success"] and "follow_up" not in implicit["data"]
+        target_server.inventory.append(SimpleNamespace(id=A, hash="aaaaaaaa"))
+        preview = (await client.call_tool(tool_name, {**arguments, "unity_instance": A})).data
+        follow = preview["data"]["follow_up"]
+        call = follow["next_call"]
+        assert call == {
+            "tool": tool_name,
+            "arguments": {
+                **arguments,
+                "preview": False,
+                "expected_source_hash": digest("original"),
+                "unity_instance": A,
+            },
+        }
+        assert follow["verify"]["result_hash"] == digest(new_value)
+        assert submitted == [] and files == {A: "original", B: "original"}
+        schema = next(
+            tool.input_schema for tool in await client.list_tools() if tool.name == tool_name
+        )
+        assert (
+            prepare_tool_call(tool_name, schema, call["arguments"], project=A)["prepared_call"]
+            == call
+        )
+        files[A] = "changed by another editor"
+        stale = (await client.call_tool(call["tool"], call["arguments"])).data
+        assert not stale["success"] and "follow_up" not in stale
+        assert files == {A: "changed by another editor", B: "original"}
+        fresh = (await client.call_tool(tool_name, {**arguments, "unity_instance": A})).data
+        call = fresh["data"]["follow_up"]["next_call"]
+        applied = (await client.call_tool(call["tool"], call["arguments"])).data
+        assert applied["success"] and "follow_up" not in applied["data"]
+        assert files == {A: new_value, B: "original"}
+        # FastMCP still dispatches version 1 when selected explicitly, but an
+        # unversioned next_call would now reach version 2, even if the same
+        # local callback was reused to publish the second SDK descriptor.
+        files[A] = "new original"
+        original = await server.get_tool(tool_name)
+        assert original is not None and original.version == "1"
+        entered, resume = asyncio.Event(), asyncio.Event()
+
+        async def pause_admission(*args, **kwargs):
+            entered.set()
+            await resume.wait()
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(operation_invocation, "authorize_remote_operation", pause_admission)
+            selected = asyncio.create_task(
+                client.call_tool(tool_name, {**arguments, "unity_instance": A})
+            )
+            await asyncio.wait_for(entered.wait(), 5)
+            server.add_tool(original.model_copy(update={"version": "2"}))
+            resume.set()
+            completed = await selected
+            assert completed.data["success"] and "follow_up" not in completed.data["data"]
+        for selected_version in ("1", "2"):
+            versioned = await client.call_tool(
+                tool_name, {**arguments, "unity_instance": A}, version=selected_version
+            )
+            assert versioned.data["success"] and "follow_up" not in versioned.data["data"]
 
 
 @pytest.fixture

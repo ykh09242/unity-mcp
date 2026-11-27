@@ -58,6 +58,7 @@ def mcp_for_unity_tool(
     group: str | None = "core",
     maturity: ToolMaturity = "stable",
     input_conditions: tuple[dict, ...] = (),
+    preview_contracts: dict[str, Callable] | None = None,
     **kwargs,
 ) -> Callable:
     """
@@ -80,6 +81,7 @@ def mcp_for_unity_tool(
             Existing declarations default to stable. Experimental contracts may evolve;
             deprecated contracts remain available subject to normal selection/admission.
         input_conditions: Cross-field JSON Schema constraints enforced by the handler.
+        preview_contracts: Preview actions that can construct a guarded apply from native evidence.
         **kwargs: Additional arguments passed to @mcp.tool()
 
     Example:
@@ -135,6 +137,7 @@ def mcp_for_unity_tool(
                 "maturity": maturity,
                 "kwargs": tool_kwargs,
                 **({"input_conditions": input_conditions} if input_conditions else {}),
+                **({"preview_contracts": preview_contracts} if preview_contracts else {}),
             }
         )
 

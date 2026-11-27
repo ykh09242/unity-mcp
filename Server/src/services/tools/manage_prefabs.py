@@ -4,6 +4,12 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from services.registry.capability_adapter import capability_command
+from services.registry.preview_continuation import (
+    PreviewApply,
+    has_field_edits,
+    native_plan_id,
+    matches_serialized_edit,
+)
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_bool, normalize_vector3
@@ -29,7 +35,48 @@ REQUIRED_PARAMS = {
 }
 
 
+def _prefab_plan_apply(params, data):
+    token = native_plan_id(data)
+    path = (params.get("prefab_path") or "").replace("\\", "/")
+    # UnityAssetPath.Resolve accepts a path relative to Assets or an explicit Assets root.
+    relative = path[7:] if path[:7].lower() == "assets/" else path
+    if (
+        not token
+        or not has_field_edits(data.get("impact"))
+        or data.get("atomicity") != "compare_before_save"
+        or not relative
+        or data.get("prefab_path") != "Assets/" + relative
+    ):
+        return None
+    expected = {}
+    for key in ("position", "rotation", "scale"):
+        if params.get(key) is not None:
+            vector, error = normalize_vector3(params[key], key)
+            if error:
+                return None
+            expected[key] = vector
+    if params.get("set_active") is not None:
+        expected["setActive"] = coerce_bool(params["set_active"])
+    for index, row in enumerate(data["impact"]):
+        field = row["property"]
+        if (
+            field not in expected
+            or row.get("target") != "root"
+            or type(row.get("index")) is not int
+            or row["index"] != index
+            or not matches_serialized_edit(expected.pop(field), row)
+        ):
+            return None
+    if expected:
+        return None
+    return PreviewApply(
+        {"action": "apply_preview", "preview_id": token},
+        {"check": "Confirm saved, prefab_path and verification in the apply response."},
+    )
+
+
 @mcp_for_unity_tool(
+    preview_contracts={"preview_modify_contents": _prefab_plan_apply},
     group="legacy",
     description=(
         "Manages Unity Prefab assets. get_hierarchy returns bounded sibling-index depth-first "

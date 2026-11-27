@@ -9,6 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictInt, StrictS
 from pydantic import TypeAdapter, ValidationError
 
 from services.registry import mcp_for_unity_tool
+from services.registry.preview_continuation import (
+    PreviewApply,
+    has_field_edits,
+    native_plan_id,
+    same_serialized_value,
+    matches_serialized_edit,
+)
 from services.tools import get_unity_instance_from_context
 from services.tools.preflight import preflight
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -74,7 +81,137 @@ _OPERATIONS = TypeAdapter(list[StructureOperation])
 _EDITS = TypeAdapter(list[SceneEdit])
 
 
+def _same_structure_plan(params, data):
+    requested, reported = params.get("operations"), data.get("operations")
+    if (
+        type(data.get("scope_id")) is not int
+        or data["scope_id"] != params.get("target")
+        or not isinstance(requested, list)
+        or not requested
+        or not isinstance(reported, list)
+        or len(requested) != len(reported)
+        or data.get("impact", reported) != reported
+    ):
+        return False
+    for index, (op, row) in enumerate(zip(requested, reported)):
+        if (
+            not isinstance(row, dict)
+            or not isinstance(op, dict)
+            or set(row) - {"index", "affected_ids"} != op.keys()
+        ):
+            return False
+        if any(type(row[key]) is not type(value) or row[key] != value for key, value in op.items()):
+            return False
+        if "index" in row and (type(row["index"]) is not int or row["index"] != index):
+            return False
+        if "affected_ids" in row:
+            ids = row["affected_ids"]
+            target = str(op.get("temp_id", op.get("target")))
+            if (
+                not isinstance(ids, list)
+                or not all(isinstance(item, str) and item for item in ids)
+                or target not in ids
+            ):
+                return False
+            if op["op"] == "create" and ids != [target]:
+                return False
+    return True
+
+
+def _same_scene_fields(requested, rows):
+    if not isinstance(requested, list) or not has_field_edits(rows) or len(requested) != len(rows):
+        return False
+    # Native plans sort by scene, target, component and property. Match each
+    # row exactly once against the original selector, independent of that order.
+    lookup = {}
+    paths = {}
+    by_leaf = {}
+    for index, row in enumerate(rows):
+        if (
+            type(row.get("target_id")) is not int
+            or not isinstance(path := row.get("target_path"), str)
+            or not path
+            or type(row.get("component_index")) is not int
+        ):
+            return False
+        component = row.get("component_type"), row["component_index"], row["property"]
+        if not isinstance(component[0], str):
+            return False
+        target_id = str(row["target_id"])
+        if paths.setdefault(target_id, path) != path:
+            return False
+        by_leaf.setdefault(path.rsplit("/", 1)[-1], set()).add(target_id)
+        key = (target_id, *component)
+        if key in lookup:
+            return False
+        lookup[key] = index
+    matched = set()
+    for edit in requested:
+        method = edit.get("search_method", "by_id")
+        target = str(edit["target"])
+        if method != "by_id":
+            # Unity resolves the GameObject before choosing its component. Only a
+            # rooted path must match the entire hierarchy; other paths match a
+            # slash-delimited suffix. An ambiguous observed selector proves no target.
+            candidates = by_leaf.get(target.rsplit("/", 1)[-1], ())
+            if method == "by_path":
+                if target.startswith("/"):
+                    candidates = [key for key in candidates if paths[key] == target[1:]]
+                else:
+                    candidates = [
+                        key
+                        for key in candidates
+                        if paths[key] == target or paths[key].endswith("/" + target)
+                    ]
+            elif method != "by_name" or "/" in target:
+                return False
+            if len(candidates) != 1:
+                return False
+            target = next(iter(candidates))
+        name = edit["component_type"].removeprefix("UnityEngine.")
+        prop = edit["property"]
+        if name == "Transform" and prop in {"localPosition", "localRotation", "localScale"}:
+            prop = "m_L" + prop[1:]
+        index = lookup.get((target, "UnityEngine." + name, edit.get("component_index") or 0, prop))
+        if index is None or index in matched:
+            return False
+        row = rows[index]
+        if not matches_serialized_edit(edit["value"], row):
+            return False
+        if edit.get("expected_old") is not None and not same_serialized_value(
+            edit["expected_old"], row["before"]
+        ):
+            return False
+        matched.add(index)
+    return True
+
+
+def _scene_plan_apply(params, data):
+    token = native_plan_id(data)
+    if not token:
+        return None
+    if params["action"] == "preview_structure":
+        if not _same_structure_plan(params, data):
+            return None
+        action, check = (
+            "apply_structure",
+            "Confirm the applied operations, temporary IDs and Undo group.",
+        )
+    else:
+        if not _same_scene_fields(params.get("edits"), data.get("edits")):
+            return None
+        action, check = (
+            "apply",
+            "Confirm the target fields in the applied edits and the Undo group.",
+        )
+    arguments = {"action": action, "preview_id": token}
+    if params.get("undo_name") and params["undo_name"] != "MCP Scene Edits":
+        arguments["undo_name"] = params["undo_name"]
+    return PreviewApply(arguments, {"check": check})
+
+
 @mcp_for_unity_tool(
+    preview_contracts={"preview": _scene_plan_apply, "preview_structure": _scene_plan_apply},
     description=(
         "Preview or apply 1-1000 allowlisted native Transform, BoxCollider, SphereCollider, "
         "Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene. Preview returns "

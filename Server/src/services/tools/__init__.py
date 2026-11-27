@@ -21,6 +21,7 @@ from services.registry.routing_schema import with_unity_instance
 from services.registry.response_schema import direct_object_output_schema
 from services.registry.search_arguments import with_search_request
 from services.registry.operation_invocation import wrap_tool
+from services.registry.preview_continuation import PreviewBinding, PreviewRegistration
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -77,7 +78,14 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         # Apply decorators: logging -> telemetry -> mcp.tool
         # Note: Parameter normalization (camelCase -> snake_case) is handled by
         # ParamNormalizerMiddleware before FastMCP validation
-        admitted = wrap_tool(func, tool_name, tool_info.get("unity_target"))
+        contracts = tool_info.get("preview_contracts")
+        preview_registration = PreviewRegistration(contracts) if contracts else None
+        admitted = wrap_tool(
+            func,
+            tool_name,
+            tool_info.get("unity_target"),
+            preview_registration=preview_registration,
+        )
         wrapped = log_execution(tool_name, "Tool")(admitted)
         wrapped = telemetry_tool(tool_name)(wrapped)
         # Keep the global declaration unchanged: each server owns its decorators.
@@ -106,6 +114,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         registered.parameters = publish_parameter_scopes(registered.parameters, func)
         if tool_name != "get_execution_receipt":
             registered.parameters = with_unity_instance(registered.parameters)
+        if preview_registration is not None:
+            preview_registration.binding = PreviewBinding.capture(registered)
         mcp.add_tool(registered)
         definitions[tool_name] = registered
         groups[tool_name] = tool_info.get("group")
