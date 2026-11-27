@@ -546,13 +546,14 @@ Target and discover
 Observe and execute
 - Check target, units and coverage. Distinguish saved changes from live behavior. Label inferences. Honor client policy and Editor permissions.
 - Read mcpforunity://editor/state or inspect_editor_state. Check ready_for_tools, compile outcome and source separately. Keep compile_id, follow get_compile_job's next_call and inspect evidence_diagnostics on invalid responses.
-- Retain job IDs across reconnects. Check targets and receipts before retrying edits. Follow recovery_required, order dependent calls and inspect each batch result.
-- Preserve Play sessions, scenes and runtime objects. Use interaction tools for requested live input/UI. For authorized runtime work use enabled, consented execute_code with safety_checks=true. Verify target and Play state, return bounded before/after values and observe async effects without blocking. Limit persistent/external writes to the request.
-- Track temporary owners, use exception-safe cleanup and preserve unrelated state. Read data.verification status, complete, scope and findings.
+- Keep job IDs across reconnects. Check targets and receipts before retrying. Follow recovery_required, order dependent calls and inspect batch results.
+- Preserve Play sessions, scenes and runtime objects. Use interaction tools for live input/UI. Authorized runtime work uses enabled, consented execute_code with safety_checks=true. Verify target and Play state, return bounded observations and await effects without blocking. Limit writes to the request.
+- Track temporary owners, ensure cleanup and preserve unrelated state. Read data.verification status, complete, scope and findings.
 
 Edit and verify
-- For unfamiliar C# calls check source or unity_reflect for qualified types, member signatures, static/instance access and parameter types. Recheck after symbol errors.
-- Report scope, checks, gaps, isolated probes, substitutions and user actions. Use runner native test counts. Verify cleanup once effects settle.
+- To save, use a matching preview's follow_up.next_call when offered. Verify the save.
+- Check unfamiliar C# in source or unity_reflect for qualified types, member signatures, static/instance access and parameter types. Recheck symbol errors.
+- Report checks, gaps, scope, isolated probes, substitutions and user actions. Use runner native test counts. Verify cleanup after effects settle.
 - For unquoted text, distinguish sentence punctuation from the value using context and existing text. Clarify ambiguity. Preserve literal punctuation, forward-slash paths and line endings. Prepare with query and exact_text. Verify the authorized save against preview and original. For client-side C# previews, check provenance, hash and exact bytes per references/scripts.md before writing or refreshing.
 """
 

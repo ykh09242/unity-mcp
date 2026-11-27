@@ -59,6 +59,13 @@ actual invocation. `debug_request_context` reports the current request's
 client metadata. A denial should be attributed to the operation and authority
 that returned it.
 
+When a guarded preview returns `data.follow_up`, compare the observed target
+and proposed changes with the user's request. For a requested write, submit
+`next_call` through the same connection. A `call_template` identifies any
+large fields to copy exactly from the preview request. The apply operation
+checks the source digest or Editor plan token before changing state. Read back
+the requested saved or live result. A preview on its own leaves the target intact.
+
 For a value the user supplied verbatim, select its boundaries in the original
 request before drafting. Keep punctuation and spaces inside the value. Use the
 surrounding sentence and any delimiters to decide whether adjacent punctuation
@@ -93,9 +100,11 @@ preserve the original `uri_template` and list required and optional parameters.
 For example, after observing a GameObject instance ID in the selected scene,
 expand `mcpforunity://scene/gameobject/{instance_id}/children{?page_size,cursor}`
 with that ID. Use native `resources/read` or put the expanded URI into the
-returned `read_after_expansion` tool call. For a fixed resource, invoke its
-`read_tool` directly. Both use the connection's published resource and its read
-permissions. A continuation uses the returned cursor
+returned `read_after_expansion` tool call when offered. Fixed observations can
+supply a `read_tool` directly. The catalog exposes these tools for read-only
+observations. For operations such as evaluating component getters, follow
+`native_read_after_expansion` and the native resource's permission checks.
+A continuation uses the returned cursor
 and the same page size. Component or hierarchy changes can invalidate live IDs.
 The calling agent interprets the user's request in its original language, selects
 relevant groups/tools, compares action purposes and effects, and obtains the full
