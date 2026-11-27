@@ -14,9 +14,11 @@ any explicit `unity_instance` across pages. The offline CLI provides the same pa
 
 MCP returns `next_call` for the next page. Add the chosen ID as `family` in
 `open_family.arguments`. Send the original text as the string value of `query`
-alongside `selection`. Inspect inputs with `manage_tools(action="describe", tool=name,
-operation=action)`. Omit `operation` for an actionless tool. When `describe_call`
-is present, invoke its `tool` with its `arguments` unchanged. Read
+alongside `selection`. Inspect a selected row through its `describe_call`.
+When only a tool name is known, call `manage_tools(action="describe", tool=name)`
+on the same connection. Its paged `operation_choices` contain exact calls for
+that tool's public actions or uniquely selectable input values. Follow `next_call`
+for more choices. If none fits the outcome, browse the related families. Read
 `operation.input_fields` for selected field types, nesting and declared usage.
 `input_variants` describes alternative input shapes when present. Names in
 `other_tool_parameters` have no confirmed membership in the selected operation.

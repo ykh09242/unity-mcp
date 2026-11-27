@@ -539,7 +539,7 @@ Target and discover
 - Find Editors via manage_tools(action="list_instances"). Sessionless tools use unity_instance=Name@hash, native resources use _meta.unity_instance.
 - Read the guide with read_unity_resource({{}}) or manage_tools(action="read_skill"). Open a host skill path with the host file reader. More guides via manage_tools(action="catalog",group="skills").
 - Resolve Assets/... in the selected Editor project. Keep names verbatim. Show paths as code. Client file access and links need a verified shared root.
-- Search by meaning: search_unity_tools({{"query":"<original text>","selection":"agent"}}). Follow next_call (next_offset), set open_family.arguments.family and compare operations. Inspect manage_tools(action="describe",tool=name,operation=action).
+- Search by meaning via search_unity_tools({{"query":"<text>","selection":"agent"}}). Use next_call (next_offset), open_family. Compare operations. Name only? manage_tools(action="describe",tool=name). Follow operation_choices or describe_call.
 - Read resources via their listed read tool or native resources/read. In manage_tools(action="catalog"), expand the published resource template. Pass the host reader's required server selector. Fill operation.prepare_call from input_fields. Use prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
 - Check manage_tools(action="list_groups").discovery, client/project scope, Editor toggles and consent. Activate and refresh tools/list. Fixed hosts can reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
 
