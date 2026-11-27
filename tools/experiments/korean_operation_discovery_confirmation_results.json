@@ -1,0 +1,413 @@
+{
+  "schema": 1,
+  "primary_sha256": "68b1093bef6a9920d39e2dbafbe376f6488298c8eb4f113e82cfd6055f0cf1ce",
+  "request_sha256": "adbccbff5d05d76ee9f636e65c2ffea8870426f05b011edc27dc389d256dc679",
+  "seal_sha256": "45b6ea1d67ec992cf4e00906095ed47874aa44c8b9e482757c17877024d5dd01",
+  "languages": {
+    "h02": "de",
+    "h04": "ru",
+    "h06": "vi",
+    "h08": "fr",
+    "r01": "vi",
+    "r03": "ru",
+    "n01": "sv",
+    "n02": "it",
+    "n03": "ja",
+    "n04": "pl",
+    "n05": "es",
+    "n06": "tr",
+    "k01": "ko"
+  },
+  "product_pins": {
+    "package": "163fe032c782c9258201b0aa4a7a7df9b29952e7",
+    "runtime": "9decbcf3ef15b1768c5e8ac18466f2d364c10fb2",
+    "skill": "3dace93bfe6cfce8f8e7aa2dcea4fac440377fba"
+  },
+  "actor": {
+    "version": "codex-cli 0.172.0",
+    "sha256": "3f42b12274b353ecb3ec555e6c8d0a43f6c6cb29c3a546179bc12dee4855deb6",
+    "model": "gpt-6.2-sol",
+    "reasoning_effort": "medium",
+    "host": "ordinary-codex-exec"
+  },
+  "unity_version": "6000.0.69f1",
+  "catalog_sizes": {
+    "core": 62,
+    "full": 92
+  },
+  "verified_product_archives": {
+    "package": {
+      "files": 1600,
+      "sha256": "0c342941a6275e5a220d02ac0247e5e0ab380e055a24886c8a25e053d1f977d7"
+    },
+    "runtime": {
+      "files": 1437,
+      "sha256": "439a4bb16d8027becaecc5eef571d25cf3aa646bdceef308de11d13902828ebd"
+    }
+  },
+  "native_control": {
+    "before": {
+      "value": "See the log",
+      "asset_sha256": "202257c9fbc33929527cca8acc57de3f43c6d85be36074680126e71a7406e3ac",
+      "meta_sha256": "c7ae2dd869f08820e346cdb8f1693e9a6edf178e75bfda6d26ba2ce995ab43c0",
+      "protected_bytes_sha256": "083f46a4db9e16c33d2838e134b3aeebcf0b0abf3b65fc2d98bcc083790d68bb"
+    },
+    "after": {
+      "value": "인계 기록을 열까요?",
+      "asset_sha256": "d7debd6fb6cfc10631ff135b66403f78449f60e9789d5e8e7438ead889bfc245",
+      "meta_sha256": "c7ae2dd869f08820e346cdb8f1693e9a6edf178e75bfda6d26ba2ce995ab43c0",
+      "protected_bytes_sha256": "083f46a4db9e16c33d2838e134b3aeebcf0b0abf3b65fc2d98bcc083790d68bb"
+    }
+  },
+  "shared_preferences": {
+    "owned_editor_stopped": true,
+    "shared_prefs": "5ab447bb3881745f00a37d8290018c33a1d238d17391edd6bbcd99c9267b6ffb",
+    "count": 130
+  },
+  "cases": [
+    {
+      "id": "9b4353bfa9a00be7",
+      "profile": "core",
+      "task": "r03",
+      "effect": "edit",
+      "original_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "answer_sha256": "336eca9744e6c1dbefc8f867844fd07e4e85f81fe4ad0748f309dfe79fc5bbac",
+      "delivery_status": "completed",
+      "seconds": 50.632,
+      "receipt_sha256": "ee15bf488e2be927d8ad49d774625704202cbc865bd5b99f99fcd1e1f7dca0bb",
+      "fingerprint": "818ed7ce6dc795d3fff8a9c59c082a2b2495d23586556df847f308c6e4b74aa7",
+      "before_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "See the log"
+      },
+      "after_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "인계 기록을 열까요?"
+      },
+      "before_sha256": "51d4c5fc453ef1c75bbe66b0b61b3de7156d90a3bb937ca1f32b1f71e7a5276c",
+      "after_sha256": "398b724a6463a138b0efcc663a26cb3225a2850cdd73318436a8c7115ba3a1f5",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "4cf71abdedbe482491c2c59b7b8db5daba4085b557c8381d2bb814028efa7603",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "b1b7d7febb5607b3c7040d44d79c9e8ad83257959525263409bae5da04e67399",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "read_unity_resource",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "c7c57a5293ebd937fa4569b495f8d7eaffea2ecc7787f511fcdc7d5bd62ba22e"
+        },
+        {
+          "index": 1,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4c08cd551582b2e4d8d063ad1abfdb6833199ec9234cfb82abf9d24f7b828465"
+        },
+        {
+          "index": 2,
+          "binding": "read_unity_resource",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ba939f9cd957a289b5369e65bcf3e55d7b219f8e3048bd9d9a925c17f4e89ac2"
+        },
+        {
+          "index": 3,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "ab0855b5bb4bc9c94591c9328680aa6bb6f7da8674d3f6ff3316d75dc8e8dbe1"
+        },
+        {
+          "index": 4,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "a02122b449df496a88fd33d80a5963b9dbf5ccd65d24fea0a91788c699921f54"
+        },
+        {
+          "index": 5,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "5cbd772f608833a88980cdf1b7d581e7e9b96fe3d42e1b4db14389e133b1ce5e"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "14dca1c04bcaea9f5446a60709f18c0bbdc55efbb9c67f4aafe56cec4c49f233",
+        "22dbe21f363390f1611207900db6fddacb9a45130da01354012d18c511c853a2",
+        "3eb828eedebb21060a3521a2c73553e0af918b4587a8031ffb2bc276e266d561",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "818ed7ce6dc795d3fff8a9c59c082a2b2495d23586556df847f308c6e4b74aa7",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 1,
+            "sha256": "4c08cd551582b2e4d8d063ad1abfdb6833199ec9234cfb82abf9d24f7b828465"
+          },
+          {
+            "index": 3,
+            "sha256": "ab0855b5bb4bc9c94591c9328680aa6bb6f7da8674d3f6ff3316d75dc8e8dbe1"
+          },
+          {
+            "index": 4,
+            "sha256": "a02122b449df496a88fd33d80a5963b9dbf5ccd65d24fea0a91788c699921f54"
+          },
+          {
+            "index": 5,
+            "sha256": "5cbd772f608833a88980cdf1b7d581e7e9b96fe3d42e1b4db14389e133b1ce5e"
+          }
+        ]
+      },
+      "actor_first_list_delta": {
+        "count": 62,
+        "added": [],
+        "absent": []
+      },
+      "host_item_types": {
+        "agent_message": 3,
+        "mcp_tool_call": 6
+      },
+      "other_integrations": [],
+      "host_routes": [
+        "unityMCP/read_unity_resource",
+        "unityMCP/ui_source"
+      ],
+      "host_file_changes": [],
+      "before_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "after_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "host_tool_calls": {
+        "completed": 6
+      },
+      "skill_document_reads": [
+        0,
+        2
+      ],
+      "discovery_use": {},
+      "disk": {
+        "before": {
+          "value": "See the log",
+          "asset_sha256": "202257c9fbc33929527cca8acc57de3f43c6d85be36074680126e71a7406e3ac",
+          "meta_sha256": "c7ae2dd869f08820e346cdb8f1693e9a6edf178e75bfda6d26ba2ce995ab43c0",
+          "protected_bytes_sha256": "083f46a4db9e16c33d2838e134b3aeebcf0b0abf3b65fc2d98bcc083790d68bb"
+        },
+        "after": {
+          "value": "인계 기록을 열까요?",
+          "asset_sha256": "d7debd6fb6cfc10631ff135b66403f78449f60e9789d5e8e7438ead889bfc245",
+          "meta_sha256": "c7ae2dd869f08820e346cdb8f1693e9a6edf178e75bfda6d26ba2ce995ab43c0",
+          "protected_bytes_sha256": "083f46a4db9e16c33d2838e134b3aeebcf0b0abf3b65fc2d98bcc083790d68bb"
+        }
+      },
+      "language_case": "k01"
+    },
+    {
+      "id": "8316239466907bb5",
+      "profile": "full",
+      "task": "r03",
+      "effect": "edit",
+      "original_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "verdict": "completed",
+      "attempt_count": 1,
+      "prompt_reached_model": true,
+      "host_final_present": true,
+      "host_final_correct": true,
+      "observed_native_state": true,
+      "observed_target_matches": true,
+      "prompt_sha256": "bd457cec30902ba0dcf41871d1f8c8011cae7050fdd3e6adc0ced92d74b69590",
+      "answer_sha256": "4b812a749550ea4d3ccd96a884bdc77168bd9a63ffa17208631af4d533d1bc06",
+      "delivery_status": "completed",
+      "seconds": 51.436,
+      "receipt_sha256": "ba3cda5de5de079876a976f8eccc02f32b4384580c695ba1bb3549cd6aa8f666",
+      "fingerprint": "7681733985705f75c061ebf1f6f62d11cf9574cbecd7a96841a277e8ebb7bbbc",
+      "before_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "See the log"
+      },
+      "after_facts": {
+        "element": "queue-caption",
+        "text": "Handover queue",
+        "tooltip": "인계 기록을 열까요?"
+      },
+      "before_sha256": "214423d3b7b0bd5c1cc6275510c9af3831ee02089168cc4e1b7d91e193ff9032",
+      "after_sha256": "4d45bf183ec92124205aaa914ff13d3433f9a8d68758cc39a8a345912e75c76f",
+      "protected_changes": [],
+      "persisted_scope_valid": true,
+      "startup_inventory": {
+        "ready": true,
+        "expected_catalog_sha256": "341bf46c0cdd616cc4eb1562cb80f88b25b01e5ccb1597363ebe81b38d7fa4e0",
+        "sdk_checks": 1,
+        "sdk_errors": 0
+      },
+      "actor_first_tools_list_sha256": "71f0d6f8909b5c6c64a003f61b1289340a50d8719b0c17164eb14f7aaae8ed1c",
+      "actor_first_tools_list_complete": true,
+      "model_turns_started": 1,
+      "model_turns_completed": 1,
+      "catalog_child_turns_started": 0,
+      "calls": [
+        {
+          "index": 0,
+          "binding": "read_unity_resource",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "7963b224814920aa75f04257899ec83786b9ff68617a44c54f0e9895d939c28c"
+        },
+        {
+          "index": 1,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "4c6f45520a8f41f1734e359ad1eebe5516e6542bac8111579c8fc22af13b02ae"
+        },
+        {
+          "index": 2,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "9a9c6d6bd5db7ef7a49ef006d2af548b3fccf8227f1672cee5f8ff92da2e6f03"
+        },
+        {
+          "index": 3,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "d38f808c18f0aa8b94308f02b2c1be6f438c11eef27afe4d49a993057643bb3e"
+        },
+        {
+          "index": 4,
+          "binding": "ui_source",
+          "method": "tools/call",
+          "reply": "success",
+          "domain_error": false,
+          "mcp_error": false,
+          "sha256": "c5113002249b3420ec3c4580b08a75a1c3604bb12ff7c3fffadfa943ca59ac3d"
+        }
+      ],
+      "host_errors": [],
+      "private_artifact_sha256": [
+        "3c77c7bb6c73854cbdf3236c47f940e5753a2495052b690e86fb88dd7164ade2",
+        "4eb5b9205c61388e2c046df10055460e25298d9f9c7543bf8d2e601da5e0bf12",
+        "74c2715f1414e50ec611f7172bb934c6623a58c3b41f55872e0abeed93400e3c",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      "review": {
+        "fingerprint": "7681733985705f75c061ebf1f6f62d11cf9574cbecd7a96841a277e8ebb7bbbc",
+        "answer_accurate": true,
+        "constraints_respected": true,
+        "evidence": [
+          {
+            "index": 1,
+            "sha256": "4c6f45520a8f41f1734e359ad1eebe5516e6542bac8111579c8fc22af13b02ae"
+          },
+          {
+            "index": 2,
+            "sha256": "9a9c6d6bd5db7ef7a49ef006d2af548b3fccf8227f1672cee5f8ff92da2e6f03"
+          },
+          {
+            "index": 3,
+            "sha256": "d38f808c18f0aa8b94308f02b2c1be6f438c11eef27afe4d49a993057643bb3e"
+          },
+          {
+            "index": 4,
+            "sha256": "c5113002249b3420ec3c4580b08a75a1c3604bb12ff7c3fffadfa943ca59ac3d"
+          }
+        ]
+      },
+      "actor_first_list_delta": {
+        "count": 92,
+        "added": [],
+        "absent": []
+      },
+      "host_item_types": {
+        "agent_message": 3,
+        "mcp_tool_call": 5
+      },
+      "other_integrations": [],
+      "host_routes": [
+        "unityMCP/read_unity_resource",
+        "unityMCP/ui_source"
+      ],
+      "host_file_changes": [],
+      "before_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "after_persistence": {
+        "sceneDirty": false,
+        "savedSortingOrder": null
+      },
+      "host_tool_calls": {
+        "completed": 5
+      },
+      "skill_document_reads": [
+        0
+      ],
+      "discovery_use": {},
+      "disk": {
+        "before": {
+          "value": "See the log",
+          "asset_sha256": "202257c9fbc33929527cca8acc57de3f43c6d85be36074680126e71a7406e3ac",
+          "meta_sha256": "c7ae2dd869f08820e346cdb8f1693e9a6edf178e75bfda6d26ba2ce995ab43c0",
+          "protected_bytes_sha256": "083f46a4db9e16c33d2838e134b3aeebcf0b0abf3b65fc2d98bcc083790d68bb"
+        },
+        "after": {
+          "value": "인계 기록을 열까요?",
+          "asset_sha256": "d7debd6fb6cfc10631ff135b66403f78449f60e9789d5e8e7438ead889bfc245",
+          "meta_sha256": "c7ae2dd869f08820e346cdb8f1693e9a6edf178e75bfda6d26ba2ce995ab43c0",
+          "protected_bytes_sha256": "083f46a4db9e16c33d2838e134b3aeebcf0b0abf3b65fc2d98bcc083790d68bb"
+        }
+      },
+      "language_case": "k01"
+    }
+  ]
+}

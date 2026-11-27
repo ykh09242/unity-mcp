@@ -18,6 +18,7 @@ from tools.experiments.verify_heartbeat_edit_confirmation import (
     CONNECTION_GUIDE,
     CONNECTION_OBSERVATION,
     EDITOR_TARGET,
+    OPERATION_DISCOVERY,
     PREVIEW_CONTINUATION,
     RESOURCE_BINDINGS,
     STRUCTURED_SEARCH,
@@ -51,6 +52,10 @@ STUDIES = {
     "3a35cc7ca43b58017ece44d554fa61df7f786c78a8e41c572fbafc6adc1718a2": (
         "resource_bindings_confirmation_results.json",
         RESOURCE_BINDINGS,
+    ),
+    "2c514958bc9f00515327deacca1b0202c1b757a22ed4e97a6e5d3faf308a8f2a": (
+        "operation_discovery_confirmation_results.json",
+        OPERATION_DISCOVERY,
     ),
 }
 
