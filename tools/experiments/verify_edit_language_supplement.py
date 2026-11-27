@@ -16,6 +16,7 @@ from tools.experiments.verify_compact_edit_followup import disk_valid, read_pair
 from tools.experiments.verify_heartbeat_edit_confirmation import (
     CONNECTION_GUIDE,
     EDITOR_TARGET,
+    STRUCTURED_SEARCH,
     verified_archives,
 )
 
@@ -26,6 +27,10 @@ STUDIES = {
     "66583af47086d808cbde617dd604c36874fbd39162011cd199fb2ad9d2548102": (
         "connection_guide_confirmation_results.json",
         CONNECTION_GUIDE,
+    ),
+    "f1f548131afba4031d714ffb034321d429f6ad10e7f84398b527882b3158df99": (
+        "structured_search_confirmation_results.json",
+        STRUCTURED_SEARCH,
     ),
 }
 
