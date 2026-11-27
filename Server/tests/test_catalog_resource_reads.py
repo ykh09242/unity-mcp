@@ -666,22 +666,44 @@ async def test_fixed_inventory_adapters_pin_the_registered_owner(
 
 
 @pytest.mark.asyncio
-async def test_advertised_read_resource_hints_cover_observations_only(server):
-    async with Client(server) as client:
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize("project_uri", [False, True])
+async def test_advertised_read_resource_hints_cover_observations_only(server, mode, project_uri):
+    if project_uri:
+
+        class ConstrainResourceUri(Middleware):
+            async def on_list_tools(self, context, call_next):
+                tools = []
+                for tool in await call_next(context):
+                    if tool.name == "manage_tools":
+                        fields = tool.parameters["properties"]
+                        schema = {
+                            **tool.parameters,
+                            "properties": {**fields, "uri": {**fields["uri"], "minLength": 24}},
+                        }
+                        tool = tool.model_copy(update={"parameters": schema})
+                    tools.append(tool)
+                return tools
+
+        server.add_middleware(ConstrainResourceUri())
+    async with Client(server, mode=mode) as client:
         tool = next(t for t in await client.list_tools() if t.name == "manage_tools")
         assert tool.annotations.read_only_hint is False
         assert tool.annotations.destructive_hint is False
         assert tool.annotations.idempotent_hint is True
         assert tool.annotations.open_world_hint is False
-        card = (
+        described = (
             await client.call_tool(
                 "manage_tools",
                 {"action": "describe", "tool": "manage_tools", "operation": "read_resource"},
             )
-        ).structured_content["operation"]
+        ).structured_content
+        card = described["operation"]
         assert "evaluate_getters=true" in card["purpose"]
+        if project_uri:
+            assert described["tool"]["input_schema"]["properties"]["uri"]["minLength"] == 24
         assert card["effects"] == {
-            "readOnlyHint": True,
+            "readOnlyHint": not project_uri,
             "destructiveHint": False,
             "idempotentHint": True,
             "openWorldHint": False,

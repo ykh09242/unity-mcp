@@ -18,6 +18,7 @@ from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from fastmcp.tools import Tool
+from fastmcp.utilities.json_schema import dereference_refs
 from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 from transport.protocol import internal_catalog, internal_resource_catalog, is_sessionless
@@ -1233,7 +1234,12 @@ def _describe_binding(entry, definition, operation, visible, registered):
         same_registration = registered is not None and PreviewBinding.capture(registered).matches(
             definition
         )
-        if not same_registration or registered.parameters != definition.parameters:
+        # tools/list may inline local references from this same registration.
+        same_schema = same_registration and (
+            registered.parameters == definition.parameters
+            or dereference_refs(registered.parameters) == definition.parameters
+        )
+        if not same_schema:
             entry = {
                 "name": definition.name,
                 "group": entry.get("group") if same_registration else None,
