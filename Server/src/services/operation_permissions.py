@@ -471,7 +471,12 @@ def _component_read_permissions(evaluate_getters: JsonValue) -> frozenset[Permis
 
 
 def required_permissions(
-    name: str, params: Mapping[str, JsonValue], *, custom: bool = False, native: bool = False
+    name: str,
+    params: Mapping[str, JsonValue],
+    *,
+    custom: bool = False,
+    native: bool = False,
+    scoped_resources: bool = False,
 ) -> frozenset[Permission]:
     """Classify a known operation, rejecting unknown and nested scoped batch members."""
     if custom or name == "execute_custom_tool":
@@ -581,6 +586,8 @@ def required_permissions(
     if actions is None or not isinstance(action, str):
         raise OperationPermissionError()
     action = action.strip().lower()
+    if name == "manage_tools" and action == "read_resource":
+        return _resource_read_permissions(params.get("uri"), scoped=scoped_resources)
     if name == "manage_ui" and action == "get_visual_tree":
         # Visual tree traversal can invoke project-defined virtual text getters.
         return CUSTOM_GRANTS | {Permission.READ}
@@ -775,7 +782,9 @@ def authorize_operation(
         if native and not custom and name not in _NATIVE_COMMANDS:
             raise OperationPermissionError()
         if (
-            not required_permissions(name, params, custom=custom, native=native)
+            not required_permissions(
+                name, params, custom=custom, native=native, scoped_resources=True
+            )
             <= authority.permissions
         ):
             raise OperationPermissionError()
@@ -796,6 +805,12 @@ def authorize_resource(authority: OperationGrants, uri: str | None = None) -> No
         raise OperationPermissionError()
     if uri is None:
         return
+    if not _resource_read_permissions(uri, scoped=True) <= authority.permissions:
+        raise OperationPermissionError()
+
+
+def _resource_read_permissions(uri: JsonValue, *, scoped: bool) -> frozenset[Permission]:
+    """Share the expanded URI's policy across reads, selected plugins and execution receipts."""
     if not isinstance(uri, str) or len(uri) > 4096:
         raise OperationPermissionError()
     try:
@@ -803,20 +818,29 @@ def authorize_resource(authority: OperationGrants, uri: str | None = None) -> No
     except ValueError as error:
         raise OperationPermissionError() from error
     route = parts.netloc + parts.path
-    if (
+    if parts.scheme not in {"mcpforunity", "skill"}:
+        raise OperationPermissionError()
+    if scoped and (
         parts.scheme != "mcpforunity"
         or parts.fragment
         or route not in _RESOURCE_PATHS
         and not any(pattern.fullmatch(route) for pattern in _RESOURCE_PATTERNS)
     ):
         raise OperationPermissionError()
-    if parts.query and _COMPONENT_RESOURCE.fullmatch(route):
+    # Local templates decode path arguments before the handler parses an instance ID.
+    # Classify an explicit getter option independently of that representation. Hosted
+    # grants continue to admit only the closed routes and options of the native policy.
+    if (
+        parts.scheme == "mcpforunity"
+        and parts.query
+        and (not scoped or _COMPONENT_RESOURCE.fullmatch(route))
+    ):
         query = parse_qs(parts.query, keep_blank_values=True)
         values = query.get("evaluate_getters", ["false"])
         if "evaluateGetters" in query or len(values) != 1:
             raise OperationPermissionError()
-        if not _component_read_permissions(values[0]) <= authority.permissions:
-            raise OperationPermissionError()
+        return _component_read_permissions(values[0])
+    return frozenset({Permission.READ})
 
 
 async def authorize_remote_operation(

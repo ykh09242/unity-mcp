@@ -23181,9 +23181,9 @@
         },
         "manage_tools": {
           "annotations": {
-            "destructiveHint": false,
-            "idempotentHint": true,
-            "openWorldHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true,
             "readOnlyHint": false
           },
           "inputSchema": {
@@ -23207,6 +23207,73 @@
                     }
                   },
                   "required": []
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "read_resource",
+                        "read_skill"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "arguments": {
+                      "type": "null"
+                    },
+                    "catalog_query": {
+                      "type": "null"
+                    },
+                    "exact_text": {
+                      "type": "null"
+                    },
+                    "family": {
+                      "type": "null"
+                    },
+                    "group": {
+                      "type": "null"
+                    },
+                    "host_tool_evidence": {
+                      "type": "null"
+                    },
+                    "host_tool_names": {
+                      "type": "null"
+                    },
+                    "include_schema": {
+                      "const": false
+                    },
+                    "intent": {
+                      "type": "null"
+                    },
+                    "observation_source": {
+                      "type": "null"
+                    },
+                    "offset": {
+                      "const": 0
+                    },
+                    "operation": {
+                      "type": "null"
+                    },
+                    "query": {
+                      "type": "null"
+                    },
+                    "required_values": {
+                      "type": "null"
+                    },
+                    "route_surfaces": {
+                      "type": "null"
+                    },
+                    "selection": {
+                      "const": "ranked"
+                    },
+                    "tool": {
+                      "type": "null"
+                    }
+                  }
                 }
               },
               {
@@ -23510,6 +23577,55 @@
               {
                 "if": {
                   "properties": {
+                    "uri": {
+                      "not": {
+                        "const": null
+                      }
+                    }
+                  },
+                  "required": [
+                    "uri"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "read_resource"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "read_resource"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "uri": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "uri"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
                     "query": {
                       "type": "object"
                     }
@@ -23551,7 +23667,8 @@
                   "catalog",
                   "inspect_inventory",
                   "prepare",
-                  "read_skill"
+                  "read_skill",
+                  "read_resource"
                 ],
                 "type": "string"
               },
@@ -24241,6 +24358,7 @@
                   {
                     "maxLength": 2048,
                     "minLength": 1,
+                    "pattern": "^skill://[^{}]+$",
                     "type": "string"
                   },
                   {
@@ -24271,6 +24389,26 @@
                   {
                     "type": "null"
                   }
+                ]
+              },
+              "uri": {
+                "anyOf": [
+                  {
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "pattern": "^(mcpforunity|skill)://[^{}]+$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "read_resource"
+                ],
+                "x-unity-mcp-required-for-actions": [
+                  "read_resource"
                 ]
               }
             },
@@ -54097,9 +54235,9 @@
         },
         "manage_tools": {
           "annotations": {
-            "destructiveHint": false,
-            "idempotentHint": true,
-            "openWorldHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": true,
             "readOnlyHint": false
           },
           "inputSchema": {
@@ -54123,6 +54261,73 @@
                     }
                   },
                   "required": []
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "read_resource",
+                        "read_skill"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "arguments": {
+                      "type": "null"
+                    },
+                    "catalog_query": {
+                      "type": "null"
+                    },
+                    "exact_text": {
+                      "type": "null"
+                    },
+                    "family": {
+                      "type": "null"
+                    },
+                    "group": {
+                      "type": "null"
+                    },
+                    "host_tool_evidence": {
+                      "type": "null"
+                    },
+                    "host_tool_names": {
+                      "type": "null"
+                    },
+                    "include_schema": {
+                      "const": false
+                    },
+                    "intent": {
+                      "type": "null"
+                    },
+                    "observation_source": {
+                      "type": "null"
+                    },
+                    "offset": {
+                      "const": 0
+                    },
+                    "operation": {
+                      "type": "null"
+                    },
+                    "query": {
+                      "type": "null"
+                    },
+                    "required_values": {
+                      "type": "null"
+                    },
+                    "route_surfaces": {
+                      "type": "null"
+                    },
+                    "selection": {
+                      "const": "ranked"
+                    },
+                    "tool": {
+                      "type": "null"
+                    }
+                  }
                 }
               },
               {
@@ -54426,6 +54631,55 @@
               {
                 "if": {
                   "properties": {
+                    "uri": {
+                      "not": {
+                        "const": null
+                      }
+                    }
+                  },
+                  "required": [
+                    "uri"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "read_resource"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "enum": [
+                        "read_resource"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "uri": {
+                      "not": {
+                        "type": "null"
+                      }
+                    }
+                  },
+                  "required": [
+                    "uri"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
                     "query": {
                       "type": "object"
                     }
@@ -54467,7 +54721,8 @@
                   "catalog",
                   "inspect_inventory",
                   "prepare",
-                  "read_skill"
+                  "read_skill",
+                  "read_resource"
                 ],
                 "type": "string"
               },
@@ -55157,6 +55412,7 @@
                   {
                     "maxLength": 2048,
                     "minLength": 1,
+                    "pattern": "^skill://[^{}]+$",
                     "type": "string"
                   },
                   {
@@ -55187,6 +55443,26 @@
                   {
                     "type": "null"
                   }
+                ]
+              },
+              "uri": {
+                "anyOf": [
+                  {
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "pattern": "^(mcpforunity|skill)://[^{}]+$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "x-unity-mcp-input-actions": [
+                  "read_resource"
+                ],
+                "x-unity-mcp-required-for-actions": [
+                  "read_resource"
                 ]
               }
             },

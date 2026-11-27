@@ -149,6 +149,7 @@ def install_skills(
         from mcp.shared.exceptions import MCPError
         from mcp_types import INVALID_PARAMS
         from pydantic import Field
+        from services.resource_inventory import PublishedSnapshotResource
 
         if not all(
             callable(value)
@@ -179,7 +180,7 @@ def install_skills(
         list_result = ListSkillsResult.model_validate(listed)
         get_result = GetSkillResult.model_validate(fetched)
 
-        class SkillResource(Resource):
+        class SkillResource(PublishedSnapshotResource):
             content: str | bytes = Field(exclude=True, repr=False)
 
             async def read(self) -> str | bytes:

@@ -1038,7 +1038,14 @@ class UnityInstanceMiddleware(Middleware):
         ctx = context.fastmcp_context
         selection_options = {}
         if config.require_explicit_target and not config.http_remote_hosted:
-            if public_custom or public_name not in _LOCAL_TARGET_CONTROL_TOOLS:
+            reads_project_resource = (
+                public_name == "manage_tools" and public_params.get("action") == "read_resource"
+            )
+            if (
+                public_custom
+                or public_name not in _LOCAL_TARGET_CONTROL_TOOLS
+                or reads_project_resource
+            ):
                 try:
                     permissions = required_permissions(
                         public_name, public_params, custom=public_custom
