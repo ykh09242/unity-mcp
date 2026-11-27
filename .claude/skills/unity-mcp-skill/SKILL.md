@@ -36,7 +36,7 @@ Use a known callable binding when its contract fits. For an unclear route, brows
 - A pending compilation keeps its original `compile_id` and follows `get_compile_job`.
 
 1. Resolve the target through the Unity MCP connection. If the host's resource list is empty, call `manage_tools(action="list_instances")`, select the matching Editor and verify its state before editing.
-2. Inspect the specific object, asset or state needed for the task. Use returned IDs and exact asset paths rather than ambiguous names. Check readiness for operations affected by compilation, refresh or a running test job.
+2. Inspect the requested target using returned IDs and exact asset paths. Report an asset using the project-relative path returned by the selected Editor. A filesystem link needs a verified project root shared with the client. Check readiness for operations affected by compilation, refresh or a running test job.
 3. Apply the requested change with the narrowest suitable tool. A missing optional package is a capability limit, not permission to install it. Enabling a tool group or executing code does not bypass authorization.
 4. Verify the resulting state. For scripts, wait for compilation and inspect diagnostics. For visual work, inspect an image when capture is available. For jobs, poll the returned job ID and inspect the actual outcome. Report the executed checks, setup, scope, pending gaps and observed cleanup. Attribute native test counts to runner results and identify isolated probes, substituted dependencies and exercised user interactions.
 

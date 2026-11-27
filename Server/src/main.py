@@ -537,7 +537,7 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 
 Target and discover
 - Find Editors via mcpforunity://instances or manage_tools(action="list_instances"). Sessionless tools use unity_instance=Name@hash, resources use _meta.unity_instance.
-- Keep names/paths verbatim. Read listed URIs or expand observed templates.
+- Keep names and asset paths verbatim. Link files only from a verified shared project root. Read listed URIs or expand observed templates.
 - Search by meaning with search_unity_tools({{"selection":"agent","query":"<original text>"}}). Follow next_call (next_offset), set open_family.arguments.family and compare operations. Inspect manage_tools(action="describe",tool=name,operation=action).
 - Use manage_tools(action="catalog") for reads. Fill operation.prepare_call from input_fields. Invoke prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
 - Check manage_tools(action="list_groups").discovery, client/project scope, Editor toggles and consent. Activate and refresh tools/list. Fixed hosts may need a user reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
