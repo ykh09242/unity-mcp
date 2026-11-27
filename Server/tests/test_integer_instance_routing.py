@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastmcp import Client, Context, FastMCP
+from fastmcp.exceptions import ToolError
 from mcp.shared.exceptions import MCPError
 
 from core.config import config
@@ -232,8 +233,11 @@ async def test_missing_qualified_target_never_dispatches_from_either_sdk_client(
         return target.id
 
     async with Client(server) as explicit, Client(server) as default:
-        with pytest.raises(MCPError):
+        with pytest.raises(ToolError, match="explicit_unity_target_unavailable") as missing:
             await explicit.call_tool("mutation_probe", {"unity_instance": selector})
+        guidance = str(missing.value)
+        assert "mcpforunity://instances" in guidance
+        assert selector not in guidance and other.id not in guidance
         result = await default.call_tool("mutation_probe", {}, raise_on_error=False)
         assert result.is_error
     assert not dispatched
