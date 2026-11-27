@@ -42,6 +42,17 @@ An SDK test opened a separate isolated Unity 6000.0.69f1 project on Windows for 
 
 The older package rejected the scene and asset arguments before dispatch. The new package advertised the option in the tool schema and the selected operation's description. Each fixture preserved its scene bytes and protected Editor state. All 20 serialized scene documents matched between the projects after resolving their generated local IDs. Both Editors exited and all 130 shared preference values matched. These measurements used zero model calls. The hosted completion and failure counts above belong to `2024b8f8a`. [SDK regression tests](../../Server/tests/test_preflight_refresh_option.py)
 
+## Recorded call arguments on the original client protocol
+
+All 26 verified first-attempt journals negotiated MCP `2025-06-18`. A standalone server for each frozen release and catalog returned its input schemas over that protocol. The check validated the recorded arguments against the public schemas and their enforced action conditions. Every tool called was visible in the original Editor's catalog. Four successful native resource reads were counted separately.
+
+| Catalog | Recorded tool inputs | Accepted by `2024b8f8a` | Accepted by `73d7441da` |
+|---|---:|---:|---:|
+| Core | 143 | 142 | 143 |
+| Full | 158 | 158 | 158 |
+
+The earlier schema rejected only the Turkish `scene_inspect(get_active)` call with `refresh_if_dirty=false`. The updated schema accepted all 301 recorded inputs. This check made no model calls or Unity edits. The hosted completion rates above apply to `2024b8f8a`.
+
 ## Replay
 
 Public and private replays pass. The primary and combined `--require-perfect` checks return exit code 1 for the Turkish Core tool rejection. The Korean-only strict replay passes.
