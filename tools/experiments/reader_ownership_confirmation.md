@@ -27,6 +27,21 @@ Nine successful capacity probes observed 76 to 128 available reservation entries
 
 Both owned study Editors exited. All 130 shared preference values matched their starting fingerprints. All 26 hosted submissions retained their own workspace, exact sealed input, and launch receipt.
 
+## Replaying the refresh option in Unity
+
+The scene reader and the earlier GameObject search share a check that can import pending external asset changes. In `2024b8f8a`, only the search exposed the switch to suppress that import. Package `73d7441da` pins server `0d1c79ef9`, which exposes `refresh_if_dirty` on the operations that use this policy. The default retains each operation's previous behavior and permission checks. Unity can compile changed scripts during an asset refresh. [Unity 6.0 refresh process](https://docs.unity.com/en-us/engine/6000.0/manual/assets-and-media/asset-database/refreshing)
+
+An SDK test opened a separate isolated Unity 6000.0.69f1 project on Windows for each package. In both catalogs and both protocol versions, a fixture file changed and the selected Editor's state resource reported a pending change. The client called the scene and asset inspection tools with the option set to `false`, then repeated the scene query with the option omitted.
+
+| Observed in the selected Editor | `2024b8f8a` | `73d7441da` |
+|---|---:|---:|
+| `scene_inspect(get_active)` returned the active scene and preserved the pending change | 0/4 | 4/4 |
+| `asset_inspect(get_info)` returned the asset and preserved the pending change | 0/4 | 4/4 |
+| `find_gameobjects` returned the requested GameObject with the option set to `false` | 4/4 | 4/4 |
+| Omitting the option returned the active scene and acknowledged a refresh | 4/4 | 4/4 |
+
+The older package rejected the scene and asset arguments before dispatch. The new package advertised the option in the tool schema and the selected operation's description. Each fixture preserved its scene bytes and protected Editor state. All 20 serialized scene documents matched between the projects after resolving their generated local IDs. Both Editors exited and all 130 shared preference values matched. These measurements used zero model calls. The hosted completion and failure counts above belong to `2024b8f8a`. [SDK regression tests](../../Server/tests/test_preflight_refresh_option.py)
+
 ## Replay
 
 Public and private replays pass. The primary and combined `--require-perfect` checks return exit code 1 for the Turkish Core tool rejection. The Korean-only strict replay passes.
