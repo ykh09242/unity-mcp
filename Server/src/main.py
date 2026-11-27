@@ -533,11 +533,11 @@ def _build_instructions(project_scoped_tools: bool) -> str:
         if project_scoped_tools
         else "Use this connection's advertised tools."
     )
-    return f"""If listed, read_unity_resource({{}}) opens this Unity connection's guide and search_unity_tools({{"query":"<text>","selection":"agent"}}) finds actions. Shared readers may require the listed server and URI. Editor reads can return saved files.
+    return f"""If listed, read_unity_resource({{}}) opens the Unity guide and search_unity_tools({{"query":"<text>","selection":"agent"}}) finds actions. Host paths use the host file reader. Pair each URI with its listing server. Editor reads can return saved files.
 
 Use live schemas
 - Find Editors via manage_tools(action="list_instances"). Sessionless tools use unity_instance=Name@hash, native resources use _meta.unity_instance.
-- Guide fallback via manage_tools(action="read_skill"). Open a host skill path with the host file reader. Guides via manage_tools(action="catalog",group="skills").
+- Guide fallback via manage_tools(action="read_skill"). Guides via manage_tools(action="catalog",group="skills").
 - Resolve Assets/... in the selected Editor project. Keep names verbatim. Show paths as code. Client file access and links need a verified shared root.
 - Search by meaning. Follow next_call (next_offset), open_family. Compare operations. Name only? manage_tools(action="describe",tool=name). Follow operation_choices or describe_call.
 - Use the listed read tool or native resources/read. In manage_tools(action="catalog"), expand the published resource template. Fill operation.prepare_call from input_fields. Use prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
