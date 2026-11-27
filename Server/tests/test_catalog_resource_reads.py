@@ -23,12 +23,14 @@ from .test_http_command_outcome import command_hub  # pylint: disable=unused-imp
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 async def test_catalog_and_search_bind_reads_on_the_selected_editor(command_hub, mode):
     from services.tools.manage_tools import manage_tools, search_unity_tools
+    from services.tools.read_unity_resource import read_unity_resource
     from transport.unity_instance_middleware import UnityInstanceMiddleware
 
     app = FastMCP("catalog resource reads")
     app.add_middleware(UnityInstanceMiddleware())
     app.tool(name="manage_tools")(manage_tools)
     app.tool(name="search_unity_tools")(search_unity_tools)
+    app.tool(read_unity_resource)
     await command_hub.registry.register("second", "Second", "other", "6000.3")
     target = {"unity_instance": "Second@other"}
     uri = "mcpforunity://fixture/info"
@@ -77,10 +79,13 @@ async def test_catalog_and_search_bind_reads_on_the_selected_editor(command_hub,
             "arguments": {"action": "read_resource", "uri": uri, **target},
         }
         assert row["read_call"] == native and row["read_tool"] == tool
-        for scope, available in [
-            ({}, True),
-            ({"host_tool_names": ["manage_tools"]}, True),
-            ({"host_tool_names": []}, False),
+        direct = {"tool": "read_unity_resource", "arguments": {"uri": uri, **target}}
+        assert row["preferred_read_tool"] == direct
+        for scope, available, preferred in [
+            ({}, True, True),
+            ({"host_tool_names": ["manage_tools"]}, True, False),
+            ({"host_tool_names": ["read_unity_resource"]}, False, True),
+            ({"host_tool_names": []}, False, False),
             (
                 {
                     "host_tool_evidence": {
@@ -90,12 +95,23 @@ async def test_catalog_and_search_bind_reads_on_the_selected_editor(command_hub,
                     }
                 },
                 False,
+                False,
             ),
         ]:
             page = await call("search_unity_tools", selection="agent", family=uri, **scope)
             [binding] = page["operations"]
             assert binding["read_call"] == native
             assert binding.get("read_tool") == (tool if available else None)
+            assert binding.get("preferred_read_tool") == (direct if preferred else None)
+        ranked = await call(
+            "search_unity_tools",
+            query=uri,
+            route_surfaces="resources",
+            host_tool_names=["read_unity_resource"],
+        )
+        for binding in (ranked["routes"][0], ranked["route_groups"][0]["representative"]):
+            assert binding["preferred_read_tool"] == direct
+            assert "read_tool" not in binding
         resources = await call("manage_tools", action="catalog", group="resource_templates")
         [template] = resources["resource_templates"]
         page = await call("search_unity_tools", selection="agent", family=template_uri)
@@ -105,6 +121,11 @@ async def test_catalog_and_search_bind_reads_on_the_selected_editor(command_hub,
             adapter = descriptor["read_after_expansion"]
             assert adapter["arguments"] == {"action": "read_resource", **target}
             assert adapter["set_argument"] == "uri"
+            assert descriptor["preferred_read_after_expansion"] == {
+                "tool": "read_unity_resource",
+                "arguments": target,
+                "set_argument": "uri",
+            }
         assert reads == []
         for resolved, value in (
             (uri, "Second@other"),
@@ -117,8 +138,9 @@ async def test_catalog_and_search_bind_reads_on_the_selected_editor(command_hub,
                 .model_dump(mode="json", by_alias=True, exclude_none=True)
             )
             assert result == expected
+            assert await call("read_unity_resource", uri=resolved) == expected
             assert (await client.read_resource(resolved, meta=target))[0].text == value
-        assert reads == ["concrete", "concrete", "other", "other"]
+        assert reads == ["concrete"] * 3 + ["other"] * 3
     assert command_hub.sent == []
 
 
@@ -296,7 +318,8 @@ async def test_static_resources_from_different_providers_keep_distinct_read_owne
 
 
 @pytest.mark.asyncio
-async def test_projected_packaged_skill_reads_match_the_native_resource(server):
+@pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+async def test_projected_packaged_skill_reads_match_the_native_resource(server, mode):
     from transport.skills_extension import SKILL_URI, install_skills
 
     assert install_skills(server) is not None
@@ -309,7 +332,7 @@ async def test_projected_packaged_skill_reads_match_the_native_resource(server):
             ]
 
     server.add_middleware(Projection())
-    async with Client(server, cache=False) as client:
+    async with Client(server, mode=mode, cache=False) as client:
         native = await client.read_resource(SKILL_URI)
         expected = [
             item.model_dump(mode="json", by_alias=True, exclude_none=True) for item in native
@@ -326,6 +349,16 @@ async def test_projected_packaged_skill_reads_match_the_native_resource(server):
         ):
             result = await client.call_tool("manage_tools", arguments)
             assert result.structured_content["contents"] == expected
+        for arguments in ({}, guide["preferred_read_tool"]["arguments"]):
+            result = await client.call_tool("read_unity_resource", arguments)
+            assert result.structured_content["contents"] == expected
+        for uri in (
+            "file:///host/.codex/skills/unity-mcp-skill/SKILL.md",
+            "https://example.invalid/guide",
+        ):
+            assert (
+                await client.call_tool("read_unity_resource", {"uri": uri}, raise_on_error=False)
+            ).is_error
 
 
 def test_static_projection_requires_the_same_source_and_read_policy():
@@ -344,6 +377,49 @@ def test_static_projection_requires_the_same_source_and_read_policy():
 
     custom = Custom(uri=resource.uri, text="public")
     assert not same_resource_binding(custom, custom.model_copy())
+
+
+@pytest.mark.asyncio
+async def test_default_guide_requires_its_installed_snapshot(server):
+    from fastmcp.resources import TextResource
+    from transport.skills_extension import SKILL_URI, install_skills
+
+    assert install_skills(server) is not None
+    server.add_resource(TextResource(uri=SKILL_URI, text="Replacement document"))
+    async with Client(server, cache=False) as client:
+        for name, args in (("read_unity_resource", {}), ("manage_tools", {"action": "read_skill"})):
+            assert (await client.call_tool(name, args, raise_on_error=False)).is_error
+        explicit = await client.call_tool("read_unity_resource", {"uri": SKILL_URI})
+        assert explicit.structured_content["contents"][0]["text"] == "Replacement document"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hidden_via", ["disabled", "list", "replacement"])
+async def test_resource_catalog_offers_only_its_visible_serving_reader(server, hidden_via):
+    from fastmcp.resources import TextResource
+
+    uri = "mcpforunity://fixture/info"
+    server.add_resource(TextResource(uri=uri, text="info"))
+    if hidden_via == "disabled":
+        server.disable(keys={(await server.get_tool("read_unity_resource")).key})
+    elif hidden_via == "list":
+
+        class HideReader(Middleware):
+            async def on_list_tools(self, context, call_next):
+                return [t for t in await call_next(context) if t.name != "read_unity_resource"]
+
+        server.add_middleware(HideReader())
+    else:
+
+        @server.tool(name="read_unity_resource")
+        def replacement(uri: str) -> str:
+            pytest.fail("The catalog executed a replacement")
+
+    async with Client(server, cache=False) as client:
+        page = await client.call_tool("manage_tools", {"action": "catalog", "group": "resources"})
+        [row] = page.structured_content["resources"]
+        assert "preferred_read_tool" not in row
+        assert row["read_tool"]["tool"] == "manage_tools"
 
 
 @pytest.mark.asyncio
@@ -389,6 +465,7 @@ async def test_undeclared_providers_are_native_only_in_catalog_and_calls(server,
             catalog = await client.call_tool("manage_tools", {"action": "catalog", "group": group})
             for row in catalog.structured_content[group]:
                 assert key not in row
+                assert "preferred_" + key not in row
                 native = row.get("read_call") or row["native_read_after_expansion"]
                 assert native["method"] == "resources/read"
         expanded = template.replace("{instance_id}", "7").replace("{component_name}", "Canvas")
@@ -397,9 +474,13 @@ async def test_undeclared_providers_are_native_only_in_catalog_and_calls(server,
                 "manage_tools", {"action": "read_resource", "uri": uri}, raise_on_error=False
             )
             assert declined.is_error
+            assert (
+                await client.call_tool("read_unity_resource", {"uri": uri}, raise_on_error=False)
+            ).is_error
         assert (
             await client.call_tool("manage_tools", {"action": "read_skill"}, raise_on_error=False)
         ).is_error
+        assert (await client.call_tool("read_unity_resource", {}, raise_on_error=False)).is_error
         assert reads == []
         for uri in (fixed, expanded, skill, subclass, privileged):
             await client.read_resource(uri)
@@ -408,16 +489,19 @@ async def test_undeclared_providers_are_native_only_in_catalog_and_calls(server,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize("reader", ["manage_tools", "read_unity_resource"])
 async def test_registered_component_preserves_selectors_and_reserves_getters_for_native(
-    command_hub, mode
+    command_hub, mode, reader
 ):
     from services.resources import register_all_resources
     from services.tools.manage_tools import manage_tools
+    from services.tools.read_unity_resource import read_unity_resource
     from transport.unity_instance_middleware import UnityInstanceMiddleware
 
     app = FastMCP("registered observations")
     app.add_middleware(UnityInstanceMiddleware())
     app.tool(manage_tools)
+    app.tool(read_unity_resource)
     register_all_resources(app)
     target = {"unity_instance": "Fixture@hash"}
     uri = "mcpforunity://scene/gameobject/7/component/UnityEngine.Canvas"
@@ -425,8 +509,12 @@ async def test_registered_component_preserves_selectors_and_reserves_getters_for
 
         async def read(uri):
             return await client.call_tool(
-                "manage_tools",
-                {"action": "read_resource", "uri": uri, **target},
+                reader,
+                {
+                    **({"action": "read_resource"} if reader == "manage_tools" else {}),
+                    "uri": uri,
+                    **target,
+                },
                 raise_on_error=False,
             )
 
@@ -735,12 +823,14 @@ def test_tool_uses_expanded_resource_permissions_for_receipts_and_scoped_access(
     ],
 )
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize("reader", ["manage_tools", "read_unity_resource"])
 async def test_observation_requires_both_read_grants_and_never_executes_getters(
-    command_hub, monkeypatch, request_grants, plugin_grants, mode
+    command_hub, monkeypatch, request_grants, plugin_grants, mode, reader
 ):
     from core.config import config
     from services.credential_lease import bind_credential_lease
     from services.tools.manage_tools import manage_tools
+    from services.tools.read_unity_resource import read_unity_resource
     from tests.http.test_remote_permissions import permission_service
     from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
     from transport.unity_instance_middleware import UnityInstanceMiddleware
@@ -748,6 +838,7 @@ async def test_observation_requires_both_read_grants_and_never_executes_getters(
     app = FastMCP("resource read grants")
     app.add_middleware(UnityInstanceMiddleware())
     app.tool(name="manage_tools")(manage_tools)
+    app.tool(read_unity_resource)
     reads = []
 
     @partial(
@@ -774,34 +865,36 @@ async def test_observation_requires_both_read_grants_and_never_executes_getters(
         with bind_credential_lease(requester):
             async with Client(app, mode=mode) as client:
                 args = {
-                    "action": "read_resource",
+                    **({"action": "read_resource"} if reader == "manage_tools" else {}),
                     "uri": "mcpforunity://scene/gameobject/3/components",
                     "unity_instance": "Fixture@hash",
                 }
                 with pytest.raises((MCPError, ToolError)):
                     await client.call_tool(
-                        "manage_tools", {**args, "uri": args["uri"] + "?evaluate_getters=true"}
+                        reader, {**args, "uri": args["uri"] + "?evaluate_getters=true"}
                     )
                 assert not reads
                 if "read" in request_grants and "read" in plugin_grants:
-                    result = await client.call_tool("manage_tools", args)
+                    result = await client.call_tool(reader, args)
                     assert result.structured_content["contents"][0]["text"] == "false"
                     assert reads == ["3"]
                 else:
                     with pytest.raises(MCPError):
-                        await client.call_tool("manage_tools", args)
+                        await client.call_tool(reader, args)
                     assert not reads
     assert command_hub.sent == []
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize("reader", ["manage_tools", "read_unity_resource"])
 async def test_expanded_resource_keeps_outer_receipt_and_retrievable_resource_result(
-    command_hub, tmp_path, monkeypatch, mode
+    command_hub, tmp_path, monkeypatch, mode, reader
 ):
     from core.config import config
     from services.execution_receipt_identity import ReceiptNotFound
     from services.tools.manage_tools import manage_tools
+    from services.tools.read_unity_resource import read_unity_resource
     from services.tools.read_response import read_response
     from tests.test_execution_receipt_integration import KEY, PROJECT, options
     from transport import response_limit_middleware as limits
@@ -812,6 +905,7 @@ async def test_expanded_resource_keeps_outer_receipt_and_retrievable_resource_re
     app.add_middleware(limits.ResponseLimitMiddleware())
     app.add_middleware(UnityInstanceMiddleware())
     app.tool(manage_tools)
+    app.tool(read_unity_resource)
     app.tool(read_response)
     runtime = install_execution_receipts(app, tmp_path / "receipts", private_root=True)
     await runtime.start()
@@ -835,11 +929,11 @@ async def test_expanded_resource_keeps_outer_receipt_and_retrievable_resource_re
     try:
         async with Client(app, mode=mode, cache=False) as client:
             args = {
-                "action": "read_resource",
+                **({"action": "read_resource"} if reader == "manage_tools" else {}),
                 "uri": "mcpforunity://scene/gameobject/3/components?evaluate_getters=false",
             }
             ambiguous = await client.call_tool(
-                "manage_tools",
+                reader,
                 {**args, "uri": args["uri"].replace("false", "true")},
                 raise_on_error=False,
             )
@@ -847,8 +941,8 @@ async def test_expanded_resource_keeps_outer_receipt_and_retrievable_resource_re
             meta = {META_KEY: options(runtime)}
             with monkeypatch.context() as pressure:
                 pressure.setattr(limits, "MCP_RESULT_BYTES", 8192)
-                first = await client.call_tool("manage_tools", {**args, **target}, meta=meta)
-                replay = await client.call_tool("manage_tools", {**args, **target}, meta=meta)
+                first = await client.call_tool(reader, {**args, **target}, meta=meta)
+                replay = await client.call_tool(reader, {**args, **target}, meta=meta)
             assert replay.meta[META_KEY]["replayed"]
             assert replay.structured_content == first.structured_content
             handle = json.loads(first.structured_content["contents"][0]["text"])["delivery"]
@@ -861,13 +955,15 @@ async def test_expanded_resource_keeps_outer_receipt_and_retrievable_resource_re
                         "unity_instance": "Other@aaaaaaaaaaaaaaaa",
                     },
                 )
-            page = await client.call_tool(
-                "read_response", {"response_id": handle["response_id"], **target}
-            )
+            lookup = {"response_id": handle["response_id"], **target}
+            page = await client.call_tool("read_response", lookup)
             retained = json.loads(base64.b64decode(page.structured_content["data"]["data_base64"]))
             assert retained["contents"] == [
                 {"uri": args["uri"], "mimeType": "text/plain", "text": value}
             ]
+            await client.call_tool("read_response", {**lookup, "release": True})
+            with pytest.raises(ToolError, match="response_not_found"):
+                await client.call_tool("read_response", lookup)
             assert reads == [("3", "false")]
             scope = (await runtime.authority(PROJECT)).scope
             with pytest.raises(ReceiptNotFound):

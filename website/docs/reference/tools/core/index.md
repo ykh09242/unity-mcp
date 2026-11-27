@@ -12,7 +12,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`asset_inspect`](./asset_inspect.md)** — Search assets or inspect their metadata and components.
 - **[`batch_execute`](./batch_execute.md)** — Execute multiple native MCP commands in one request.
 - **[`create_script`](./create_script.md)** — Create a new C# script at the given project path.
-- **[`debug_request_context`](./debug_request_context.md)** — Inspect the client request metadata, server process and routed Unity Editor.
+- **[`debug_request_context`](./debug_request_context.md)** — Inspect this connection's server build and routed Unity Editor.
 - **[`delete_script`](./delete_script.md)** — Delete a C# script by URI or Assets-relative path.
 - **[`execute_custom_tool`](./execute_custom_tool.md)** — Execute a project-scoped custom tool registered by Unity.
 - **[`execute_menu_item`](./execute_menu_item.md)** — Find an unknown menu path with list_menu_declarations or read mcpforunity://menu-items.
@@ -47,6 +47,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`prefab_inspect`](./prefab_inspect.md)** — Inspect prefab metadata or a bounded hierarchy page.
 - **[`read_console`](./read_console.md)** — Gets messages from or clears the Unity Editor console.
 - **[`read_response`](./read_response.md)** — Reads one fixed 256 KiB base64 page of a retained oversized MCP response.
+- **[`read_unity_resource`](./read_unity_resource.md)** — Read the packaged Unity MCP guide on this connection with no arguments.
 - **[`refresh_unity`](./refresh_unity.md)** — Refresh assets and optionally request compilation.
 - **[`scene_inspect`](./scene_inspect.md)** — Inspect loaded scenes, hierarchy and build settings, or frame the Scene view.
 - **[`scene_lifecycle`](./scene_lifecycle.md)** — Create, load, save or close scenes and organize loaded scene objects.

@@ -486,6 +486,13 @@ def required_permissions(
         params = {**params, "action": fixed_action}
     if not native:
         name = _FIXED_RESOURCE_READ_COMMANDS.get(name, name)
+        if name == "read_unity_resource":
+            from transport.skills_extension import SKILL_URI
+
+            uri = params.get("uri")
+            return _resource_read_permissions(
+                SKILL_URI if uri is None else uri, scoped=scoped_resources
+            )
     # The Python tool routes inspect/exists to a different native command.
     # Native execute handlers ignore a supplied action: do not trust that alias input.
     if native and name in {"execute_menu_item", "execute_menu_item_observed"}:

@@ -35,6 +35,13 @@ class PublishedSnapshotResource(Resource):
 
 _observation_callbacks = WeakKeyDictionary()
 CATALOG_READ = "manage_tools.read_resource"
+_PACKAGED_GUIDE = "packaged_guide"
+_packaged_guides = WeakKeyDictionary()
+
+
+def register_packaged_guide(server: FastMCP, guide: PublishedSnapshotResource) -> None:
+    """Pin the guide published by this connection's verified Skills bundle."""
+    _packaged_guides[server] = guide.model_copy()
 
 
 def register_catalog_observation(
@@ -56,6 +63,8 @@ def register_catalog_observation(
 def catalog_observation(
     server: FastMCP, binding: Resource | ResourceTemplate, reader: str = CATALOG_READ
 ) -> bool:
+    if reader == _PACKAGED_GUIDE:
+        return same_resource_binding(_packaged_guides.get(server), binding)
     if reader == CATALOG_READ and type(binding) in (TextResource, PublishedSnapshotResource):
         return True
     return (
@@ -74,7 +83,7 @@ def observation_uri_allowed(uri: str) -> bool:
     )
 
     try:
-        grants = required_permissions("manage_tools", {"action": "read_resource", "uri": uri})
+        grants = required_permissions("read_unity_resource", {"uri": uri})
         return grants == {Permission.READ}
     except OperationPermissionError:
         return False
@@ -168,6 +177,29 @@ async def read_listed_resource(
     with internal_resource_read(server, uri, instance):
         await server._check_resource_access(uri)
         return await _read_observation(server, uri, label, allow_templates, reader)
+
+
+async def read_published_document(
+    ctx: Context, uri: str | None, *, concrete_skill: bool = False
+) -> dict:
+    """Serialize the selected observation with the native resource result contract."""
+    from transport.skills_extension import SKILL_URI
+    from transport.unity_instance_middleware import EXPLICIT_REQUEST_INSTANCE_STATE
+
+    skill = uri is None or concrete_skill
+    reader = _PACKAGED_GUIDE if uri is None else CATALOG_READ
+    if uri is None:
+        uri = SKILL_URI
+    instance = await ctx.get_state(EXPLICIT_REQUEST_INSTANCE_STATE if skill else "unity_instance")
+    result = await read_listed_resource(
+        ctx,
+        uri,
+        "skill document" if skill else "resource",
+        instance,
+        allow_templates=not skill,
+        reader=reader,
+    )
+    return result.to_mcp_result(uri).model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
 async def _listed_binding(

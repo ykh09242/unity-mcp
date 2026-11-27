@@ -21,7 +21,6 @@ from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 from pydantic import Field, ValidationError
 from transport.protocol import internal_catalog, internal_resource_catalog, is_sessionless
-from transport.skills_extension import SKILL_URI
 
 from models.host_tool_inventory import HostToolEvidence, HostToolNames, input_schema_digest
 from services.registry import (
@@ -174,8 +173,45 @@ def _resource_read_call(uri: str, project: dict[str, str]) -> dict:
     return {"method": "resources/read", "params": params}
 
 
+async def _resource_readers(ctx: Context, request=None) -> set[str]:
+    """Offer only serving built-ins exposed by the connection and the supplied host inventory."""
+    from fastmcp.exceptions import AuthorizationError
+    from services.operation_permissions import OperationPermissionError
+    from transport.unity_instance_middleware import _trusted_builtin_callback
+
+    visible = await _selection_inventory(ctx) or {}
+    readers = set()
+    for name in ("manage_tools", "read_unity_resource"):
+        if name not in visible:
+            continue
+        if request is not None and (
+            request.host_tool_names is not None
+            and name not in request.host_tool_names
+            or request.host_tool_evidence is not None
+            and request.host_tool_evidence.received(name) is not True
+        ):
+            continue
+        try:
+            selected = await ctx.fastmcp.get_tool(name)
+        except (AuthorizationError, OperationPermissionError):
+            continue
+        if (
+            selected is not None
+            and selected.key == visible[name].key
+            and getattr(visible[name], "fn", None) is getattr(selected, "fn", None)
+            and _trusted_builtin_callback(getattr(selected, "fn", None), name, None)
+        ):
+            readers.add(name)
+    return readers
+
+
 def _bind_resource_read(
-    row: dict, project: dict[str, str], *, tool_available: bool, observations: set[str]
+    row: dict,
+    project: dict[str, str],
+    *,
+    readers: set[str],
+    observations: set[str],
+    skill: bool = False,
 ) -> None:
     if "uri_template" in row:
         row["native_read_after_expansion"] = {
@@ -183,22 +219,45 @@ def _bind_resource_read(
             "params": {"_meta": project} if project else {},
             "set_param": "uri",
         }
-        if tool_available and row["uri_template"] in observations:
+        if row["uri_template"] not in observations:
+            return
+        if "read_unity_resource" in readers:
+            row["preferred_read_after_expansion"] = {
+                "tool": "read_unity_resource",
+                "arguments": dict(project),
+                "set_argument": "uri",
+            }
+        if "manage_tools" in readers:
             row["read_after_expansion"] = {
                 "tool": "manage_tools",
                 "arguments": {"action": "read_resource", **project},
                 "set_argument": "uri",
             }
+        if readers:
             row["read_guidance"] = (
                 "Use the tool when the expanded URI resolves to this observation with declared options. Use native resources/read for getter execution."
             )
         return
     uri = row["uri"]
     row["read_call"] = _resource_read_call(uri, project)
-    if tool_available and uri in observations:
+    if uri not in observations:
+        return
+    if "read_unity_resource" in readers:
+        row["preferred_read_tool"] = {
+            "tool": "read_unity_resource",
+            "arguments": {"uri": uri, **project},
+        }
+    if "manage_tools" in readers:
         row["read_tool"] = {
             "tool": "manage_tools",
-            "arguments": {"action": "read_resource", "uri": uri, **project},
+            "arguments": {
+                **(
+                    {"action": "read_skill", "skill_uri": uri}
+                    if skill
+                    else {"action": "read_resource", "uri": uri}
+                ),
+                **project,
+            },
         }
 
 
@@ -375,7 +434,13 @@ async def search_unity_tools(
                 or request.host_tool_evidence.received("manage_tools") is True
             )
         )
-        for binding in outcome.get("operations", []):
+        operations = outcome.get("operations", [])
+        readers = (
+            await _resource_readers(ctx, request)
+            if any(row["kind"] != "tool" for row in operations)
+            else set()
+        )
+        for binding in operations:
             if binding["kind"] == "tool" and can_manage:
                 args = {"action": "describe", "tool": binding["tool"], **project}
                 if binding["action"] is not None:
@@ -389,12 +454,19 @@ async def search_unity_tools(
                 ):
                     binding["invoke"]["arguments"].update(project)
             if binding["kind"] in {"resource", "resource_template"}:
-                _bind_resource_read(
-                    binding, project, tool_available=can_manage, observations=observations
-                )
+                _bind_resource_read(binding, project, readers=readers, observations=observations)
                 if binding["kind"] == "resource_template":
                     binding["input_contract"] = RESOURCE_TEMPLATE_EXPANSION
         return outcome
+    ranked = [*outcome.get("routes", ()), *outcome.get("no_match", {}).get("alternatives", ())]
+    for group in outcome.get("route_groups", ()):
+        ranked.extend((group["representative"], *group["alternatives"]))
+    resource_rows = [row for row in ranked if row["kind"] in {"resource", "resource_template"}]
+    if resource_rows:
+        project = await _retry_project_binding(ctx)
+        readers = await _resource_readers(ctx, request)
+        for row in resource_rows:
+            _bind_resource_read(row, project, readers=readers, observations=observations)
     if (
         outcome["matching"] == "observation"
         and "no_match" in outcome
@@ -820,27 +892,18 @@ async def manage_tools(
             "error": "include_schema requires one tool for describe, activate or inspect_inventory.",
         }
     if action in {"read_resource", "read_skill"}:
-        from services.resource_inventory import read_listed_resource
+        from services.resource_inventory import read_published_document
 
         if group is not None or tool is not None or query is not None:
             selector = "skill_uri" if action == "read_skill" else "uri"
             return {"success": False, "error": f"Select the published resource with {selector}."}
         if action == "read_skill":
-            uri = SKILL_URI if skill_uri is None else skill_uri
-            if not uri.startswith("skill://"):
+            if skill_uri is not None and not skill_uri.startswith("skill://"):
                 return {"success": False, "error": "Select a published skill URI from the catalog."}
-            project = await _retry_project_binding(ctx)
-            result = await read_listed_resource(
-                ctx, uri, "skill document", project.get("unity_instance")
-            )
-        else:
-            if not uri:
-                return {"success": False, "error": "Supply a concrete or expanded resource URI."}
-            instance = await ctx.get_state("unity_instance")
-            result = await read_listed_resource(
-                ctx, uri, "resource", instance, allow_templates=True
-            )
-        return result.to_mcp_result(uri).model_dump(mode="json", by_alias=True, exclude_none=True)
+            return await read_published_document(ctx, skill_uri, concrete_skill=True)
+        if not uri:
+            return {"success": False, "error": "Supply a concrete or expanded resource URI."}
+        return await read_published_document(ctx, uri)
 
     entries = get_registered_tools()
     if action == "catalog":
@@ -860,18 +923,15 @@ async def manage_tools(
                 resources = await _catalog_resources(ctx, concrete_scheme="skill")
                 page = browse_catalog(request, [], visible_names=set(), resources=resources)
                 page["hint"] += (
-                    " Use read_tool on this connection or read_call with a resource client."
+                    " Follow a returned tool binding on this connection or read_call with a resource client."
                 )
                 project = await _retry_project_binding(ctx)
                 observations = {r["uri"] for r in resources if r.get("catalog_observation")}
+                readers = await _resource_readers(ctx) if observations else set()
                 for item in page["skills"]:
-                    item["read_call"] = _resource_read_call(item["uri"], project)
-                    if item["uri"] not in observations:
-                        continue
-                    item["read_tool"] = {
-                        "tool": "manage_tools",
-                        "arguments": {"action": "read_skill", "skill_uri": item["uri"], **project},
-                    }
+                    _bind_resource_read(
+                        item, project, readers=readers, observations=observations, skill=True
+                    )
                 return page
             if request.query is not None and not request.includes_resources:
                 visible = await _selection_inventory(ctx)
@@ -895,11 +955,12 @@ async def manage_tools(
                         branch["browse"].update(project)
                 if request.group in {"resources", "resource_templates"}:
                     observations = {r["uri"] for r in resources if r.get("catalog_observation")}
+                    readers = await _resource_readers(ctx) if observations else set()
                     for item in page[request.group]:
                         _bind_resource_read(
                             item,
                             project,
-                            tool_available="manage_tools" in visible,
+                            readers=readers,
                             observations=observations,
                         )
             return page
@@ -1281,7 +1342,7 @@ async def _catalog_resources(
 ) -> list[CatalogResource]:
     from fastmcp.exceptions import AuthorizationError
     from fastmcp.utilities.versions import dedupe_with_versions
-    from services.operation_permissions import authorize_remote_resource
+    from services.operation_permissions import authorize_remote_resource, remote_operation_allowed
     from services.resource_inventory import (
         catalog_observation,
         observation_uri_allowed,
@@ -1319,7 +1380,8 @@ async def _catalog_resources(
                 "description": item.description or "",
                 "kwargs": {"meta": item.meta},
                 "catalog_observation": catalog_observation(ctx.fastmcp, selected)
-                and observation_uri_allowed(uri),
+                and observation_uri_allowed(uri)
+                and await remote_operation_allowed("read_unity_resource", {"uri": uri}, ctx=ctx),
             }
         )
     native_only_templates = {

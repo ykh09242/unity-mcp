@@ -94,6 +94,7 @@ _LOCAL_TARGET_CONTROL_TOOLS = frozenset(
         "set_active_instance",
         "manage_tools",
         "search_unity_tools",
+        "read_unity_resource",
         "debug_request_context",
         "manage_script_capabilities",
         "read_response",
@@ -1040,7 +1041,7 @@ class UnityInstanceMiddleware(Middleware):
         if config.require_explicit_target and not config.http_remote_hosted:
             reads_project_resource = (
                 public_name == "manage_tools" and public_params.get("action") == "read_resource"
-            )
+            ) or (public_name == "read_unity_resource" and public_params.get("uri") is not None)
             if (
                 public_custom
                 or public_name not in _LOCAL_TARGET_CONTROL_TOOLS

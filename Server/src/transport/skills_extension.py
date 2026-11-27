@@ -148,7 +148,11 @@ def install_skills(
         from fastmcp.skills.models import GetSkillParams, ListSkillsParams
         from mcp.shared.exceptions import MCPError
         from mcp_types import INVALID_PARAMS
-        from services.resource_inventory import PublishedSnapshotResource, same_resource_binding
+        from services.resource_inventory import (
+            PublishedSnapshotResource,
+            register_packaged_guide,
+            same_resource_binding,
+        )
 
         if not all(
             callable(value)
@@ -248,4 +252,6 @@ def install_skills(
     server.add_extension(extension)
     for resource in files:
         server.add_resource(resource)
+        if str(resource.uri) == SKILL_URI:
+            register_packaged_guide(server, resource)
     return extension
