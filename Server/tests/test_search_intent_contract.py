@@ -23,9 +23,10 @@ def search_server(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
-async def test_initialize_search_example_is_callable_as_published(search_server, mode):
+async def test_first_line_discovery_examples_are_callable_as_published(search_server, mode):
     tool = "search_unity_tools"
-    instructions = search_server.instructions
+    instructions = search_server.instructions.splitlines()[0]
+    assert "read_unity_resource({})" in instructions
     _, marker, example = instructions.partition(f"{tool}(")
     assert marker, f"Initialization instructions must publish a {tool} call"
     example = example.lstrip()
@@ -39,6 +40,10 @@ async def test_initialize_search_example_is_callable_as_published(search_server,
     assert placeholder[1:-1].strip(), "The example must contain a query placeholder"
     args["query"] = "Inspect a saved asset file"
     async with Client(search_server, mode=mode) as client:
+        guide = await client.call_tool("read_unity_resource", {})
+        contents = guide.structured_content["contents"]
+        assert [item["uri"] for item in contents] == ["skill://unity-mcp-orchestrator/SKILL.md"]
+        assert contents[0]["text"].strip()
         for selection in ("agent", "ranked"):
             args["selection"] = selection
             found = await client.call_tool(tool, args)
