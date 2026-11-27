@@ -537,23 +537,23 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 
 Target and discover
 - Find Editors via mcpforunity://instances or manage_tools(action="list_instances"). Sessionless tools use unity_instance=Name@hash, resources use _meta.unity_instance.
-- For a listed guide call manage_tools(action="read_skill"). Get read_tool via manage_tools(action="catalog",group="skills"). Open host skills locally.
-- Resolve Assets/... in the selected Editor project. Confirm its root, which may differ from the workspace. Keep names/paths verbatim. Client file access and links need a verified shared root. Use published URIs/templates.
-- Search by meaning. Call search_unity_tools with arguments {{"query":"<original text>","selection":"agent"}}. Follow next_call (next_offset), set open_family.arguments.family and compare operations. Inspect manage_tools(action="describe",tool=name,operation=action).
+- Read a listed guide with just manage_tools(action="read_skill"). Other files: read_tool via manage_tools(action="catalog",group="skills"). Open host skills locally.
+- Resolve Assets/... in the selected Editor project. Keep names verbatim. Show paths as code. Client file access and links need a verified shared root. Use published URIs/templates.
+- Search by meaning: search_unity_tools({{"query":"<original text>","selection":"agent"}}). Follow next_call (next_offset), set open_family.arguments.family and compare operations. Inspect manage_tools(action="describe",tool=name,operation=action).
 - Use manage_tools(action="catalog") for reads. Fill operation.prepare_call from input_fields. Invoke prepared_call when ready. Delegate via set_active_instance(include_context=true,evidence_needed=[...]) and recheck scene/mode.
 - Check manage_tools(action="list_groups").discovery, client/project scope, Editor toggles and consent. Activate and refresh tools/list. Fixed hosts may need a user reconnect with --tool-groups core,vfx or UNITY_MCP_TOOL_PROFILE=full. {custom_tools_note}
 
 Observe and execute
-- Verify measurement target, units and coverage. Label inferences. Honor client policy and Editor permissions.
+- Check the requested target, units and coverage. Distinguish saved changes from live behavior. Label inferences. Honor client policy and Editor permissions.
 - Read mcpforunity://editor/state or inspect_editor_state. Check ready_for_tools, compile outcome and source separately. Keep compile_id, follow get_compile_job's next_call and inspect evidence_diagnostics on invalid responses.
 - Retain job IDs across reconnects. Check targets and receipts before retrying edits. Follow recovery_required, order dependent calls and inspect each batch result.
-- Preserve Play sessions, scenes and runtime objects. Exercise input/UI through interaction tools. For authorized runtime work use exposed, enabled and consented execute_code with safety_checks=true when needed. Verify target and Play state, return bounded before/after values and observe async effects without blocking. Limit persistent/external writes to the request.
+- Preserve Play sessions, scenes and runtime objects. Use interaction tools for requested live input/UI. For authorized runtime work use enabled, consented execute_code with safety_checks=true. Verify target and Play state, return bounded before/after values and observe async effects without blocking. Limit persistent/external writes to the request.
 - Track temporary owners, use exception-safe cleanup and preserve unrelated state. Read data.verification status, complete, scope and findings.
 
 Edit and verify
 - For unfamiliar C# calls check source or unity_reflect for qualified types, member signatures, static/instance access and parameter types. Recheck after symbol errors.
 - Report checks, scope, gaps, isolated probes, substitutions and user actions. Use runner results for native test counts. Verify cleanup after async effects settle.
-- Resolve unquoted text from context and current values. Clarify ambiguous boundaries. Preserve literal punctuation, forward-slash paths and line endings. Prepare with query and exact_text. Save only the authorized Editor target and verify against preview and original. For client-side C# previews, check provenance, hash and exact bytes per references/scripts.md before writing or refreshing.
+- For unquoted text, distinguish sentence punctuation from the value using context and existing text. Clarify ambiguity. Preserve literal punctuation, forward-slash paths and line endings. Prepare with query and exact_text. Verify the authorized save against preview and original. For client-side C# previews, check provenance, hash and exact bytes per references/scripts.md before writing or refreshing.
 """
 
 

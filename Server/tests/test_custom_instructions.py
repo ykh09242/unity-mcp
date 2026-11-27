@@ -192,6 +192,8 @@ def test_server_appends_guidance_to_actual_fastmcp_instructions(
     assert "operation.prepare_call" in default.instructions
     assert "exact_text" in default.instructions
     assert "Resolve Assets/... in the selected Editor project" in default.instructions
+    assert "Show paths as code" in default.instructions
+    assert "Distinguish saved changes from live behavior" in default.instructions
     assert "Client file access and links need a verified shared root" in default.instructions
     assert "Honor client policy and Editor permissions" in default.instructions
     assert 'manage_tools(action="read_skill")' in default.instructions
