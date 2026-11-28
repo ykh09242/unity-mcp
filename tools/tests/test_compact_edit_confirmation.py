@@ -169,8 +169,9 @@ def test_recovered_rejection_fails_perfection_gate():
                 },
             },
         ),
+        ("preflight_policy", True, {}),
     ],
-    ids=["supplement", "combined", "recovered-public-reads"],
+    ids=["supplement", "combined", "recovered-public-reads", "clean-combined-cohort"],
 )
 def test_strict_replay_distinguishes_host_and_public_failures(study, include_primary, failures):
     experiments = Path(__file__).resolve().parents[1] / "experiments"
