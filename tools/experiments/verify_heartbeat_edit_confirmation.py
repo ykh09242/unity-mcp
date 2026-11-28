@@ -146,6 +146,7 @@ APPLY_ROUTE = "3fbbaf1ed3eb03a18bf539b6ef64138db9b659f2947f2a16d680ab0a5121c490"
 PROJECT_SCOPE = "cf6cab0ed521f44be658e57ac80a606e438b4ccd55f0be9e081e5c348967cc2b"
 INITIAL_DISCOVERY = "d465f1e6cb98135c15c8509c2765a24b72af5a8ac8207fae521893c3ceaa95fc"
 READER_OWNERSHIP = "48b4065f869b879fe499d807dfdfa680198d07ee17f86c7baef2a8705557b8f5"
+PREFLIGHT_POLICY = "f3c42be9472e8bdc11f3adf81fc604f117e7115a2e10f428949d21634521d7a8"
 STUDIES = {
     PUBLISHED: ("compact_edit_confirmation_results.json", prior.PUBLISHED, FROZEN_PINS),
     EDITOR_CATALOG: (
@@ -280,6 +281,15 @@ STUDIES = {
         {
             "package": "2024b8f8a7bb55e4e5252bef07a6a72e93b73e50",
             "runtime": "a268d792f2971d12e095f98bac93dfd8ac74f8c9",
+            "skill": "dda51947d0b2bc389571fa0a71494302a3a76c25",
+        },
+    ),
+    PREFLIGHT_POLICY: (
+        "reader_ownership_confirmation_results.json",
+        READER_OWNERSHIP,
+        {
+            "package": "73d7441daa8faf0a0d42fe8be53b3186adc92c7f",
+            "runtime": "0d1c79ef949377eb43a2d9aab36eb9c89c76c624",
             "skill": "dda51947d0b2bc389571fa0a71494302a3a76c25",
         },
     ),

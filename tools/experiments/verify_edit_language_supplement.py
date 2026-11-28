@@ -22,6 +22,7 @@ from tools.experiments.verify_heartbeat_edit_confirmation import (
     EDITOR_TARGET,
     INITIAL_DISCOVERY,
     OPERATION_DISCOVERY,
+    PREFLIGHT_POLICY,
     PREVIEW_CONTINUATION,
     PROJECT_SCOPE,
     READER_OWNERSHIP,
@@ -77,6 +78,10 @@ STUDIES = {
     "8a103570ebe4e7db9522af49aaaf1b9c1e35b5cea9c77834d676792571a30a02": (
         "reader_ownership_confirmation_results.json",
         READER_OWNERSHIP,
+    ),
+    "cd0fe113a7e0b1298346de150b50838bf4f6d688a2f656b6cc7cf4dfe6420eaa": (
+        "preflight_policy_confirmation_results.json",
+        PREFLIGHT_POLICY,
     ),
 }
 
